@@ -1,0 +1,4 @@
+/* Reset so the <Canvas> can fill the entire window with no scrollbars. */
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html, body, #root { width: 100%; height: 100%; }
+body { overflow: hidden; font-family: system-ui, sans-serif; background: #111; }
