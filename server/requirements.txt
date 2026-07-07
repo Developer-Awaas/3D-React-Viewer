@@ -19,6 +19,7 @@ torchvision
 
 # geometry / GLB export
 trimesh
+mapbox-earcut   # triangulates polygon walls (trimesh.extrude_polygon)
 
 # PDF -> image (accept PDF uploads)
 pymupdf

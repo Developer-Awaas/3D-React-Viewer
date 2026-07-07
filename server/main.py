@@ -14,6 +14,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
 
+import openings
+import pdf_vector
 import perception
 import scene_builder
 import scene_to_glb
@@ -101,8 +103,8 @@ def _looks_supported(image: UploadFile):
             or name.endswith((".pdf", ".png", ".jpg", ".jpeg", ".webp")))
 
 
-async def _read_upload(image: UploadFile):
-    """Read an upload; accept images OR PDFs (PDF -> PNG of page 1). Returns image bytes."""
+async def _read_upload_bytes(image: UploadFile):
+    """Read + validate an upload. Returns (raw_bytes, is_pdf) - no conversion."""
     if not _looks_supported(image):
         raise HTTPException(415, "upload a PNG/JPG image or a PDF")
     raw = await image.read()
@@ -112,14 +114,23 @@ async def _read_upload(image: UploadFile):
         raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
     ct = image.content_type or ""
     name = (image.filename or "").lower()
-    if ct == "application/pdf" or name.endswith(".pdf"):
-        try:
-            import fitz  # PyMuPDF
-            doc = fitz.open(stream=raw, filetype="pdf")
-            raw = doc[0].get_pixmap(dpi=200).tobytes("png")   # page 1 -> PNG
-        except Exception as e:
-            raise HTTPException(422, f"could not read PDF: {e}")
-    return raw
+    return raw, (ct == "application/pdf" or name.endswith(".pdf"))
+
+
+def _pdf_first_page_png(raw):
+    """PDF bytes -> PNG bytes of page 1 (for the raster/CubiCasa path)."""
+    try:
+        import fitz  # PyMuPDF
+        doc = fitz.open(stream=raw, filetype="pdf")
+        return doc[0].get_pixmap(dpi=200).tobytes("png")
+    except Exception as e:
+        raise HTTPException(422, f"could not read PDF: {e}")
+
+
+async def _read_upload(image: UploadFile):
+    """Read an upload; accept images OR PDFs (PDF -> PNG of page 1). Returns image bytes."""
+    raw, is_pdf = await _read_upload_bytes(image)
+    return _pdf_first_page_png(raw) if is_pdf else raw
 
 
 @app.post("/perceive")
@@ -134,12 +145,21 @@ async def perceive(image: UploadFile = File(...)):
 
 
 # ---------------------------------------------------------------------------
-# Step B: image -> walls -> canonical scene.json (+ .glb + 3D preview page)
+# Step B/D: upload -> scene.json. Router: vector CAD PDF -> layer parser (exact,
+# incl. angled walls); anything else -> CubiCasa raster path.
 # ---------------------------------------------------------------------------
 async def _scene_from_upload(image: UploadFile, width_ft: float):
-    raw = await _read_upload(image)   # accepts images or PDFs
-    segs, w, h = await run_in_threadpool(perception.wall_segments, raw)
-    return scene_builder.scene_from_segments(segs, w, h, width_ft)
+    raw, is_pdf = await _read_upload_bytes(image)
+    if is_pdf and await run_in_threadpool(pdf_vector.is_vector_plan, raw):
+        try:
+            return await run_in_threadpool(pdf_vector.parse, raw, width_ft)
+        except ValueError as e:
+            raise HTTPException(422, f"vector PDF parse failed: {e}")
+    if is_pdf:
+        raw = _pdf_first_page_png(raw)   # flat PDF -> raster path
+    segs, boxes, w, h = await run_in_threadpool(perception.detections, raw)
+    segs, ops = openings.attach_openings(segs, boxes, openings.default_tol(w))
+    return scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
 
 
 @app.post("/scene")
@@ -204,6 +224,17 @@ function build(s){
   clearGroup();
   const H=s.meta.wall_height_ft*FT;
   let minx=1e9,maxx=-1e9,minz=1e9,maxz=-1e9;
+  // polygon walls (vector-PDF path); axis swap: plan (x,y) -> world (x, z)
+  (s.walls_poly||[]).forEach(w=>{
+    const shp=new THREE.Shape(w.outer.map(p=>new THREE.Vector2(p[0]*FT,p[1]*FT)));
+    (w.holes||[]).forEach(h=>shp.holes.push(new THREE.Path(h.map(p=>new THREE.Vector2(p[0]*FT,p[1]*FT)))));
+    const g=new THREE.ExtrudeGeometry(shp,{depth:H,bevelEnabled:false});
+    g.applyMatrix4(new THREE.Matrix4().set(1,0,0,0, 0,0,1,0, 0,1,0,0, 0,0,0,1)); // (x,y,z)->(x,z,y)
+    const m=new THREE.Mesh(g,new THREE.MeshStandardMaterial({color:0xcfcabd,side:THREE.DoubleSide}));
+    group.add(m);
+    w.outer.forEach(p=>{minx=Math.min(minx,p[0]*FT);maxx=Math.max(maxx,p[0]*FT);
+      minz=Math.min(minz,p[1]*FT);maxz=Math.max(maxz,p[1]*FT);});
+  });
   s.walls.forEach(w=>{
     const sx=Math.abs(w.x1-w.x0)*FT, sz=Math.abs(w.y1-w.y0)*FT;
     const cx=(w.x0+w.x1)/2*FT, cz=(w.y0+w.y1)/2*FT;
@@ -246,7 +277,8 @@ async function run(){
   const r=await fetch('/scene?width_ft='+wft(),{method:'POST',body:fd});
   if(!r.ok){document.getElementById('status').textContent='Error '+r.status+': '+await r.text();return;}
   const s=await r.json(); build(s);
-  document.getElementById('status').textContent='Built '+s.walls.length+' walls. Drag to orbit, scroll to zoom.';
+  const nw=s.walls.length+(s.walls_poly||[]).length, no=(s.openings||[]).length;
+  document.getElementById('status').textContent='Built '+nw+' walls, '+no+' openings ('+s.meta.source+'). Drag to orbit, scroll to zoom.';
 }
 async function dl(){
   const f=pick(); if(!f) return;

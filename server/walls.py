@@ -83,12 +83,15 @@ def vectorize_walls(wall_mask):
     H, W = mask.shape[:2]
     mask = _denoise(mask, max(40, int(0.0002 * W * H)))   # drop stray specks/blobs
 
-    # thresholds scale with image width so it works on any size
-    open_len = max(20, int(0.04 * W))   # min run length to count as a wall
+    # thresholds scale with image width so it works on any size.
+    # Loosened (was 4%/3%/5%/1%): the old values deleted short closet/bath walls
+    # and could bridge real doorways shut. Doorway gaps are now bridged by the
+    # door DETECTIONS (openings.py), so gap_tol can stay small here.
+    open_len = max(15, int(0.02 * W))   # min run length to count as a wall
     close_th = max(3, int(0.01 * W))    # fuse the two lines of a double-line wall
-    gap_tol = max(6, int(0.03 * W))     # bridge gaps up to ~3% (keeps doorways open)
-    min_len = max(15, int(0.05 * W))    # drop tiny fragments
-    perp_tol = max(8, int(0.01 * W))    # how close parallel lines must be to merge
+    gap_tol = max(6, int(0.015 * W))    # bridge only small mask noise gaps
+    min_len = max(12, int(0.025 * W))   # drop tiny fragments
+    perp_tol = max(6, int(0.008 * W))   # how close parallel lines must be to merge
 
     h_runs = _bands(mask, "h", open_len, close_th)
     v_runs = _bands(mask, "v", open_len, close_th)

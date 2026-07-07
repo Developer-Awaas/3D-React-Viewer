@@ -171,3 +171,16 @@ def wall_segments(image_bytes):
     wall_idx = ROOM_CLASSES.index("Wall")
     wall_mask = (rooms_pred == wall_idx).astype(np.uint8)
     return walls.vectorize_walls(wall_mask), int(w), int(h)
+
+
+def detections(image_bytes):
+    """ONE inference pass -> wall segments + door/window boxes (all pixels).
+    Returns (segments, opening_boxes, width_px, height_px)."""
+    import walls
+    import openings
+    img, rooms_pred, icons_pred = _infer(image_bytes)
+    h, w = img.shape[:2]
+    wall_idx = ROOM_CLASSES.index("Wall")
+    segs = walls.vectorize_walls((rooms_pred == wall_idx).astype(np.uint8))
+    boxes = openings.boxes_from_mask(icons_pred, min_area=max(30, int(0.00015 * w * h)))
+    return segs, boxes, int(w), int(h)

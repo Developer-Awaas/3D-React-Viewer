@@ -45,6 +45,14 @@ React + Three.js   --- image --->       FastAPI + CubiCasa
 - **Step B - image -> 3D walls** (done): `/scene` (canonical scene.json), `/scene.glb`
   (downloadable 3D file), `/scene-view` (orbit the walls in the browser). External/internal
   classified, optional building-width param. `scene_builder.py` unit-tested.
+- **Step B2 - doors/windows** (done 2026-07-07): CubiCasa Door/Window detections ->
+  `openings.py` -> real cuts in walls (doors bridge doorway gaps). Corner snapping +
+  looser wall thresholds. Unit + API tested.
+- **Step D1 - vector CAD PDFs** (done 2026-07-07): `/scene` routes layered PDFs to
+  `pdf_vector.py` (port of drishti reference): wall/plan/window/column layers ->
+  exact POLYGON walls (`walls_poly`, angled walls OK) + window openings (sill 3ft/
+  head 7ft) + columns + column-box scale (12 in). GLB cuts windows via z-bands
+  (`poly_bands`). Raster images still go through CubiCasa. Doors-from-arcs = D2.
 - **Quality**: unit + API tests, CI workflow, code review doc, clean `.gitignore`.
 - **Frontend groundwork (not wired)**: `src/api/client.ts`, `src/video/useRecorder.ts`.
 
