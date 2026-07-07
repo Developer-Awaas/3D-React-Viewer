@@ -17,3 +17,7 @@ server/.env
 
 # scratch
 my_plan.png
+
+# client floor plans (confidential by default; INDEX.txt is tracked)
+plans/*
+!plans/INDEX.txt

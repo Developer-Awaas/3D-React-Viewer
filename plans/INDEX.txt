@@ -1,0 +1,4 @@
+One line per plan. Format:
+filename | one known dimension (any room label or total width) | flats/type | door count | window count | source/notes
+
+FLOOR PLAN.pdf | building ~122ft wide (parser: column 12in -> 23.8pt/ft) | 2 flats 2BHK + lobby/lift | 12+ doors | windows in wall layer | Architrave, AutoCAD export, page rotated 270
