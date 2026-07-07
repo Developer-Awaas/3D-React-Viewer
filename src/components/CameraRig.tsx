@@ -1,51 +1,36 @@
 import { useEffect, useRef } from 'react'
-import { useFrame, useThree } from '@react-three/fiber'
-import * as THREE from 'three'
+import { useThree } from '@react-three/fiber'
+import gsap from 'gsap'
+import type { Vector3 } from 'three'
 
-// A "view" = where the camera sits + the point it looks at.
-export type View = {
-  position: [number, number, number]
-  target: [number, number, number]
-}
+export type View = { position: [number, number, number]; target: [number, number, number] }
 
-// CameraRig watches `view`. When it changes, it animates the real camera there by
-// LERPing (linear-interpolating) a little closer every frame — a smooth glide
-// instead of an instant jump. Renders nothing visible; it just drives the camera.
+// Ultra-smooth camera transitions: tween camera.position AND controls.target together
+// with GSAP (0.8s, power3.out), updating controls every tick. Any in-flight tween is killed.
 export default function CameraRig({ view }: { view: View | null }) {
-  // Pull the live camera and the OrbitControls out of R3F's shared state.
-  // (OrbitControls registered itself because we gave it `makeDefault` in App.)
   const { camera, controls } = useThree() as any
+  const tween = useRef<gsap.core.Tween | null>(null)
 
-  const animating = useRef(false)
-  const goalPos = useRef(new THREE.Vector3())
-  const goalTarget = useRef(new THREE.Vector3())
-
-  // When a new view is chosen, record the goal and start animating.
   useEffect(() => {
-    if (!view) return
-    goalPos.current.set(...view.position)
-    goalTarget.current.set(...view.target)
-    animating.current = true
-    if (controls) controls.enabled = false // pause user input so it doesn't fight the glide
-  }, [view, controls])
-
-  useFrame(() => {
-    if (!animating.current || !controls) return
-
-    // 0.08 = how much of the remaining distance to close each frame (the "ease").
-    camera.position.lerp(goalPos.current, 0.08)
-    controls.target.lerp(goalTarget.current, 0.08)
-    controls.update()
-
-    // Close enough? Stop animating and hand control back to the user.
-    const done =
-      camera.position.distanceTo(goalPos.current) < 0.02 &&
-      controls.target.distanceTo(goalTarget.current) < 0.02
-    if (done) {
-      animating.current = false
-      controls.enabled = true
+    if (!view || !controls) return
+    tween.current?.kill()
+    const t = controls.target as Vector3
+    const o = {
+      px: camera.position.x, py: camera.position.y, pz: camera.position.z,
+      tx: t.x, ty: t.y, tz: t.z,
     }
-  })
+    tween.current = gsap.to(o, {
+      px: view.position[0], py: view.position[1], pz: view.position[2],
+      tx: view.target[0], ty: view.target[1], tz: view.target[2],
+      duration: 0.8, ease: 'power3.out',
+      onUpdate() {
+        camera.position.set(o.px, o.py, o.pz)
+        controls.target.set(o.tx, o.ty, o.tz)
+        controls.update()
+      },
+    })
+    return () => { tween.current?.kill() }
+  }, [view, controls, camera])
 
   return null
 }

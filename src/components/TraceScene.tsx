@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import * as THREE from 'three'
 import { Seg } from '../trace/useTrace'
 
-function Wall({ seg, h, t }: { seg: Seg; h: number; t: number }) {
+function Wall({
+  seg, h, t, selected, onSelect,
+}: { seg: Seg; h: number; t: number; selected: boolean; onSelect: () => void }) {
   const [x1, z1, x2, z2] = seg
   const dx = x2 - x1, dz = z2 - z1
   const len = Math.hypot(dx, dz)
@@ -13,15 +15,21 @@ function Wall({ seg, h, t }: { seg: Seg; h: number; t: number }) {
       rotation={[0, -Math.atan2(dz, dx), 0]}
       castShadow
       receiveShadow
+      onClick={(e) => { e.stopPropagation(); onSelect() }}
     >
       <boxGeometry args={[len, h, t]} />
-      <meshStandardMaterial color="#dcd7cd" />
+      <meshStandardMaterial
+        color={selected ? '#22d3ee' : '#dcd7cd'}
+        emissive={selected ? '#22d3ee' : '#000000'}
+        emissiveIntensity={selected ? 0.6 : 0}
+      />
     </mesh>
   )
 }
 
 export default function TraceScene({
   imageUrl, widthM, heightM, segments, start, onPick,
+  selected = null, onSelect,
   ceiling = 2.5, thickness = 0.2,
 }: {
   imageUrl: string | null
@@ -30,6 +38,8 @@ export default function TraceScene({
   segments: Seg[]
   start: [number, number] | null
   onPick: (x: number, z: number) => void
+  selected?: number | null
+  onSelect?: (i: number) => void
   ceiling?: number
   thickness?: number
 }) {
@@ -60,7 +70,10 @@ export default function TraceScene({
       )}
 
       {/* live-generated walls */}
-      {segments.map((s, i) => <Wall key={i} seg={s} h={ceiling} t={thickness} />)}
+      {segments.map((s, i) => (
+        <Wall key={i} seg={s} h={ceiling} t={thickness}
+          selected={i === selected} onSelect={() => onSelect?.(i)} />
+      ))}
 
       {/* the "pen" position (where the next wall will start) */}
       {start && (

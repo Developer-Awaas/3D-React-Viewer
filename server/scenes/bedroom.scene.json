@@ -1,0 +1,40 @@
+{
+  "meta": {
+    "source": "uploaded raster part-plan (bedroom)",
+    "units": "ft",
+    "uom_confirmed": "feet-inches",
+    "wall_height_ft": 9.843,
+    "wall_height_note": "3 m, confirmed by user",
+    "scale": { "source": "dimension_text", "reference_label": "BEDROOM 12'5\" x 10'0\"", "ft_per_unit": 1.0 },
+    "warnings": []
+  },
+  "wall_types": {
+    "external": { "thickness_ft": 0.75 },
+    "internal": { "thickness_ft": 0.4 }
+  },
+  "rooms": [
+    { "name": "BEDROOM", "label_dim": "12'5\" x 10'0\"", "w_ft": 12.417, "d_ft": 10.0 },
+    { "name": "A.TOILET", "label_dim": "4'6\" x 8'0\"", "w_ft": 4.5, "d_ft": 8.0, "partial": true }
+  ],
+  "walls": [
+    { "id": "S", "axis": "x", "x0": 0.0, "x1": 13.917, "y0": 0.0, "y1": 0.75, "type": "external" },
+    { "id": "N", "axis": "x", "x0": 0.0, "x1": 13.917, "y0": 10.75, "y1": 11.5, "type": "external" },
+    { "id": "W", "axis": "y", "x0": 0.0, "x1": 0.75, "y0": 0.0, "y1": 11.5, "type": "external" },
+    { "id": "E", "axis": "y", "x0": 13.167, "x1": 13.917, "y0": 0.0, "y1": 11.5, "type": "internal" }
+  ],
+  "openings": [
+    { "id": "win-n1", "type": "window", "wall": "N", "along": [1.5, 4.5], "z": [3.0, 7.0] },
+    { "id": "win-n2", "type": "window", "wall": "N", "along": [7.5, 11.5], "z": [3.0, 7.0] },
+    { "id": "win-w1", "type": "window", "wall": "W", "along": [3.0, 7.0], "z": [3.0, 7.0] },
+    { "id": "door-s1", "type": "door", "wall": "S", "along": [8.5, 11.5], "z": [0.0, 7.0], "hinge": "x1", "swing": "in" }
+  ],
+  "columns": [
+    { "id": "col-nw", "x": 0.0, "y": 10.5, "w": 1.0, "d": 1.0, "kind": "column" },
+    { "id": "col-ne", "x": 12.917, "y": 10.5, "w": 1.0, "d": 1.0, "kind": "column" }
+  ],
+  "ducts": [],
+  "furniture": [
+    { "id": "bed", "type": "bed", "x": 3.0, "y": 4.25, "w": 5.0, "d": 6.5, "h": 1.6, "headboard": "N" },
+    { "id": "wardrobe", "type": "cupboard", "x": 1.0, "y": 0.75, "w": 5.0, "d": 2.0, "h": 7.0, "along_wall": "S" }
+  ]
+}

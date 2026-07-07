@@ -1,0 +1,24 @@
+# Web server
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+# Image handling
+pillow
+numpy
+scikit-image
+shapely
+opencv-python-headless
+# CubiCasa (floortrans) dependencies
+lmdb
+svgpathtools
+tensorboardX
+# Deep learning - on a CUDA machine install the matching torch build instead
+torch
+torchvision
+
+# geometry / GLB export
+trimesh
+
+# PDF -> image (accept PDF uploads)
+pymupdf
