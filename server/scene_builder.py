@@ -10,9 +10,9 @@ DEFAULT_WIDTH_FT = 40.0
 WALL_HEIGHT_FT = 9.843        # ~3 m
 EXT_THICKNESS_FT = 0.75
 INT_THICKNESS_FT = 0.4
-DOOR_HEAD_FT = 6.89           # ~2.1 m
-WINDOW_SILL_FT = 2.953        # ~0.9 m
-WINDOW_HEAD_FT = 6.89         # ~2.1 m
+DOOR_HEAD_FT = 7.0            # lintel level 7'0" (Indian practice)
+WINDOW_SILL_FT = 3.0          # sill 3'0" (locked convention)
+WINDOW_HEAD_FT = 7.0          # lintel level 7'0" = door head
 CORNER_TOL_FT = 1.0           # max gap closed when snapping corners
 MIN_OPENING_FT = 0.15
 

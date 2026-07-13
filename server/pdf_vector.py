@@ -21,7 +21,7 @@ NORM_PPX = 50.9              # raster px per ft (keeps morphology physical)
 BORDER_MAXLEN_PT = 900       # drop page-border / site-boundary mega-lines
 WINDOW_SILL_FT = 3.0         # locked: sill 3 ft / head 7 ft
 WINDOW_HEAD_FT = 7.0
-DOOR_HEAD_FT = 6.89          # ~2.1 m (matches Step B2)
+DOOR_HEAD_FT = 7.0           # lintel level 7'0" (Indian practice; matches window head)
 DOOR_MIN_FT, DOOR_MAX_FT = 2.0, 5.5
 WALL_HEIGHT_FT = 9.843       # ~3 m
 MIN_WALL_AREA_PX = 6000
@@ -96,14 +96,256 @@ def _segs(drawings, want, maxlen=BORDER_MAXLEN_PT):
     return out
 
 
+TEXT_MED_MAXLEN_PT = 5.0     # a layer whose MEDIAN segment is shorter = outlined text
+
+
+def _filter_text_layers(drawings, want, warnings):
+    """Segments from layers matching `want`, minus text-like decoy layers.
+
+    Outlined lettering (e.g. a title block on a layer literally named 'wall',
+    seen in real exports) is thousands of sub-point strokes; real wall lines
+    are feet long. Any candidate layer whose MEDIAN segment length is under
+    TEXT_MED_MAXLEN_PT is dropped whole, with a warning recorded.
+    Returns (segments, dropped_layer_names)."""
+    import statistics
+    by_layer = {}
+    for d in drawings:
+        if want(d["lname"]):
+            by_layer.setdefault(d["lname"], []).append(d)
+    segs, dropped = [], set()
+    for name, ds in sorted(by_layer.items()):
+        ls = _segs(ds, lambda n: True)
+        if not ls:
+            continue
+        med = statistics.median(math.hypot(x2 - x1, y2 - y1) for x1, y1, x2, y2 in ls)
+        if med < TEXT_MED_MAXLEN_PT:
+            dropped.add(name)
+            warnings.append(f"layer '{name}' skipped: text-like "
+                            f"(median seg {med:.1f} pt, n={len(ls)})")
+        else:
+            segs += ls
+    return segs, dropped
+
+
+GEOM_SKIP = ("door", "dim", "text", "furn", "sanitary", "kitchen", "stair",
+             "elev", "chhaja", "boundary")   # layers that never carry wall lines
+
+
+def _text_scale(page, drawings, warnings):
+    """Scale from LIVE dimension text: each ft-in token that hugs a parallel
+    line of matching length votes for pt-per-foot; the dominant vote wins.
+    Room labels (no matching line) cannot vote. Returns (ppf, nvotes)|(None,0)."""
+    import re
+    import statistics
+    from collections import Counter
+    import fitz
+    mat = page.rotation_matrix
+    FTIN = re.compile(r"^(\d+)['\u2019]-?(\d+)?[\"\u201d]?$")
+    toks = []
+    for w in page.get_text("words"):
+        m = FTIN.match(w[4].strip())
+        if not m:
+            continue
+        val = int(m.group(1)) + int(m.group(2) or 0) / 12.0
+        if 2 <= val <= 100:
+            r = (fitz.Rect(w[:4]) * mat).normalize()
+            toks.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, val))
+    if len(toks) < 4:
+        return None, 0, set()
+    lines = []
+    for d in drawings:
+        for it in d["items"]:
+            if it[0] == "l":
+                a, b = it[1], it[2]
+                dx, dy = b.x - a.x, b.y - a.y
+                L = math.hypot(dx, dy)
+                if 8 < L < BORDER_MAXLEN_PT:
+                    lines.append((a.x, a.y, dx, dy, L))
+    votes = []
+    dim_keys = set()          # lines with dimension text hugging them = NOT walls
+    for cx, cy, val in toks:
+        for ax, ay, dx, dy, L in lines:
+            t = ((cx - ax) * dx + (cy - ay) * dy) / (L * L)
+            if not (0.15 < t < 0.85):
+                continue                       # text must sit mid-line
+            perp = math.hypot(cx - (ax + t * dx), cy - (ay + t * dy))
+            if perp > 9:
+                continue                       # and hug it (few pt away)
+            dim_keys.add((round(ax, 1), round(ay, 1),
+                          round(ax + dx, 1), round(ay + dy, 1)))
+            ppf = L / val
+            if 2 < ppf < 40:
+                votes.append(round(ppf, 1))
+    if len(votes) < 8:
+        return None, 0, dim_keys
+    best = Counter(votes).most_common(1)[0][0]
+    close = [v for v in votes if abs(v - best) <= 0.3]
+    if len(close) < 8 or len(close) < 0.15 * len(votes):
+        return None, 0, dim_keys
+    ppf = statistics.median(close)
+    warnings.append(f"scale from dimension text: {ppf:.2f} pt/ft "
+                    f"({len(close)} agreeing votes)")
+    return ppf, len(close), dim_keys
+
+
+def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
+    """Find walls WITHOUT layer names: two parallel axis-aligned lines
+    3-11 in apart overlapping >= 2 ft = a masonry wall. Lines identified as
+    dimension lines (text hugging them) never count. Returns the paired
+    spans as segments for the normal raster pipeline."""
+    H, V = [], []
+    for d in drawings:
+        if any(k in d["lname"] for k in GEOM_SKIP):
+            continue
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            if (round(a.x, 1), round(a.y, 1), round(b.x, 1), round(b.y, 1)) in dim_keys:
+                continue
+            dx, dy = b.x - a.x, b.y - a.y
+            L = math.hypot(dx, dy)
+            if L < 6 or L > BORDER_MAXLEN_PT:
+                continue
+            if abs(dy) < 0.5:
+                H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
+            elif abs(dx) < 0.5:
+                V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
+    th_min, th_max = 0.25 * ppf, 0.92 * ppf     # 3..11 inch
+    min_ovl = 2.0 * ppf
+
+    def pairs(runs, horiz):
+        runs = sorted(runs)
+        walls = []                     # (p_mid, a, b)
+        for i in range(len(runs)):
+            p1, a1, b1 = runs[i]
+            for j in range(i + 1, len(runs)):
+                p2, a2, b2 = runs[j]
+                if p2 - p1 > th_max:
+                    break
+                if p2 - p1 < th_min:
+                    continue
+                a, b = max(a1, a2), min(b1, b2)
+                if b - a < min_ovl:
+                    continue
+                walls.append(((p1 + p2) / 2, a, b))
+        walls = _drop_stair_ladders(walls, ppf, warnings, horiz)
+        segs = []
+        half = 0.25 * ppf              # rebuild the two faces of each kept wall
+        for p, a, b in walls:
+            for q in (p - half, p + half):
+                segs.append((a, q, b, q) if horiz else (q, a, q, b))
+        return segs
+
+    segs = pairs(H, True) + pairs(V, False)
+    if segs:
+        warnings.append(f"walls detected by GEOMETRY (parallel-pair rule): "
+                        f"{len(segs)} spans - no usable wall layer on this sheet")
+    return segs
+
+
+def _drop_stair_ladders(walls, ppf, warnings, horiz):
+    """Remove staircase treads mis-read as walls. Treads are >=4 parallel
+    spans with almost the same start/end, marching at a tight regular rhythm
+    (0.5-1.6 ft). No real building has 4+ walls stacked a foot apart."""
+    if len(walls) < 5:
+        return walls
+    walls = sorted(walls)
+    drop = set()
+    i = 0
+    while i < len(walls):
+        chain = [i]
+        j = i
+        while j + 1 < len(walls):
+            p0, a0, b0 = walls[j]
+            p1, a1, b1 = walls[j + 1]
+            step = p1 - p0
+            s0, s1 = b0 - a0, b1 - a1
+            ovl = min(b0, b1) - max(a0, a1)
+            equal = min(s0, s1) >= 0.75 * max(s0, s1)   # treads have equal spans
+            if (0.35 * ppf <= step <= 1.6 * ppf and equal
+                    and ovl >= 0.8 * max(s0, s1)):
+                chain.append(j + 1)
+                j += 1
+            else:
+                break
+        # a stair flight = 5+ equal rungs; its OUTERMOST rungs are usually the
+        # real walls enclosing the stair, so keep the endpoints.
+        if len(chain) >= 5:
+            drop.update(chain[1:-1])
+        i = j + 1
+    if drop:
+        warnings.append(f"stair filter: dropped {len(drop)} "
+                        f"{'horizontal' if horiz else 'vertical'} tread-like strips")
+        return [w for k, w in enumerate(walls) if k not in drop]
+    return walls
+
+
+def _wing_groups(m, gap_ft=8.0):
+    """Split the wall mask into spatially separate building wings.
+    Returns [(labels_set, bbox_px, area)] sorted largest first."""
+    import cv2
+    n, lab, stt, _ = cv2.connectedComponentsWithStats(m, 8)
+    comps = [(i, (stt[i, 0], stt[i, 1], stt[i, 0] + stt[i, 2],
+                  stt[i, 1] + stt[i, 3]), stt[i, 4]) for i in range(1, n)]
+    if not comps:
+        return []
+    gap = gap_ft * NORM_PPX
+    parent = list(range(len(comps)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    def near(b1, b2):
+        return not (b1[2] + gap < b2[0] or b2[2] + gap < b1[0]
+                    or b1[3] + gap < b2[1] or b2[3] + gap < b1[1])
+
+    for i in range(len(comps)):
+        for j in range(i + 1, len(comps)):
+            if near(comps[i][1], comps[j][1]):
+                parent[find(i)] = find(j)
+    members = {}
+    for k, (idx, bb, area) in enumerate(comps):
+        members.setdefault(find(k), []).append((idx, bb, area))
+    groups = []
+    for mem in members.values():
+        biggest = max(a for _, _, a in mem)
+        struct = [(i, bb, a) for i, bb, a in mem if a >= 0.1 * biggest]
+        bx0 = min(bb[0] for _, bb, _ in struct)
+        by0 = min(bb[1] for _, bb, _ in struct)
+        bx1 = max(bb[2] for _, bb, _ in struct)
+        by1 = max(bb[3] for _, bb, _ in struct)
+        groups.append([set(i for i, _, _ in struct), (bx0, by0, bx1, by1),
+                       sum(a for _, _, a in struct)])
+    return sorted(groups, key=lambda g: -g[2])
+
+
 def is_vector_plan(raw):
-    """True if these PDF bytes carry recognizable CAD layers."""
+    """True if these PDF bytes can take the vector path: recognizable CAD
+    layers, OR enough raw axis-aligned linework for geometry wall detection
+    (scanned/flat PDFs have no vector drawings at all, so they still route
+    to the raster/CubiCasa path)."""
     try:
         import fitz
         page = fitz.open(stream=raw, filetype="pdf")[0]
-        names = {_lname(d) for d in page.get_drawings()}
-        return any(_is_wall_layer(n) or _is_column_layer(n) or _is_window_layer(n)
-                   for n in names)
+        drawings = page.get_drawings()
+        names = {_lname(d) for d in drawings}
+        if any(_is_wall_layer(n) or _is_column_layer(n) or _is_window_layer(n)
+               for n in names):
+            return True
+        n_axis = 0
+        for d in drawings:
+            if any(k in _lname(d) for k in GEOM_SKIP):
+                continue
+            for it in d["items"]:
+                if it[0] == "l":
+                    a, b = it[1], it[2]
+                    if abs(a.x - b.x) < 0.5 or abs(a.y - b.y) < 0.5:
+                        n_axis += 1
+        return n_axis >= 60
     except Exception:
         return False
 
@@ -158,8 +400,94 @@ def _cluster_rects(rects, gap=3.0):
     return list(groups.values())
 
 
-def parse(raw, width_ft=None):
-    """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable."""
+def _door_gap_strip(m, box_px, door_w_px):
+    """Locate the doorway GAP in the wall mask beside a door swing box.
+
+    CAD wall linework stops at both jambs, so the raster wall mask has a hole
+    where the doorway is. Morphologically closing the neighbourhood along each
+    axis reveals exactly the missing strip. A candidate strip must be thin like
+    a wall (else it's a corridor/parallel-wall fill), door-sized along the wall,
+    and touching the swing box. Returns (comp_bool_mask, bbox_px, (offx, offy))
+    for the best strip, or None if the wall has no gap there."""
+    import cv2
+    H, W = m.shape
+    x0, y0, x1, y1 = box_px
+    pad = int(1.2 * NORM_PPX)                     # reach the wall beside the swing
+    X0, Y0 = max(0, x0 - pad), max(0, y0 - pad)
+    X1, Y1 = min(W, x1 + pad), min(H, y1 + pad)
+    if X1 <= X0 or Y1 <= Y0:
+        return None
+    roi = m[Y0:Y1, X0:X1]
+    k = int(door_w_px) + 6
+    touch = int(0.6 * NORM_PPX)     # swing box may sit ~half a wall away from the gap
+    best = None                     # (area, strip_mask, union_bbox, offset)
+    for kern in ((k, 1), (1, k)):
+        closed = cv2.morphologyEx(roi, cv2.MORPH_CLOSE,
+                                  cv2.getStructuringElement(cv2.MORPH_RECT, kern))
+        added = cv2.bitwise_and(closed, cv2.bitwise_not(roi))
+        n, lab, stt, _ = cv2.connectedComponentsWithStats(added, 8)
+        # a double-line wall shows the gap as SEVERAL parallel strips - accept
+        # every door-sized one in this orientation and use their union.
+        strip = None
+        area = 0
+        ub = None
+        for i in range(1, n):
+            w = stt[i, cv2.CC_STAT_WIDTH]
+            h = stt[i, cv2.CC_STAT_HEIGHT]
+            long_, thin = max(w, h), min(w, h)
+            if thin > 1.5 * NORM_PPX:             # thicker than any wall
+                continue
+            if not (0.5 * door_w_px <= long_ <= door_w_px + 0.6 * NORM_PPX):
+                continue                          # not door-sized along the wall
+            bx = stt[i, cv2.CC_STAT_LEFT] + X0
+            by = stt[i, cv2.CC_STAT_TOP] + Y0
+            if (bx > x1 + touch or bx + w < x0 - touch
+                    or by > y1 + touch or by + h < y0 - touch):
+                continue                          # nowhere near the swing box
+            comp = (lab == i)
+            strip = comp if strip is None else (strip | comp)
+            area += stt[i, cv2.CC_STAT_AREA]
+            bb = (bx, by, bx + w, by + h)
+            ub = bb if ub is None else (min(ub[0], bb[0]), min(ub[1], bb[1]),
+                                        max(ub[2], bb[2]), max(ub[3], bb[3]))
+        if strip is not None and (best is None or area > best[0]):
+            best = (area, strip, ub, (X0, Y0))
+    return best[1:] if best else None
+
+
+def wing_arg(w):
+    """Query-param -> parse() wing argument: '2'->2, else 'largest'."""
+    try:
+        return int(w)
+    except (TypeError, ValueError):
+        return "largest"
+
+
+def _door_scale_sanity(openings, warnings):
+    """Practical cross-check: snapped doors are real doors (2'0"-4'6" wide in
+    Indian residential work). If their median width is far outside that band,
+    the SCALE is suspect - warn with the implied correction factor."""
+    import statistics
+    widths = []
+    for o in openings:
+        if o.get("type") == "door" and o.get("snapped") and o.get("footprint"):
+            x0, y0, x1, y1 = o["footprint"]
+            widths.append(max(x1 - x0, y1 - y0))
+    if len(widths) < 5:
+        return
+    med = statistics.median(widths)
+    if not (2.1 <= med <= 4.2):
+        factor = med / 3.0          # vs a nominal 3'0" door
+        warnings.append(
+            f"SCALE SUSPECT: median snapped-door width {med:.2f} ft "
+            f"(expected 2'6\"-3'6\"); sizes may be off ~{factor:.2f}x - "
+            f"check the column size or provide width_ft")
+
+
+def parse(raw, width_ft=None, wing="largest"):
+    """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
+    wing: "largest" or an int index - which building wing to build when the
+    sheet holds several separate blocks (sorted largest first)."""
     import cv2
     import fitz
     import numpy as np
@@ -167,10 +495,31 @@ def parse(raw, width_ft=None):
     page = fitz.open(stream=raw, filetype="pdf")[0]
     drawings = _page_drawings(page)
 
-    struct = _segs(drawings, _is_wall_layer) + _segs(drawings, _is_window_layer)
+    warnings = []
+    wall_segs, skipped = _filter_text_layers(drawings, _is_wall_layer, warnings)
+    win_segs, skipped_w = _filter_text_layers(drawings, _is_window_layer, warnings)
+    skipped |= skipped_w
+    struct = wall_segs + win_segs
+    col_rects = _column_rects(drawings)
+
+    # scale from live dimension text beats every other signal
+    text_ppf, _tv, dim_keys = _text_scale(page, drawings, warnings)
+
+    mode = "layers"
+    if len(struct) < 30:            # no usable wall layer -> geometry detection
+        seed = text_ppf
+        if seed is None and col_rects:
+            import numpy as np
+            sizes = [round(max(r.width, r.height), 1) for r in col_rects]
+            v, c = np.unique(sizes, return_counts=True)
+            seed = float(v[c.argmax()]) / COL_FT
+        if seed:
+            gsegs = _geometry_wall_segs(drawings, seed, warnings, dim_keys)
+            if len(gsegs) >= 8:
+                struct = gsegs
+                mode = "geometry"
     if not struct:
         raise ValueError("no segments on wall/window layers - not a layered CAD PDF")
-    col_rects = _column_rects(drawings)
 
     # one sheet may hold several drawings; the building is where the columns are
     if col_rects:
@@ -186,12 +535,18 @@ def parse(raw, width_ft=None):
         kept = [s for s in struct if inside(s)]
         if len(kept) >= max(8, 0.2 * len(struct)):   # sanity: don't crop all away
             struct = kept
+        else:
+            warnings.append("building crop skipped: wall extent disagrees with "
+                            "column extent (check for stray drawings on the sheet)")
 
     xs = [s[0] for s in struct] + [s[2] for s in struct]
     ys = [s[1] for s in struct] + [s[3] for s in struct]
     x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
 
-    ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
+    if text_ppf:
+        ppf, scale_src = text_ppf, "dimension_text"
+    else:
+        ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
     w_ft = (x1 - x0) / ppf
     d_ft = (y1 - y0) / ppf
 
@@ -210,13 +565,70 @@ def parse(raw, width_ft=None):
         cv2.line(m, tp(ax, ay), tp(bx, by), 255, 2)
     m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
     m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))
-    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))
+    # merge the TWO lines of a double-line wall into one solid band: kernel =
+    # max wall thickness (10 in ~ 0.85 ft). Door gaps (>= 2'6" = 127 px) survive.
+    wk = int(0.9 * NORM_PPX) | 1
+    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (wk, wk)))
     n, lab, stt, _ = cv2.connectedComponentsWithStats(m, 8)
     keep = np.zeros_like(m)
     for i in range(1, n):
         if stt[i, cv2.CC_STAT_AREA] > MIN_WALL_AREA_PX:
             keep[lab == i] = 255
     m = keep
+
+    # --- wing split: a sheet can hold several separate building blocks; keep
+    # ONE per scene (user directive: no overlapping modules). Coordinates stay
+    # in the full-sheet frame; meta reports the wing bbox + count. ---
+    wing_groups = _wing_groups(m)
+    wing_count = len(wing_groups)
+    wbox_ft = None
+    w_idx = 0
+    if wing_count > 1:
+        w_idx = 0 if wing == "largest" else int(wing)
+        if not (0 <= w_idx < wing_count):
+            raise ValueError(f"wing {w_idx} out of range (sheet has {wing_count})")
+        labels, wb, _area = wing_groups[w_idx]
+        import cv2 as _cv2
+        _n, _lab = _cv2.connectedComponents(m, 8)
+        m = (np.isin(_lab, list(labels)).astype(np.uint8)) * 255
+        wx0 = (wb[0] - PAD_PX) / NORM_PPX
+        wx1 = (wb[2] - PAD_PX) / NORM_PPX
+        wy_top = d_ft - (wb[1] - PAD_PX) / NORM_PPX
+        wy_bot = d_ft - (wb[3] - PAD_PX) / NORM_PPX
+        wbox_ft = (wx0, wy_bot, wx1, wy_top)
+        warnings.append(f"{wing_count} separate wings on this sheet - built wing "
+                        f"{w_idx} ({(wx1-wx0):.1f} x {(wy_top-wy_bot):.1f} ft, "
+                        f"largest first); request wing=N for the others")
+
+    def _in_wing(cx_ft, cy_ft, pad=1.0):
+        return (wbox_ft is None
+                or (wbox_ft[0] - pad <= cx_ft <= wbox_ft[2] + pad
+                    and wbox_ft[1] - pad <= cy_ft <= wbox_ft[3] + pad))
+
+    # --- doors: snap each swing box onto the doorway GAP in the wall, FILL the
+    # gap so the wall is continuous, and remember the strip as the door cut.
+    # Without this the doorway is a full-height hole and the door record cuts
+    # nothing; with it, scene_to_glb's z-band cut (0..DOOR_HEAD_FT) leaves a
+    # proper header/lintel above the door, as built on site. ---
+    door_rects = [d["rect"] for d in drawings if _is_door_layer(d["lname"])]
+    has_door_layer = bool(door_rects)
+    door_hits = []                     # (strip_bbox_px or None, cluster_rect)
+    for cl in (_cluster_rects(door_rects) if door_rects else []):
+        wd = max(cl.width, cl.height) / ppf
+        if not (DOOR_MIN_FT <= wd <= DOOR_MAX_FT):
+            continue
+        ccx = ((cl.x0 + cl.x1) / 2 - x0) / ppf
+        ccy = d_ft - ((cl.y0 + cl.y1) / 2 - y0) / ppf
+        if not _in_wing(ccx, ccy, pad=2.0):
+            continue
+        (ax, ay), (bx, by) = tp(cl.x0, cl.y0), tp(cl.x1, cl.y1)
+        hit = _door_gap_strip(m, (ax, ay, bx, by), wd * NORM_PPX)
+        if hit:
+            comp, bbox_px, (offx, offy) = hit
+            m[offy:offy + comp.shape[0], offx:offx + comp.shape[1]][comp] = 255
+            door_hits.append((bbox_px, cl))
+        else:
+            door_hits.append((None, cl))
 
     # --- contours -> polygons in FEET (origin bottom-left, y up) ---
     def fx(px):
@@ -255,26 +667,127 @@ def parse(raw, width_ft=None):
 
     # --- windows: rects on window layers, plausible sizes ---
     for d in drawings:
-        if not _is_window_layer(d["lname"]):
+        if not _is_window_layer(d["lname"]) or d["lname"] in skipped:
             continue
         r = d["rect"]
+        wcx = ((r.x0 + r.x1) / 2 - x0) / ppf
+        wcy = d_ft - ((r.y0 + r.y1) / 2 - y0) / ppf
+        if not _in_wing(wcx, wcy):
+            continue
         L = max(r.width, r.height) / ppf
         T = min(r.width, r.height) / ppf
         if 1.5 <= L <= 8.0 and 0.05 <= T <= 1.2:
             openings.append({"id": f"o{len(openings)}", "type": "window",
                              "footprint": ft_rect(r),
                              "z": [WINDOW_SILL_FT, WINDOW_HEAD_FT]})
-    has_window_layer = any(_is_window_layer(d["lname"]) for d in drawings)
+    has_window_layer = any(_is_window_layer(d["lname"]) and d["lname"] not in skipped
+                           for d in drawings)
 
-    # --- doors: cluster door-layer fragments; cluster bbox ~ leaf + swing arc ---
-    door_rects = [d["rect"] for d in drawings if _is_door_layer(d["lname"])]
-    has_door_layer = bool(door_rects)
-    for cl in _cluster_rects(door_rects) if door_rects else []:
-        wd = max(cl.width, cl.height) / ppf
-        if DOOR_MIN_FT <= wd <= DOOR_MAX_FT:
-            openings.append({"id": f"o{len(openings)}", "type": "door",
-                             "footprint": ft_rect(cl),
-                             "z": [0, DOOR_HEAD_FT]})
+    # --- windows PLAN B: symbols embedded in the WALL layer (no window layer).
+    # Window-sized rects sitting on the wall mask, away from doors, are window
+    # symbols. Cut = the rect itself -> a punched hole with jambs, sill 3',
+    # head 7' (real construction, not a half-fallen wall). ---
+    if not openings or all(o["type"] == "door" for o in openings):
+        wrects = []
+        for d in drawings:
+            if not _is_wall_layer(d["lname"]) or d["lname"] in skipped:
+                continue
+            r = d["rect"]
+            L = max(r.width, r.height) / ppf
+            T = min(r.width, r.height) / ppf
+            if 1.5 <= L <= 8.0 and 0.05 <= T <= 1.2:
+                wrects.append(r)
+        added = 0
+        for cl in (_cluster_rects(wrects, gap=2.0) if wrects else []):
+            L = max(cl.width, cl.height) / ppf
+            if not (1.5 <= L <= 8.0):
+                continue
+            (ax, ay), (bx, by) = tp(cl.x0, cl.y0), tp(cl.x1, cl.y1)
+            cxp, cyp = (ax + bx) // 2, (ay + by) // 2
+            if not (0 <= cyp < m.shape[0] and 0 <= cxp < m.shape[1]) or not m[cyp, cxp]:
+                continue                       # must sit ON a wall
+            fp = ft_rect(cl)
+            fcx, fcy = (fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2
+            if not _in_wing(fcx, fcy):
+                continue
+            near_door = any(o["type"] == "door"
+                            and abs((o["footprint"][0]+o["footprint"][2])/2 - fcx) < 2.5
+                            and abs((o["footprint"][1]+o["footprint"][3])/2 - fcy) < 2.5
+                            for o in openings)
+            if near_door:
+                continue
+            openings.append({"id": f"o{len(openings)}", "type": "window",
+                             "footprint": fp, "z": [WINDOW_SILL_FT, WINDOW_HEAD_FT]})
+            added += 1
+        if added:
+            has_window_layer = True
+            warnings.append(f"{added} window(s) extracted from wall-layer symbols")
+
+    # --- windows PLAN C: W/V text TAGS + the user's opening legend. The tag
+    # marks the window on the wall; the legend gives its true width. ---
+    LEGEND = {"W1": (5.0, 3.0, 7.0), "W2": (4.0, 3.0, 7.0), "W3": (3.0, 3.5, 6.5),
+              "W": (4.0, 3.0, 7.0), "V": (2.0, 5.5, 7.0), "V1": (2.0, 5.5, 7.0)}
+    import re as _re
+    tags = []
+    for wd in page.get_text("words"):
+        t = wd[4].strip().upper()
+        if t in LEGEND:
+            import fitz as _fitz
+            r = (_fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
+            tags.append((t, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+    tadd = 0
+    for t, cx, cy in tags:
+        wft, sill, head = LEGEND[t]
+        pxc = tp(cx, cy)
+        if not (0 <= pxc[1] < m.shape[0] and 0 <= pxc[0] < m.shape[1]):
+            continue
+        # find the wall within ~2.5 ft of the tag; orientation from local mask
+        R = int(2.5 * NORM_PPX)
+        y0_, y1_ = max(0, pxc[1]-R), min(m.shape[0], pxc[1]+R)
+        x0_, x1_ = max(0, pxc[0]-R), min(m.shape[1], pxc[0]+R)
+        patch = m[y0_:y1_, x0_:x1_]
+        if not patch.any():
+            continue
+        import numpy as _np
+        ys, xs2 = _np.nonzero(patch)
+        wy = (ys.mean() + y0_)
+        wx = (xs2.mean() + x0_)
+        horiz = (xs2.max() - xs2.min()) >= (ys.max() - ys.min())
+        fcx = (wx - PAD_PX) / NORM_PPX
+        fcy = d_ft - (wy - PAD_PX) / NORM_PPX
+        if not _in_wing(fcx, fcy):
+            continue
+        if horiz:
+            fp = [round(fcx - wft/2, 3), round(fcy - 0.6, 3),
+                  round(fcx + wft/2, 3), round(fcy + 0.6, 3)]
+        else:
+            fp = [round(fcx - 0.6, 3), round(fcy - wft/2, 3),
+                  round(fcx + 0.6, 3), round(fcy + wft/2, 3)]
+        openings.append({"id": f"o{len(openings)}", "type": "window", "tag": t,
+                         "footprint": fp, "z": [sill, head]})
+        tadd += 1
+    if tadd:
+        has_window_layer = True
+        warnings.append(f"{tadd} window(s)/ventilator(s) placed from W/V text tags + legend")
+
+    # --- doors: footprint = the doorway strip ON the wall (found above, so the
+    # z-band cut applies and a header remains); swing_area = the leaf+arc box,
+    # kept for the viewer (door placement / swing animation later). ---
+    fallback_doors = 0
+    for bbox_px, cl in door_hits:
+        rec = {"id": f"o{len(openings)}", "type": "door",
+               "z": [0, DOOR_HEAD_FT], "swing_area": ft_rect(cl),
+               "snapped": bool(bbox_px)}
+        if bbox_px:
+            px0, py0, px1, py1 = bbox_px
+            rec["footprint"] = [fx(px0), fy(py1), fx(px1), fy(py0)]
+        else:
+            rec["footprint"] = ft_rect(cl)       # swing box; snapped=False flags it
+            fallback_doors += 1
+        openings.append(rec)
+    if fallback_doors:
+        warnings.append(f"{fallback_doors} door(s): doorway gap not found in the "
+                        "wall mask - swing box used as cut (check these doors)")
 
     # --- columns (dominant-size boxes only, deduplicated by cluster) ---
     columns = []
@@ -286,29 +799,58 @@ def parse(raw, width_ft=None):
             uniq = _cluster_rects([r for r in col_rects
                                    if abs(max(r.width, r.height) - dom) < 0.6], gap=1.0)
             for r in uniq:
+                _cx = ((r.x0 + r.x1) / 2 - x0) / ppf
+                _cy = d_ft - ((r.y0 + r.y1) / 2 - y0) / ppf
+                if not _in_wing(_cx, _cy):
+                    continue
                 columns.append({"id": f"c{len(columns)}", "kind": "column",
                                 "x": round((r.x0 - x0) / ppf, 3),
                                 "y": round(d_ft - (r.y1 - y0) / ppf, 3),
                                 "w": round(r.width / ppf, 3), "d": round(r.height / ppf, 3)})
 
-    warnings = []
     if scale_src == "column_box_12in":
         warnings.append("scale from dominant column box = 12 in (provisional)")
-    else:
+    elif scale_src != "dimension_text":
         warnings.append("scale is a placeholder until dimension text is readable")
     if not has_window_layer:
         warnings.append("no window layer found - windows not extracted")
     if not has_door_layer:
         warnings.append("no door layer found - doors not extracted")
 
+    _door_scale_sanity(openings, warnings)
+
+    if wbox_ft is not None:
+        out_w = float(wbox_ft[2] - wbox_ft[0])
+        out_d = float(wbox_ft[3] - wbox_ft[1])
+        sx, sy = float(wbox_ft[0]), float(wbox_ft[1])
+
+        def _shift_pt(p):
+            return [round(p[0] - sx, 3), round(p[1] - sy, 3)]
+
+        for w in walls_poly:
+            w["outer"] = [_shift_pt(p) for p in w["outer"]]
+            w["holes"] = [[_shift_pt(p) for p in h] for h in (w["holes"] or [])]
+        for o in openings:
+            for key in ("footprint", "swing_area"):
+                if o.get(key):
+                    fp = o[key]
+                    o[key] = [round(fp[0] - sx, 3), round(fp[1] - sy, 3),
+                              round(fp[2] - sx, 3), round(fp[3] - sy, 3)]
+        for c in columns:
+            c["x"] = round(c["x"] - sx, 3)
+            c["y"] = round(c["y"] - sy, 3)
+    else:
+        out_w, out_d = w_ft, d_ft
     return {
         "meta": {
-            "source": "vector_pdf_layers",
+            "source": f"vector_pdf_{mode}",
             "units": "ft",
             "wall_height_ft": WALL_HEIGHT_FT,
-            "plan_width_ft": round(w_ft, 3),
-            "plan_depth_ft": round(d_ft, 3),
+            "plan_width_ft": round(out_w, 3),
+            "plan_depth_ft": round(out_d, 3),
             "scale": {"source": scale_src, "pt_per_ft": round(ppf, 3)},
+            "wing": {"count": wing_count, "index": w_idx,
+                     "bbox_ft": [round(v, 3) for v in wbox_ft] if wbox_ft else None},
             "warnings": warnings,
         },
         "wall_types": {},

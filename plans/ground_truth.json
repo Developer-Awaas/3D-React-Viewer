@@ -1,0 +1,239 @@
+{
+ "_readme": "Ground-truth dataset for parser evaluation. One entry per plan. Filled from the drawing's own text + user answers. Used by batch_eval scorecards now; later = labelled dataset for the Phase-2 fine-tune flywheel.",
+ "plans": {
+  "FLOOR PLAN.pdf": {
+   "source": "Architrave, AutoCAD export, page rotation 270",
+   "type": "vector-cad",
+   "units": "unknown (no live text)",
+   "flats": "2BHK x2 + lobby/lift",
+   "doors_expected": 12,
+   "windows_expected": "in wall layer (not extractable yet)",
+   "overall_ft": "USER TO CONFIRM from drawing dimension text (parser says 113.9 x 35.6 after junk fix; old 122x65 was junk-inflated)",
+   "column_in": "12 (assumed, drives scale)"
+  },
+  "attachment-1 FIRST FLOOR PLAN (photo, awaiting file)": {
+   "source": "Neelachala Homes Ghatikia - photo pasted in chat 2026-07-10",
+   "type": "raster-photo",
+   "units": "meters (CONFIRMED by user 2026-07-10)",
+   "flats": "FLAT NO-101 + FLAT NO-102, staircase 2.39x3.91, lift ~1.6x1.57",
+   "rooms_m": {
+    "SOCIETY RM": "3.43x4.04",
+    "TOILET-101a": "2.31x1.37",
+    "BALCONY-101a": "1.07x2.?",
+    "KITCHEN-101": "2.90x1.83",
+    "DINING-101": "3.15x3.35",
+    "TOILET-101b": "2.13x1.55",
+    "BED ROOM-101a": "3.35x3.84",
+    "BED ROOM-101b": "3.15x4.11",
+    "Balcony-101b": "3.35x1.02",
+    "DRG.RM.-101": "4.19x3.63",
+    "BED RM-102a": "3.43x4.11",
+    "KITCHEN-102": "1.96x4.11",
+    "DINING-102": "4.47x3.96",
+    "DRG.RM.-102": "3.38x4.14",
+    "C.TOILET-102": "2.34x1.37",
+    "A.TOILET-102": "2.34x1.50",
+    "BED RM-102b": "3.38x3.96",
+    "BED RM-102c": "3.33x3.56",
+    "Balcony-102a": "0.91x3.33",
+    "BALCONY-102b": "1.04x2.46"
+   },
+   "edge_dims_m": {
+    "top": [
+     8.21,
+     6.02,
+     2.03
+    ],
+    "left": [
+     5.32,
+     2.14,
+     8.86
+    ],
+    "bottom": [
+     3.86,
+     3.28,
+     1.02,
+     7.09,
+     3.0
+    ]
+   },
+   "overall": "USER TO CONFIRM total W x D",
+   "doors_expected": "USER TO CONFIRM",
+   "windows_expected": "USER TO CONFIRM (W1/W2/W3 legend?)"
+  },
+  "attachment-2 TYPICAL FLOOR PLAN 2nd,3rd,4th (photo, awaiting file)": {
+   "source": "Neelachala Homes Ghatikia - photo pasted in chat 2026-07-10",
+   "type": "raster-photo",
+   "units": "meters (CONFIRMED)",
+   "flats": "FLAT NO-201/301/401 + 202/302/402",
+   "difference_vs_attachment_1": "SOCIETY RM replaced by BED RM 3.43x4.04; else same layout",
+   "overall": "same as attachment-1"
+  },
+  "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf": {
+   "source": "CAD version of the three photos combined on ONE sheet (user statement)",
+   "type": "vector-cad, live text, rotation 270",
+   "layers": [
+    "0 (most geometry!)",
+    "column (80 rects, dominant 8.8 pt)",
+    "door",
+    "chhaja",
+    "wall (only 16 items)",
+    "staircase",
+    "1st flo"
+   ],
+   "parser_status": "FAILS 2026-07-10: walls live on layer '0', not a wall-named layer; output garbage (60x9 ft, 2 wall scraps)",
+   "column_in": "9x12 (230x300 mm) - CONFIRMED by user 2026-07-10; long side 12in = 1 ft",
+   "text_sample": [
+    "BALCONY",
+    "1.07\"x2.13",
+    "TOILET",
+    "2.31x1.37",
+    "BED RM",
+    "3.43x4.04",
+    "UP",
+    "STAIRCASE",
+    "2.39x3.91",
+    "C. TOILET",
+    "2.34x1.37",
+    "KITCHEN",
+    "1.96x4.11",
+    "BED RM",
+    "3.43x4.11",
+    "BALCONY",
+    "1.04x2.46",
+    "DINING",
+    "4.47x3.96",
+    "DRG.RM.",
+    "3.38x4.14",
+    "DINING",
+    "3.15x3.35",
+    "DRG.RM.",
+    "4.19x3.63",
+    "BED ROOM",
+    "3.15x4.11",
+    "BED ROOM",
+    "3.35x3.84",
+    "KITCHEN",
+    "2.90x1.83",
+    "LIFT",
+    "1.63x1.57",
+    "BED RM",
+    "3.38x3.96",
+    "BED RM",
+    "3.33x3.56",
+    "TOILET",
+    "2.13x1.55",
+    "Balcony"
+   ],
+   "wd_legend": "use default_opening_legend (provided 2026-07-10)",
+   "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
+   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive"
+  },
+  "neelachala FIRST FLOOR.pdf": {
+   "source": "single-floor CAD export, same project",
+   "type": "vector-cad, live text (feet-inches!), rotation 0",
+   "layers": [
+    "a-text",
+    "0 (most geometry)",
+    "chhaja",
+    "plan",
+    "door",
+    "(no wall/column layers)"
+   ],
+   "parser_status": "routed to RASTER path (no wall/column layer names) - needs geometry-driven wall detection",
+   "text_sample": [
+    "bed room",
+    "11'-5\" X 12'-0\"",
+    "toilet",
+    "5'-9\" X 4'-6\"",
+    "puja",
+    "puja",
+    "D1",
+    "D1",
+    "D1",
+    "D2",
+    "D2",
+    "D",
+    "D",
+    "D2",
+    "D2",
+    "D1",
+    "D3",
+    "D3",
+    "D3",
+    "D3",
+    "W1",
+    "V",
+    "W3",
+    "W1",
+    "W1",
+    "V",
+    "W3",
+    "V",
+    "W1",
+    "W2",
+    "W3",
+    "FIRST FLOOR PLAN",
+    "bed room",
+    "11'-5\" X12'-6\"",
+    "bed room",
+    "11'-5\" X 13'-0\"",
+    "balcony",
+    "9'-7\" X 3'-6\"",
+    "drg.room",
+    "10'-0\" X 13'-5\""
+   ],
+   "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
+   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive"
+  }
+ },
+ "_data_policy": "plans/ = raw drawings (gitignored, confidential). ground_truth.json + INDEX.txt = the LABELS, small text, tracked in git so every change is versioned and reversible - nothing gets messed up. batch_eval reads labels, never writes them; parser outputs go to out/ (gitignored). Later: human-corrected scene.json snapshots join this file as training pairs (Phase-2 flywheel).",
+ "default_opening_legend": {
+  "_source": "user-provided standard Indian residential schedule, 2026-07-10",
+  "doors": {
+   "D1": {
+    "use": "main entrance",
+    "w_ft": 3.5,
+    "h_ft": 7.0,
+    "mm": "1050x2100"
+   },
+   "D2": {
+    "use": "bedrooms & kitchen",
+    "w_ft": 3.0,
+    "h_ft": 7.0,
+    "mm": "900x2100"
+   },
+   "D3": {
+    "use": "bathrooms & balconies",
+    "w_ft": 2.5,
+    "h_ft": 7.0,
+    "mm": "750x2100"
+   }
+  },
+  "windows": {
+   "W1": {
+    "use": "main living areas",
+    "w_ft": 5.0,
+    "h_ft": 4.0,
+    "mm": "1500x1200",
+    "sill_ft": 3.0
+   },
+   "W2": {
+    "use": "standard bedrooms",
+    "w_ft": 4.0,
+    "h_ft": 4.0,
+    "mm": "1200x1200",
+    "sill_ft": 3.0
+   },
+   "W3": {
+    "use": "kitchen/utility",
+    "w_ft": 3.0,
+    "h_ft": 3.0,
+    "mm": "900x900",
+    "sill_ft": 3.5,
+    "sill_note": "3'6\" (1050 mm) fixed above kitchen counter datum - CONFIRMED 2026-07-10"
+   }
+  },
+  "notes": "door widths D1-D3 (2.5-3.5 ft) double as the door-width prior for multi-signal scale estimation"
+ }
+}

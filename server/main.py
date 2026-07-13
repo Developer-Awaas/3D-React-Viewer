@@ -148,11 +148,12 @@ async def perceive(image: UploadFile = File(...)):
 # Step B/D: upload -> scene.json. Router: vector CAD PDF -> layer parser (exact,
 # incl. angled walls); anything else -> CubiCasa raster path.
 # ---------------------------------------------------------------------------
-async def _scene_from_upload(image: UploadFile, width_ft: float):
+async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "largest"):
     raw, is_pdf = await _read_upload_bytes(image)
     if is_pdf and await run_in_threadpool(pdf_vector.is_vector_plan, raw):
         try:
-            return await run_in_threadpool(pdf_vector.parse, raw, width_ft)
+            return await run_in_threadpool(pdf_vector.parse, raw, width_ft,
+                                           pdf_vector.wing_arg(wing))
         except ValueError as e:
             raise HTTPException(422, f"vector PDF parse failed: {e}")
     if is_pdf:
@@ -163,10 +164,12 @@ async def _scene_from_upload(image: UploadFile, width_ft: float):
 
 
 @app.post("/scene")
-async def scene(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT):
-    """Detect walls and return them as canonical scene.json (feet, z-up)."""
+async def scene(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT,
+                wing: str = "largest"):
+    """Detect walls and return them as canonical scene.json (feet, z-up).
+    wing: which building block to build when a sheet holds several ("largest" or 0,1,...)."""
     try:
-        s = await _scene_from_upload(image, width_ft)
+        s = await _scene_from_upload(image, width_ft, wing)
     except HTTPException:
         raise
     except Exception as e:
@@ -175,10 +178,11 @@ async def scene(image: UploadFile = File(...), width_ft: float = scene_builder.D
 
 
 @app.post("/scene.glb")
-async def scene_glb(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT):
+async def scene_glb(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT,
+                    wing: str = "largest"):
     """Detect walls, build a .glb 3D model, and return the file."""
     try:
-        s = await _scene_from_upload(image, width_ft)
+        s = await _scene_from_upload(image, width_ft, wing)
         out = os.path.join(tempfile.gettempdir(), "drishti_scene.glb")
         await run_in_threadpool(scene_to_glb.build_glb, s, out)
     except HTTPException:

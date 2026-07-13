@@ -1,4 +1,4 @@
-import { InputHTMLAttributes, ReactNode, Suspense, useEffect, useState } from 'react'
+import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
@@ -17,6 +17,8 @@ import { FLOOR_MATERIALS, FloorKey } from './materials'
 import { MARKERS, OVERVIEW } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
+import { buildPlan, type BuiltPlan } from './api/scene'
+import LoadingScreen from './components/LoadingScreen'
 
 const SOFA_URL =
   'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/GlamVelvetSofa/glTF-Binary/GlamVelvetSofa.glb'
@@ -35,8 +37,11 @@ function ReadySignal({ onReady }: { onReady: () => void }) {
   return null
 }
 
-type Mode = 'room' | 'convert' | 'viewer'
-const MODES: { id: Mode; label: string }[] = [
+type Mode = 'room' | 'convert' | 'plan' | 'viewer'
+const PRIMARY_MODES: { id: Mode; label: string }[] = [
+  { id: 'plan', label: 'Plan → 3D' },
+]
+const ADVANCED_MODES: { id: Mode; label: string }[] = [
   { id: 'room', label: 'Demo' },
   { id: 'convert', label: 'Convert' },
   { id: 'viewer', label: 'Viewer' },
@@ -94,7 +99,8 @@ function PillButton({
 }
 
 export default function App() {
-  const [mode, setMode] = useState<Mode>('room')
+  const [mode, setMode] = useState<Mode>('plan')
+  const [showAdvanced, setShowAdvanced] = useState(false)
   const [floor, setFloor] = useState<FloorKey>('marble')
   const [view, setView] = useState<View | null>(null)
 
@@ -113,11 +119,54 @@ export default function App() {
   const [cSel, setCSel] = useState<number | null>(null) // selected wall index (click-to-delete)
   const [cStatus, setCStatus] = useState('Upload a plan to auto-detect a draft, then click to fix walls.')
 
+  // plan -> 3D via the backend (Step C)
+  const [pFile, setPFile] = useState<File | null>(null)
+  const [pLoading, setPLoading] = useState(false)
+  const [pPlan, setPPlan] = useState<BuiltPlan | null>(null)
+  const [pWidthFt, setPWidthFt] = useState<number>(0) // 0 = let the backend decide
+  const [pStatus, setPStatus] = useState('Upload a plan (PDF or image) — the backend parses it and builds real 3D.')
+
+  const handlePlan = async (f: File, wing?: number) => {
+    setPFile(f)
+    setPLoading(true)
+    setPStatus(wing === undefined ? 'Parsing plan + building 3D…' : `Building wing ${wing}…`)
+    try {
+      if (pPlan) URL.revokeObjectURL(pPlan.glbUrl)
+      const built = await buildPlan(f, pWidthFt || undefined, wing)
+      setPPlan(built)
+      const m = built.meta
+      setPStatus(`${m.plan_width_ft.toFixed(1)} × ${m.plan_depth_ft.toFixed(1)} ft · ` +
+        `${built.doors} doors · scale: ${m.scale.source}`)
+    } catch (e: any) {
+      setPPlan(null)
+      setPStatus('Error: ' + (e?.message || 'backend unreachable — is uvicorn running on :8000?'))
+    } finally {
+      setPLoading(false)
+    }
+  }
+
+  // fit the camera to the built model's actual box (long thin plans otherwise
+  // render tiny and off-centre with a fixed preset)
+  const framePlan = useCallback((info: { center: [number, number, number]; size: [number, number, number] }) => {
+    const [cx, cy, cz] = info.center
+    const maxd = Math.max(info.size[0], info.size[2]) || 10
+    setView({
+      position: [cx + maxd * 0.75, cy + maxd * 0.95, cz + maxd * 0.75],
+      target: [cx, cy, cz],
+    })
+  }, [])
+
   const pickMaterial = (k: FloorKey) => { setFloor(k); setView({ ...PRESETS[k] }) } // triggers GSAP tween
 
   const handleConvert = async (f: File) => {
     const ext = f.name.toLowerCase().split('.').pop() || ''
     if (ext === 'glb' || ext === 'gltf') { loadUrl(URL.createObjectURL(f)); setMode('viewer'); return }
+    // guard: the in-browser detector chokes on CAD PDFs / big files. Send those
+    // to the backend engine (Plan → 3D) instead of freezing the tab.
+    if (ext === 'pdf' || f.size > 3 * 1024 * 1024) {
+      setCStatus('This looks like a CAD or large file. Use the “Plan → 3D” tab — it runs the full backend engine and won’t freeze. Convert is best for simple photos/images.')
+      return
+    }
     try {
       setCStatus('Loading engine + reading plan…'); setCSegs([]); setCStart(null); setCSel(null)
       const canvas = ext === 'pdf' ? await rasterizePdf(f) : await imageToCanvas(f)
@@ -151,11 +200,12 @@ export default function App() {
   useEffect(() => {
     if (mode === 'convert') setView({ ...TOP_VIEW })
     else if (mode === 'room') setView({ ...PRESETS.default })
-    else setView({ position: [7, 5, 9], target: [0, 1.5, 0] })
+    else setView({ position: [7, 5, 9], target: [0, 1.5, 0] })  // plan + viewer
   }, [mode])
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
+      <LoadingScreen active={pLoading} />
       {/* ─────────── Glassmorphism sidebar ─────────── */}
       <aside
         style={{ background: 'rgba(15, 23, 42, 0.6)' }}
@@ -175,15 +225,28 @@ export default function App() {
           </div>
         </header>
 
-        {/* mode tabs */}
-        <nav className="flex gap-1 px-6 pt-5">
-          {MODES.map((m) => (
-            <div key={m.id} className="flex-1">
+        {/* Plan → 3D is the primary flow; Demo/Convert/Viewer live under Advanced */}
+        <nav className="flex flex-wrap items-center gap-1 px-6 pt-5">
+          {PRIMARY_MODES.map((m) => (
+            <div key={m.id}>
               <PillButton active={mode === m.id} layoutId="tabPill" onClick={() => setMode(m.id)}>
                 <span className="block w-full text-center">{m.label}</span>
               </PillButton>
             </div>
           ))}
+          {showAdvanced && ADVANCED_MODES.map((m) => (
+            <div key={m.id}>
+              <PillButton active={mode === m.id} layoutId="tabPill" onClick={() => setMode(m.id)}>
+                <span className="block w-full text-center">{m.label}</span>
+              </PillButton>
+            </div>
+          ))}
+          <button
+            onClick={() => setShowAdvanced((v) => !v)}
+            className="ml-auto rounded-md px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          >
+            {showAdvanced ? 'Hide' : 'Advanced'}
+          </button>
         </nav>
 
         {/* mode content */}
@@ -232,6 +295,37 @@ export default function App() {
                 </>
               )}
 
+              {mode === 'plan' && (
+                <>
+                  <Status>Upload a floor plan — the backend reads the CAD geometry, finds walls, doors and scale, and returns a real 3D model.</Status>
+                  <Field label="Width override (ft)">
+                    <NumberInput value={pWidthFt || ''} min={0} step={1} placeholder="auto"
+                      onChange={(e) => setPWidthFt(+e.target.value || 0)} />
+                  </Field>
+                  <Upload onFile={(f) => handlePlan(f)} accept=".pdf,.png,.jpg,.jpeg">Upload plan</Upload>
+                  {pPlan?.meta.wing && pPlan.meta.wing.count > 1 && pFile && (
+                    <div className="grid grid-cols-3 gap-2">
+                      {Array.from({ length: pPlan.meta.wing.count }, (_, i) => (
+                        <Button key={i} size="sm"
+                          variant={pPlan.meta.wing!.index === i ? 'secondary' : 'outline'}
+                          onClick={() => handlePlan(pFile, i)}>
+                          Wing {i}
+                        </Button>
+                      ))}
+                    </div>
+                  )}
+                  <Status>{pStatus}</Status>
+                  {pPlan && pPlan.meta.warnings.length > 0 && (
+                    <details className="text-xs text-muted-foreground">
+                      <summary className="cursor-pointer">{pPlan.meta.warnings.length} parser notes</summary>
+                      <ul className="mt-1 list-disc pl-4">
+                        {pPlan.meta.warnings.map((w, i) => <li key={i}>{w}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+
               {mode === 'viewer' && (
                 <>
                   <Status>Load any .glb / .gltf 3D model — paste a URL or upload a file.</Status>
@@ -273,6 +367,24 @@ export default function App() {
           <TraceScene imageUrl={cUnder} widthM={cDims.w} heightM={cDims.d}
             segments={cSegs} start={cStart} onPick={addPoint}
             selected={cSel} onSelect={setCSel} />
+        )}
+
+        {mode === 'plan' && (
+          <>
+            <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
+            <ContactShadows position={[0, 0, 0]} opacity={0.55} scale={40} blur={2.2} far={12} />
+            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+              <planeGeometry args={[60, 60]} />
+              <meshStandardMaterial color="#d9d6d0" roughness={0.95} />
+            </mesh>
+            {pPlan && (
+              <Suspense fallback={null}>
+                <ErrorBoundary key={pPlan.glbUrl} fallback={null}>
+                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center onFramed={framePlan} />
+                </ErrorBoundary>
+              </Suspense>
+            )}
+          </>
         )}
 
         {mode === 'viewer' && (

@@ -23,7 +23,12 @@ plan-Z (height) -> three.js/glTF-Y at render time.
                 EITHER wall:<wall id> + along:[a,b]   (box-wall path)
                 OR     footprint:[x0,y0,x1,y1]        (polygon-wall path)
                 z:[bottom,top] sill/head (window) or 0..door-height (door)
-                door extras: hinge:"x0"|"x1", swing:"in"|"out" }
+                door extras: hinge:"x0"|"x1", swing:"in"|"out"
+                polygon-path door extras: footprint = the DOORWAY STRIP on the
+                  wall (parser fills the CAD jamb gap so the z cut leaves a
+                  header/lintel above the door, as built on site);
+                  swing_area:[x0,y0,x1,y1] = leaf+arc box (for door placement
+                  /swing animation in viewers; NOT a cut) }
     columns[] { id, x,y,w,d, kind:"column" }
     ducts[]   { id, x,y,w,d, kind:"duct" }
     rooms[]   { name, label_dim, w_ft, d_ft }

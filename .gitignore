@@ -21,3 +21,7 @@ my_plan.png
 # client floor plans (confidential by default; INDEX.txt is tracked)
 plans/*
 !plans/INDEX.txt
+!plans/ground_truth.json
+
+# batch eval outputs
+out/

@@ -11,11 +11,18 @@ export default function Model({
   position = [0, 0, 0],
   rotationY = 0,
   targetSize = 1.9, // desired largest footprint dimension, in metres
+  center = false,   // horizontally centre the model on `position` (plans)
+  onFramed,         // fires after scale+placement with the final box info
 }: {
   url: string
   position?: [number, number, number]
   rotationY?: number
   targetSize?: number
+  center?: boolean
+  onFramed?: (info: {
+    center: [number, number, number]
+    size: [number, number, number]
+  }) => void
 }) {
   const { scene } = useGLTF(url)
   const ref = useRef<THREE.Group>(null!)
@@ -30,9 +37,16 @@ export default function Model({
     const maxFootprint = Math.max(size.x, size.z) || 1
     ref.current.scale.setScalar(targetSize / maxFootprint)
 
-    // 3) re-measure after scaling and lift it so its base rests on the floor
+    // 3) re-measure after scaling; lift base to the floor and (for plans)
+    //    slide it so its X/Z centre sits on `position` rather than its corner.
     const scaledBox = new THREE.Box3().setFromObject(ref.current)
+    const c = new THREE.Vector3()
+    scaledBox.getCenter(c)
     ref.current.position.y = position[1] - scaledBox.min.y
+    if (center) {
+      ref.current.position.x = position[0] - c.x
+      ref.current.position.z = position[2] - c.z
+    }
 
     // 4) make every part cast/receive shadows
     scene.traverse((o) => {
@@ -41,7 +55,17 @@ export default function Model({
         o.receiveShadow = true
       }
     })
-  }, [scene, targetSize, position])
+
+    // 5) report the final placed box so the parent can frame the camera to it
+    if (onFramed) {
+      const finalBox = new THREE.Box3().setFromObject(ref.current)
+      const fc = new THREE.Vector3()
+      const fs = new THREE.Vector3()
+      finalBox.getCenter(fc)
+      finalBox.getSize(fs)
+      onFramed({ center: [fc.x, fc.y, fc.z], size: [fs.x, fs.y, fs.z] })
+    }
+  }, [scene, targetSize, position, center, onFramed])
 
   return (
     <group ref={ref} position={position} rotation={[0, rotationY, 0]}>
