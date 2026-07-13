@@ -13,13 +13,13 @@ export default {
         accent: { DEFAULT: 'hsl(var(--accent))', foreground: 'hsl(var(--accent-foreground))' },
         card: { DEFAULT: 'hsl(var(--card))', foreground: 'hsl(var(--card-foreground))' },
         destructive: { DEFAULT: 'hsl(var(--destructive))', foreground: 'hsl(var(--destructive-foreground))' },
-        neon: '#22d3ee',          // accent — neon cyan
+        neon: '#e8702a',          // accent — Drishti orange (landing theme)
         electric: '#6366f1',      // electric indigo
         surface: { DEFAULT: '#0f172a', soft: '#1e293b' },
       },
       fontFamily: { sans: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'] },
       borderRadius: { lg: 'var(--radius)', md: 'calc(var(--radius) - 2px)', sm: 'calc(var(--radius) - 4px)' },
-      boxShadow: { glow: '0 0 12px rgba(34,211,238,0.5)' },
+      boxShadow: { glow: '0 0 12px rgba(232,112,42,0.5)' },
     },
   },
   plugins: [],

@@ -30,11 +30,11 @@ const BASE_SIZE = '96px 96px, 96px 96px, 24px 24px, 24px 24px, 100% 100%'
 
 // revealed structure: the same drawing, alive — neon grid + glowing "walls"
 const REVEAL_BG = [
-  'linear-gradient(rgba(34,211,238,0.35) 2px, transparent 2px)',
-  'linear-gradient(90deg, rgba(34,211,238,0.35) 2px, transparent 2px)',
-  'linear-gradient(rgba(34,211,238,0.12) 1px, transparent 1px)',
-  'linear-gradient(90deg, rgba(34,211,238,0.12) 1px, transparent 1px)',
-  'radial-gradient(ellipse at 50% 40%, #0b2733 0%, #081420 70%)',
+  'linear-gradient(rgba(232,112,42,0.4) 2px, transparent 2px)',
+  'linear-gradient(90deg, rgba(232,112,42,0.4) 2px, transparent 2px)',
+  'linear-gradient(rgba(232,112,42,0.14) 1px, transparent 1px)',
+  'linear-gradient(90deg, rgba(232,112,42,0.14) 1px, transparent 1px)',
+  'radial-gradient(ellipse at 50% 40%, #2a1608 0%, #170c05 70%)',
 ].join(',')
 const REVEAL_SIZE = '96px 96px, 96px 96px, 24px 24px, 24px 24px, 100% 100%'
 

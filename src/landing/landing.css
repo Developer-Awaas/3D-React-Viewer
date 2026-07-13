@@ -1,0 +1,372 @@
+/* ============================================================
+   Drishti landing — self-contained styles (scoped, dl- prefix;
+   coexists with Tailwind, no dependency on it)
+   Fonts: Inter (UI) + Playfair Display italic (display accent)
+   Accent: #e8702a
+   Note: Inter + Playfair are already imported by src/index.css,
+   so no @import here — one fetch, no duplicate requests.
+   ============================================================ */
+
+.dl-root,
+.dl-root * {
+  font-family: 'Inter', sans-serif;
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+.dl-playfair {
+  font-family: 'Playfair Display', serif !important;
+  font-style: italic;
+}
+
+/* ---------- root / section ---------- */
+.dl-root {
+  min-height: 100vh;
+  background: #000;
+  letter-spacing: -0.02em;
+}
+.dl-hero {
+  position: relative;
+  width: 100%;
+  overflow: hidden;
+  height: 100vh;
+  height: 100dvh;
+  background: #000;
+}
+
+/* desktop: hide the native cursor over the hero — the orange sight-dot
+   (.dl-cursor-dot) replaces it; controls still show a pointer */
+.dl-cursor-hide { cursor: none; }
+.dl-cursor-hide button { cursor: pointer; }
+.dl-cursor-dot {
+  position: absolute;
+  z-index: 60;
+  width: 7px;
+  height: 7px;
+  border-radius: 9999px;
+  background: #e8702a;
+  box-shadow: 0 0 12px rgba(232, 112, 42, 0.85), 0 0 3px rgba(255, 255, 255, 0.6);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+/* ---------- layers ---------- */
+.dl-base {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  z-index: 10;
+}
+.dl-reveal {
+  position: absolute;
+  inset: 0;
+  background-position: center;
+  background-size: cover;
+  background-repeat: no-repeat;
+  z-index: 30;
+  pointer-events: none;
+}
+.dl-spot-ring {
+  position: absolute;
+  z-index: 40;
+  pointer-events: none;
+  border-radius: 9999px;
+  box-shadow:
+    inset 0 0 60px rgba(232, 112, 42, 0.10),
+    0 0 90px rgba(232, 112, 42, 0.08);
+  transform: translate(-50%, -50%);
+}
+
+/* ---------- heading ---------- */
+.dl-heading {
+  position: absolute;
+  top: 14%;
+  left: 0;
+  right: 0;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+  padding: 0 20px;
+  pointer-events: none;
+}
+.dl-heading h1 {
+  color: #fff;
+  line-height: 0.95;
+  font-weight: 400;
+}
+.dl-h1a {
+  display: block;
+  font-size: 48px;
+  letter-spacing: -0.05em;
+  font-weight: 400;
+}
+.dl-h1b {
+  display: block;
+  font-size: 48px;
+  letter-spacing: -0.08em;
+  margin-top: -4px;
+  font-weight: 400;
+}
+.dl-hint {
+  margin-top: 22px;
+  font-size: 12px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: rgba(255, 255, 255, 0.45);
+}
+.dl-hint kbd {
+  font: inherit;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 5px;
+  padding: 1px 7px;
+  margin: 0 3px;
+}
+
+/* ---------- bottom copy blocks ---------- */
+.dl-copy-left {
+  display: none;
+  position: absolute;
+  bottom: 56px;
+  left: 40px;
+  max-width: 260px;
+  z-index: 50;
+}
+.dl-copy-left p,
+.dl-copy-right p {
+  font-size: 13px;
+  color: rgba(255, 255, 255, 0.8);
+  line-height: 1.65;
+}
+.dl-copy-right {
+  position: absolute;
+  bottom: 40px;
+  left: 20px;
+  right: 20px;
+  max-width: 100%;
+  z-index: 50;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 16px;
+}
+
+/* ---------- CTA ---------- */
+.dl-cta {
+  background: #e8702a;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 12px 28px;
+  border-radius: 9999px;
+  border: none;
+  cursor: pointer;
+  transition: all 0.25s ease;
+}
+.dl-cta:hover {
+  background: #d2611f;
+  transform: scale(1.03);
+  box-shadow: 0 10px 30px rgba(232, 112, 42, 0.3);
+}
+.dl-cta:active {
+  transform: scale(0.95);
+}
+
+/* keyboard users: a clear orange focus ring on every control */
+.dl-root button:focus-visible {
+  outline: 2px solid rgba(232, 112, 42, 0.95);
+  outline-offset: 3px;
+  border-radius: 9999px;
+}
+
+/* ---------- nav ---------- */
+.dl-nav {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+}
+.dl-nav-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.dl-wordmark {
+  color: #fff;
+  font-size: 24px;
+}
+.dl-nav-pill {
+  display: none;
+  position: absolute;
+  left: 50%;
+  transform: translateX(-50%);
+  background: rgba(255, 255, 255, 0.2);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 9999px;
+  padding: 8px;
+  align-items: center;
+  gap: 4px;
+}
+.dl-nav-pill button {
+  color: rgba(255, 255, 255, 0.8);
+  background: transparent;
+  border: none;
+  padding: 6px 16px;
+  border-radius: 9999px;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s, color 0.2s;
+  white-space: nowrap;
+}
+.dl-nav-pill button:hover {
+  background: rgba(255, 255, 255, 0.2);
+  color: #fff;
+}
+.dl-nav-pill button.dl-active {
+  color: #fff;
+  background: rgba(255, 255, 255, 0.14);
+}
+.dl-signup {
+  display: none;
+  background: #fff;
+  color: #111827;
+  font-size: 14px;
+  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 9999px;
+  border: none;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.dl-signup:hover {
+  background: #f3f4f6;
+}
+.dl-burger {
+  display: inline-flex;
+  flex-direction: column;
+  gap: 5px;
+  background: transparent;
+  border: none;
+  padding: 8px;
+  cursor: pointer;
+}
+.dl-burger span {
+  display: block;
+  width: 22px;
+  height: 2px;
+  background: #fff;
+  border-radius: 2px;
+}
+.dl-mobile-menu {
+  position: absolute;
+  top: 64px;
+  right: 16px;
+  background: rgba(10, 12, 16, 0.92);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  border-radius: 18px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 180px;
+}
+.dl-mobile-menu button {
+  text-align: left;
+  color: rgba(255, 255, 255, 0.85);
+  background: transparent;
+  border: none;
+  font-size: 14px;
+  font-weight: 500;
+  padding: 10px 14px;
+  border-radius: 12px;
+  cursor: pointer;
+}
+.dl-mobile-menu button:hover {
+  background: rgba(255, 255, 255, 0.12);
+  color: #fff;
+}
+
+/* ---------- entrance animations ---------- */
+@keyframes dlHeroReveal {
+  0%   { opacity: 0; transform: translateY(28px); filter: blur(12px); }
+  100% { opacity: 1; transform: translateY(0);    filter: blur(0); }
+}
+@keyframes dlHeroFadeUp {
+  0%   { opacity: 0; transform: translateY(20px); }
+  100% { opacity: 1; transform: translateY(0); }
+}
+@keyframes dlHeroZoom {
+  0%   { transform: scale(1.12); }
+  100% { transform: scale(1); }
+}
+.dl-anim {
+  opacity: 0;
+  animation-fill-mode: forwards;
+  animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+}
+.dl-reveal-anim { animation-name: dlHeroReveal; animation-duration: 1.1s; }
+.dl-fade        { animation-name: dlHeroFadeUp; animation-duration: 1s; }
+.dl-zoom        { animation: dlHeroZoom 1.8s cubic-bezier(0.16, 1, 0.3, 1) forwards; }
+
+/* ---------- exit (enter the app) ---------- */
+@keyframes dlHeroLeave {
+  0%   { opacity: 1; transform: scale(1);    filter: blur(0); }
+  100% { opacity: 0; transform: scale(1.06); filter: blur(14px); }
+}
+.dl-leaving .dl-hero,
+.dl-leaving .dl-nav {
+  animation: dlHeroLeave 0.7s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  pointer-events: none;
+}
+
+/* ---------- responsive (sm 640 / md 768 / desktop 1440) ---------- */
+@media (min-width: 640px) {
+  .dl-h1a, .dl-h1b { font-size: 72px; }
+  .dl-copy-left { display: block; }
+  .dl-copy-right {
+    bottom: 96px;
+    left: auto;
+    right: 40px;
+    max-width: 260px;
+  }
+  .dl-copy-right p { font-size: 14px; }
+  .dl-nav { padding: 20px; }
+}
+@media (min-width: 768px) {
+  .dl-h1a, .dl-h1b { font-size: 96px; }
+  .dl-nav-pill { display: flex; }
+  .dl-signup { display: block; }
+  .dl-burger { display: none; }
+  .dl-copy-right { right: 56px; }
+  .dl-copy-left { left: 56px; }
+}
+/* big desktop monitors — scale the composition up so it doesn't float
+   small in the middle of a 1440p/4K screen */
+@media (min-width: 1440px) {
+  .dl-h1a, .dl-h1b { font-size: 118px; }
+  .dl-hint { font-size: 13px; margin-top: 28px; }
+  .dl-copy-left, .dl-copy-right { max-width: 320px; }
+  .dl-copy-left p, .dl-copy-right p { font-size: 15px; }
+  .dl-copy-left { left: 72px; bottom: 72px; }
+  .dl-copy-right { right: 72px; bottom: 112px; }
+  .dl-cta { font-size: 15px; padding: 14px 32px; }
+}
+
+/* ---------- reduced motion ---------- */
+@media (prefers-reduced-motion: reduce) {
+  .dl-anim, .dl-zoom { animation: none; opacity: 1; }
+  .dl-leaving .dl-hero, .dl-leaving .dl-nav { animation-duration: 0.01s; }
+}

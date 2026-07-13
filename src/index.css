@@ -9,8 +9,8 @@
     --foreground: 210 40% 96%;
     --card: 222 44% 9%;
     --card-foreground: 210 40% 96%;
-    --primary: 187 90% 52%;            /* cyan-400 */
-    --primary-foreground: 222 47% 8%;
+    --primary: 22 81% 54%;             /* Drishti orange #e8702a */
+    --primary-foreground: 0 0% 100%;
     --secondary: 222 30% 16%;
     --secondary-foreground: 210 40% 96%;
     --muted: 222 30% 14%;
@@ -21,7 +21,7 @@
     --destructive-foreground: 210 40% 98%;
     --border: 217 28% 22%;
     --input: 217 28% 24%;
-    --ring: 187 90% 52%;
+    --ring: 22 81% 54%;
     --radius: 0.65rem;
   }
   * { border-color: hsl(var(--border)); box-sizing: border-box; }

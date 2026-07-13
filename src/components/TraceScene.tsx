@@ -19,8 +19,8 @@ function Wall({
     >
       <boxGeometry args={[len, h, t]} />
       <meshStandardMaterial
-        color={selected ? '#22d3ee' : '#dcd7cd'}
-        emissive={selected ? '#22d3ee' : '#000000'}
+        color={selected ? '#e8702a' : '#dcd7cd'}
+        emissive={selected ? '#e8702a' : '#000000'}
         emissiveIntensity={selected ? 0.6 : 0}
       />
     </mesh>

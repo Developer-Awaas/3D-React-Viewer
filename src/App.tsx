@@ -1,4 +1,4 @@
-import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useState } from 'react'
+import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
@@ -14,11 +14,12 @@ import { Seg } from './cv/detectWalls'
 import { detectWallsWorker } from './cv/detectWorker'
 import { rasterizePdf, imageToCanvas } from './cv/rasterizePdf'
 import { FLOOR_MATERIALS, FloorKey } from './materials'
-import { MARKERS, OVERVIEW } from './scene'
+import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
 import { buildPlan, type BuiltPlan } from './api/scene'
 import LoadingScreen from './components/LoadingScreen'
+import LandingHero from './landing/LandingHero'
 
 const SOFA_URL =
   'https://cdn.jsdelivr.net/gh/KhronosGroup/glTF-Sample-Assets@main/Models/GlamVelvetSofa/glTF-Binary/GlamVelvetSofa.glb'
@@ -68,8 +69,8 @@ function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
 function Upload({ onFile, accept, children }: { onFile: (f: File) => void; accept: string; children: ReactNode }) {
   return (
     <motion.label whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={{ duration: 0.15 }}
-      className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-lg
-                 bg-neon px-4 text-sm font-semibold text-slate-900 shadow-glow hover:brightness-105">
+      className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-full
+                 bg-neon px-4 text-sm font-semibold text-white shadow-glow hover:brightness-105">
       {children}
       <input type="file" accept={accept} className="hidden"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.currentTarget.value = '' }} />
@@ -87,12 +88,12 @@ function PillButton({
   return (
     <motion.button
       onClick={onClick} whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={{ duration: 0.15 }}
-      className={`relative rounded-lg px-3 py-2 text-xs font-medium transition-colors ${
-        active ? 'text-slate-900' : 'text-muted-foreground hover:text-foreground'
+      className={`relative rounded-full px-3 py-2 text-xs font-medium transition-colors ${
+        active ? 'text-white' : 'text-muted-foreground hover:text-foreground'
       }`}
     >
       {active && <motion.span layoutId={layoutId} transition={PILL_SPRING}
-        className="absolute inset-0 -z-0 rounded-lg bg-neon shadow-glow" />}
+        className="absolute inset-0 -z-0 rounded-full bg-neon shadow-glow" />}
       <span className="relative z-10">{children}</span>
     </motion.button>
   )
@@ -100,6 +101,18 @@ function PillButton({
 
 export default function App() {
   const [mode, setMode] = useState<Mode>('plan')
+  // landing gate — the hero shows first; entering is remembered for this tab
+  // session (add ?landing to the URL to force the hero back for demos)
+  const [entered, setEntered] = useState<boolean>(() => {
+    try {
+      if (new URLSearchParams(window.location.search).has('landing')) return false
+      return sessionStorage.getItem('drishti_entered') === '1'
+    } catch { return false }
+  })
+  const enterApp = useCallback(() => {
+    try { sessionStorage.setItem('drishti_entered', '1') } catch { /* ignore */ }
+    setEntered(true)
+  }, [])
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [floor, setFloor] = useState<FloorKey>('marble')
   const [view, setView] = useState<View | null>(null)
@@ -131,12 +144,15 @@ export default function App() {
     setPLoading(true)
     setPStatus(wing === undefined ? 'Parsing plan + building 3D…' : `Building wing ${wing}…`)
     try {
-      if (pPlan) URL.revokeObjectURL(pPlan.glbUrl)
       const built = await buildPlan(f, pWidthFt || undefined, wing)
+      // swap in the new model FIRST, then release the old one's blob URL —
+      // revoking before the rebuild finishes can break the model on screen
+      const old = pPlan
       setPPlan(built)
+      if (old) URL.revokeObjectURL(old.glbUrl)
       const m = built.meta
       setPStatus(`${m.plan_width_ft.toFixed(1)} × ${m.plan_depth_ft.toFixed(1)} ft · ` +
-        `${built.doors} doors · scale: ${m.scale.source}`)
+        `${built.doors} doors · ${built.windows} windows · scale: ${m.scale.source}`)
     } catch (e: any) {
       setPPlan(null)
       setPStatus('Error: ' + (e?.message || 'backend unreachable — is uvicorn running on :8000?'))
@@ -147,7 +163,9 @@ export default function App() {
 
   // fit the camera to the built model's actual box (long thin plans otherwise
   // render tiny and off-centre with a fixed preset)
+  const lastFrame = useRef<{ center: [number, number, number]; size: [number, number, number] } | null>(null)
   const framePlan = useCallback((info: { center: [number, number, number]; size: [number, number, number] }) => {
+    lastFrame.current = info
     const [cx, cy, cz] = info.center
     const maxd = Math.max(info.size[0], info.size[2]) || 10
     setView({
@@ -197,11 +215,26 @@ export default function App() {
     a.download = 'plan.json'; a.click()
   }
 
+  // desktop keyboard shortcuts: T = top view, F = re-frame the loaded plan
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      const tag = (e.target as HTMLElement | null)?.tagName
+      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
+      if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [framePlan])
+
   useEffect(() => {
     if (mode === 'convert') setView({ ...TOP_VIEW })
     else if (mode === 'room') setView({ ...PRESETS.default })
     else setView({ position: [7, 5, 9], target: [0, 1.5, 0] })  // plan + viewer
   }, [mode])
+
+  // all hooks above have run — safe to branch
+  if (!entered) return <LandingHero onEnter={enterApp} />
 
   return (
     <div className="relative h-screen w-screen overflow-hidden bg-background">
@@ -214,14 +247,15 @@ export default function App() {
                    shadow-2xl backdrop-blur-md"
       >
         <header className="flex items-center gap-3 px-6 pt-6">
-          <div className="grid h-9 w-9 place-items-center rounded-lg bg-neon/15 text-neon shadow-glow">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 9l9-6 9 6v10a1 1 0 0 1-1 1H4a1 1 0 0 1-1-1V9z" /><path d="M9 21V12h6v9" />
+          <div className="grid h-9 w-9 place-items-center rounded-full bg-neon/15 text-neon shadow-glow">
+            <svg width="18" height="18" viewBox="0 0 256 256" fill="none" stroke="currentColor" strokeWidth="20" strokeLinejoin="round" strokeLinecap="round">
+              <path d="M128 18 L232 78 L232 178 L128 238 L24 178 L24 78 Z" />
+              <path d="M24 78 L128 138 L232 78 M128 138 L128 238" />
             </svg>
           </div>
           <div className="leading-tight">
-            <h1 className="text-sm font-semibold tracking-tight text-foreground">Drishti 3D</h1>
-            <p className="text-xs text-muted-foreground">2D → 3D converter</p>
+            <h1 className="font-playfair text-xl italic text-foreground">Drishti</h1>
+            <p className="text-xs text-muted-foreground">every plan holds a building within</p>
           </div>
         </header>
 
@@ -371,7 +405,10 @@ export default function App() {
 
         {mode === 'plan' && (
           <>
-            <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
+            {/* HDR comes from a CDN — if it can't load (offline demo), keep the app alive */}
+            <ErrorBoundary fallback={null}>
+              <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
+            </ErrorBoundary>
             <ContactShadows position={[0, 0, 0]} opacity={0.55} scale={40} blur={2.2} far={12} />
             <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
               <planeGeometry args={[60, 60]} />
@@ -379,7 +416,8 @@ export default function App() {
             </mesh>
             {pPlan && (
               <Suspense fallback={null}>
-                <ErrorBoundary key={pPlan.glbUrl} fallback={null}>
+                <ErrorBoundary key={pPlan.glbUrl} fallback={null}
+                  onError={() => setPStatus('⚠ The 3D model failed to render — try rebuilding, another wing, or a smaller plan.')}>
                   <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center onFramed={framePlan} />
                 </ErrorBoundary>
               </Suspense>
@@ -389,7 +427,9 @@ export default function App() {
 
         {mode === 'viewer' && (
           <>
-            <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
+            <ErrorBoundary fallback={null}>
+              <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
+            </ErrorBoundary>
             <ContactShadows position={[0, 0, 0]} opacity={0.55} scale={30} blur={2.2} far={12} />
             <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
               <planeGeometry args={[40, 40]} />
@@ -409,6 +449,41 @@ export default function App() {
         <CameraRig view={view} />
         <OrbitControls makeDefault enableDamping target={[0, 1.5, 0]} />
       </Canvas>
+
+      {/* ── empty state: nothing loaded yet in Plan → 3D ── */}
+      {mode === 'plan' && !pPlan && !pLoading && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex items-center justify-center">
+          <p className="font-playfair px-6 text-center text-2xl italic text-white/25 sm:text-3xl">
+            upload a plan — watch it stand up
+          </p>
+        </div>
+      )}
+
+      {/* ── meta HUD: the built plan's numbers, landing-style glass pill ── */}
+      {mode === 'plan' && pPlan && (
+        <motion.div
+          initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
+          className="absolute bottom-5 left-1/2 z-20 -translate-x-1/2 whitespace-nowrap rounded-full
+                     border border-white/10 bg-black/50 px-5 py-2.5 text-xs text-white/80 backdrop-blur-md"
+        >
+          <span className="font-medium text-white">
+            {pPlan.meta.plan_width_ft.toFixed(1)} × {pPlan.meta.plan_depth_ft.toFixed(1)} ft
+          </span>
+          <span className="mx-2 text-white/30">·</span>{pPlan.doors} doors
+          <span className="mx-2 text-white/30">·</span>{pPlan.windows} windows
+          <span className="mx-2 text-white/30">·</span>scale: {pPlan.meta.scale.source}
+          {pPlan.meta.wing && pPlan.meta.wing.count > 1 && (
+            <><span className="mx-2 text-white/30">·</span>wing {pPlan.meta.wing.index + 1}/{pPlan.meta.wing.count}</>
+          )}
+        </motion.div>
+      )}
+
+      {/* ── desktop controls hint ── */}
+      <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">
+        drag to orbit · scroll to zoom ·{' '}
+        <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
+        <span className="rounded border border-white/20 px-1">F</span> frame plan
+      </div>
     </div>
   )
 }
