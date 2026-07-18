@@ -1,0 +1,14 @@
+# Vector-only production server (v1 scope: CAD PDFs = the product; the
+# photo/scan path is beta and needs torch + CubiCasa - NOT installed here,
+# main.py degrades gracefully with a 503 "beta" message).
+fastapi
+uvicorn[standard]
+python-multipart
+python-dotenv
+pillow
+numpy
+shapely
+opencv-python-headless
+trimesh
+mapbox-earcut
+pymupdf

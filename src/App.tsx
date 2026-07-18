@@ -1,9 +1,10 @@
 import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, ContactShadows } from '@react-three/drei'
+import { OrbitControls, Environment, ContactShadows, Sky } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import Room from './components/Room'
 import Lights from './components/Lights'
+import PlanLights from './components/PlanLights'
 import Furniture from './components/Furniture'
 import Model from './components/Model'
 import ErrorBoundary from './components/ErrorBoundary'
@@ -18,6 +19,7 @@ import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
 import { buildPlan, type BuiltPlan } from './api/scene'
+import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
 import LoadingScreen from './components/LoadingScreen'
 import LandingHero from './landing/LandingHero'
 
@@ -111,7 +113,33 @@ export default function App() {
   })
   const enterApp = useCallback(() => {
     try { sessionStorage.setItem('drishti_entered', '1') } catch { /* ignore */ }
+    // push a history entry so the browser BACK button returns to the landing
+    // hero instead of leaving the site (entering is otherwise just state)
+    try { window.history.pushState({ drishtiApp: true }, '') } catch { /* ignore */ }
     setEntered(true)
+  }, [])
+
+  // browser Back -> show the landing again; Forward -> re-enter the app
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const inApp = Boolean((e.state as { drishtiApp?: boolean } | null)?.drishtiApp)
+      try {
+        if (inApp) sessionStorage.setItem('drishti_entered', '1')
+        else sessionStorage.removeItem('drishti_entered')
+      } catch { /* ignore */ }
+      setEntered(inApp)
+    }
+    window.addEventListener('popstate', onPop)
+    return () => window.removeEventListener('popstate', onPop)
+  }, [])
+
+  // page refreshed mid-app (entered restored from sessionStorage): make sure
+  // there is still a landing entry underneath for Back to land on
+  useEffect(() => {
+    if (entered && !window.history.state?.drishtiApp) {
+      try { window.history.pushState({ drishtiApp: true }, '') } catch { /* ignore */ }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
   const [showAdvanced, setShowAdvanced] = useState(false)
   const [floor, setFloor] = useState<FloorKey>('marble')
@@ -139,6 +167,29 @@ export default function App() {
   const [pWidthFt, setPWidthFt] = useState<number>(0) // 0 = let the backend decide
   const [pStatus, setPStatus] = useState('Upload a plan (PDF or image) — the backend parses it and builds real 3D.')
 
+  // bundled demo building: built by tools/make_sample_plan.py through the
+  // REAL engine; loads straight from public/ with NO backend needed, so the
+  // first-visit wow works even while the API is cold or down
+  const loadSample = async () => {
+    setPFile(null)
+    setPLoading(true)
+    setPStatus('Loading the sample building…')
+    try {
+      const m = await (await fetch('/sample.meta.json')).json()
+      const old = pPlan
+      setPPlan({ meta: m.meta, glbUrl: '/sample.glb', doors: m.doors,
+                 windows: m.windows, rooms: m.rooms ?? [] })
+      if (old) URL.revokeObjectURL(old.glbUrl)
+      setPStatus(`Sample 2BHK · ${m.meta.plan_width_ft.toFixed(1)} × ` +
+        `${m.meta.plan_depth_ft.toFixed(1)} ft — parsed by the same engine. ` +
+        'Now try your own CAD PDF.')
+    } catch {
+      setPStatus('Could not load the sample building.')
+    } finally {
+      setPLoading(false)
+    }
+  }
+
   const handlePlan = async (f: File, wing?: number) => {
     setPFile(f)
     setPLoading(true)
@@ -162,10 +213,13 @@ export default function App() {
   }
 
   // fit the camera to the built model's actual box (long thin plans otherwise
-  // render tiny and off-centre with a fixed preset)
-  const lastFrame = useRef<{ center: [number, number, number]; size: [number, number, number] } | null>(null)
-  const framePlan = useCallback((info: { center: [number, number, number]; size: [number, number, number] }) => {
+  // render tiny and off-centre with a fixed preset). The frame info also
+  // carries the model's scale/offset — needed to place room beacons.
+  const lastFrame = useRef<FrameInfo | null>(null)
+  const [frame, setFrame] = useState<FrameInfo | null>(null)
+  const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
+    setFrame(info)
     const [cx, cy, cz] = info.center
     const maxd = Math.max(info.size[0], info.size[2]) || 10
     setView({
@@ -173,6 +227,15 @@ export default function App() {
       target: [cx, cy, cz],
     })
   }, [])
+
+  // walk inside: fly the camera to eye height in room N (beacon click / keys 1-9)
+  const enterRoom = useCallback((n: number) => {
+    const f = lastFrame.current
+    const room = pPlan?.rooms?.[n]
+    if (f && room) {
+      setView(roomView(room, f, pPlan!.rooms.filter((_, i) => i !== n)))
+    }
+  }, [pPlan])
 
   const pickMaterial = (k: FloorKey) => { setFloor(k); setView({ ...PRESETS[k] }) } // triggers GSAP tween
 
@@ -215,17 +278,18 @@ export default function App() {
     a.download = 'plan.json'; a.click()
   }
 
-  // desktop keyboard shortcuts: T = top view, F = re-frame the loaded plan
+  // desktop keyboard shortcuts: T = top view, F = re-frame, 1-9 = enter room
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
       if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
+      if (/^[1-9]$/.test(e.key)) enterRoom(Number(e.key) - 1)
     }
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
-  }, [framePlan])
+  }, [framePlan, enterRoom])
 
   useEffect(() => {
     if (mode === 'convert') setView({ ...TOP_VIEW })
@@ -331,12 +395,20 @@ export default function App() {
 
               {mode === 'plan' && (
                 <>
-                  <Status>Upload a floor plan — the backend reads the CAD geometry, finds walls, doors and scale, and returns a real 3D model.</Status>
+                  <Status>Upload a CAD-exported floor plan (PDF) — the engine reads the geometry, finds walls, doors and scale, and builds real 3D. Photos &amp; scans are beta.</Status>
                   <Field label="Width override (ft)">
                     <NumberInput value={pWidthFt || ''} min={0} step={1} placeholder="auto"
                       onChange={(e) => setPWidthFt(+e.target.value || 0)} />
                   </Field>
                   <Upload onFile={(f) => handlePlan(f)} accept=".pdf,.png,.jpg,.jpeg">Upload plan</Upload>
+                  <div className="grid grid-cols-2 gap-2">
+                    <Button size="sm" variant="secondary" onClick={loadSample}>✨ Try a sample</Button>
+                    <a href="/sample-plan.pdf" download
+                       className="inline-flex h-8 items-center justify-center rounded-md border border-input
+                                  bg-surface/60 px-2 text-xs text-muted-foreground hover:text-foreground">
+                      Sample PDF ↓
+                    </a>
+                  </div>
                   {pPlan?.meta.wing && pPlan.meta.wing.count > 1 && pFile && (
                     <div className="grid grid-cols-3 gap-2">
                       {Array.from({ length: pPlan.meta.wing.count }, (_, i) => (
@@ -380,7 +452,9 @@ export default function App() {
 
       {/* ─────────── 3D scene ─────────── */}
       <Canvas shadows camera={{ position: PRESETS.default.position, fov: 50 }} className="!absolute inset-0">
-        <Lights />
+        {/* plan mode needs a building-sized sun; the room lights' shadow
+            camera (~3.5 m) silently clipped shadows on 14 m plans */}
+        {mode === 'plan' ? <PlanLights /> : <Lights />}
 
         {mode === 'room' && (
           <>
@@ -405,23 +479,33 @@ export default function App() {
 
         {mode === 'plan' && (
           <>
+            {/* self-contained sky shader (no downloads) + distance fog: the
+                model sits in a world instead of a void */}
+            <Sky distance={450000} sunPosition={[14, 22, 9]} turbidity={5.5} rayleigh={1.1} />
+            <fog attach="fog" args={['#cfd9e4', 45, 160]} />
             {/* HDR comes from a CDN — if it can't load (offline demo), keep the app alive */}
             <ErrorBoundary fallback={null}>
               <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
             </ErrorBoundary>
-            <ContactShadows position={[0, 0, 0]} opacity={0.55} scale={40} blur={2.2} far={12} />
+            <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={44} blur={2.4} far={12} />
             <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
-              <planeGeometry args={[60, 60]} />
-              <meshStandardMaterial color="#d9d6d0" roughness={0.95} />
+              <planeGeometry args={[400, 400]} />
+              <meshStandardMaterial color="#ccd3da" roughness={1} />
             </mesh>
             {pPlan && (
               <Suspense fallback={null}>
                 <ErrorBoundary key={pPlan.glbUrl} fallback={null}
                   onError={() => setPStatus('⚠ The 3D model failed to render — try rebuilding, another wing, or a smaller plan.')}>
-                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center onFramed={framePlan} />
+                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center plan onFramed={framePlan} />
                 </ErrorBoundary>
               </Suspense>
             )}
+            {/* walk-inside beacons: one per detected room — click to step in */}
+            {pPlan && frame && pPlan.rooms.map((r, i) => (
+              <CameraMarker key={r.id}
+                position={roomWorldPoint(r, frame, 4.6)}
+                onSelect={() => enterRoom(i)} />
+            ))}
           </>
         )}
 
@@ -483,6 +567,9 @@ export default function App() {
         drag to orbit · scroll to zoom ·{' '}
         <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
         <span className="rounded border border-white/20 px-1">F</span> frame plan
+        {mode === 'plan' && (pPlan?.rooms.length ?? 0) > 0 && (
+          <> · <span className="rounded border border-white/20 px-1">1–{Math.min(9, pPlan!.rooms.length)}</span> step inside · click a beacon</>
+        )}
       </div>
     </div>
   )

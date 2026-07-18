@@ -1,0 +1,18 @@
+# Render blueprint: deploy the Drishti API straight from this repo.
+# Dashboard -> New -> Blueprint -> pick this repo. After the first deploy,
+# set ALLOWED_ORIGINS to your real Vercel URL.
+services:
+  - type: web
+    name: drishti-api
+    runtime: docker
+    dockerfilePath: ./server/Dockerfile
+    dockerContext: ./server
+    plan: starter
+    healthCheckPath: /health
+    envVars:
+      - key: ALLOWED_ORIGINS
+        value: http://localhost:5173   # change to https://YOUR-APP.vercel.app
+      - key: INFER_TIMEOUT_S
+        value: "120"
+      - key: MAX_CONCURRENT_INFER
+        value: "2"

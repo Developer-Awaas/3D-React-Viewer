@@ -1,6 +1,7 @@
 import { useLayoutEffect, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
+import { applyPlanMaterials } from '../three/planMaterials'
 
 // Loads a .glb/.gltf model from a URL via drei's useGLTF (built on Three's
 // GLTFLoader). useGLTF "suspends" while downloading, so it must be wrapped in
@@ -12,6 +13,7 @@ export default function Model({
   rotationY = 0,
   targetSize = 1.9, // desired largest footprint dimension, in metres
   center = false,   // horizontally centre the model on `position` (plans)
+  plan = false,     // backend-built plan: swap in PBR materials by mesh name
   onFramed,         // fires after scale+placement with the final box info
 }: {
   url: string
@@ -19,10 +21,13 @@ export default function Model({
   rotationY?: number
   targetSize?: number
   center?: boolean
+  plan?: boolean
   onFramed?: (info: {
     center: [number, number, number]
     size: [number, number, number]
-  }) => void
+    scale: number                       // transform the group applied —
+    position: [number, number, number]  // needed to map plan-feet points
+  }) => void                            // (room beacons) into world space
 }) {
   const { scene } = useGLTF(url)
   const ref = useRef<THREE.Group>(null!)
@@ -60,13 +65,19 @@ export default function Model({
       ref.current.position.z = pz - c.z
     }
 
-    // 4) make every part cast/receive shadows
-    scene.traverse((o) => {
-      if ((o as THREE.Mesh).isMesh) {
-        o.castShadow = true
-        o.receiveShadow = true
-      }
-    })
+    // 4) materials + shadows. Plans get the PBR set (plaster walls, tiled
+    //    floor, glass windows — assigned by mesh name); other models just
+    //    get shadow flags.
+    if (plan) {
+      applyPlanMaterials(scene)
+    } else {
+      scene.traverse((o) => {
+        if ((o as THREE.Mesh).isMesh) {
+          o.castShadow = true
+          o.receiveShadow = true
+        }
+      })
+    }
 
     // 5) report the final placed box so the parent can frame the camera to it
     if (onFramedRef.current) {
@@ -75,9 +86,15 @@ export default function Model({
       const fs = new THREE.Vector3()
       finalBox.getCenter(fc)
       finalBox.getSize(fs)
-      onFramedRef.current({ center: [fc.x, fc.y, fc.z], size: [fs.x, fs.y, fs.z] })
+      const gp = ref.current.position
+      onFramedRef.current({
+        center: [fc.x, fc.y, fc.z],
+        size: [fs.x, fs.y, fs.z],
+        scale: ref.current.scale.x,
+        position: [gp.x, gp.y, gp.z],
+      })
     }
-  }, [scene, targetSize, px, py, pz, center])
+  }, [scene, targetSize, px, py, pz, center, plan])
 
   return (
     <group ref={ref} position={position} rotation={[0, rotationY, 0]}>

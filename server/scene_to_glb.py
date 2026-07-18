@@ -36,7 +36,7 @@ def interval_boxes(w, H, openings):
     return out
 
 
-def _add_box(meshes, b, rgba):
+def _add_box(meshes, b, rgba, name=None):
     import trimesh
     x0, x1, y0, y1, z0, z1 = b
     sx, sy, sz = (x1 - x0) * FT, (z1 - z0) * FT, (y1 - y0) * FT       # Y = height
@@ -47,7 +47,7 @@ def _add_box(meshes, b, rgba):
         extents=(sx, sy, sz),
         transform=trimesh.transformations.translation_matrix((cx, cy, cz)))
     m.visual.face_colors = rgba
-    meshes.append(m)
+    meshes.append((name or f"part_{len(meshes)}", m))
 
 
 def _hexrgba(h, a=255):
@@ -79,7 +79,7 @@ def poly_bands(wall, H, openings):
     return bands
 
 
-def _add_poly_prism(meshes, geom, z0, z1, rgba):
+def _add_poly_prism(meshes, geom, z0, z1, rgba, name=None):
     """Extrude a shapely Polygon/MultiPolygon plan footprint (feet) from z0..z1
     and place it in glTF axes (X=x, Y=height, Z=plan-y), like _add_box."""
     import numpy as np
@@ -88,7 +88,7 @@ def _add_poly_prism(meshes, geom, z0, z1, rgba):
         return
     polys = getattr(geom, "geoms", [geom])
     M = np.array([[FT, 0, 0, 0], [0, 0, FT, 0], [0, FT, 0, FT * z0], [0, 0, 0, 1.0]])
-    for pg in polys:
+    for k, pg in enumerate(polys):
         if pg.is_empty or pg.area <= 0:
             continue
         m = trimesh.creation.extrude_polygon(pg, height=z1 - z0)
@@ -96,7 +96,7 @@ def _add_poly_prism(meshes, geom, z0, z1, rgba):
         if m.volume < 0:
             m.invert()
         m.visual.face_colors = rgba
-        meshes.append(m)
+        meshes.append((f"{name}_{k}" if name else f"part_{len(meshes)}", m))
 
 
 def build_glb(scene, out_path):
@@ -111,23 +111,45 @@ def build_glb(scene, out_path):
     ys = [w["y0"] for w in walls] + [w["y1"] for w in walls] \
         + [p[1] for w in walls_poly for p in w["outer"]]
     if xs:
-        _add_box(meshes, (min(xs), max(xs), min(ys), max(ys), -0.25, 0), _hexrgba("#e8e4da"))  # floor
+        # floor slab under THIS wing's walls (scenes are one wing each, so the
+        # wall extent IS the wing footprint)
+        _add_box(meshes, (min(xs), max(xs), min(ys), max(ys), -0.25, 0),
+                 _hexrgba("#e8e4da"), name="floor")
     openings = scene.get("openings", [])
-    for w in walls:
-        for b in interval_boxes(w, H, openings):
-            _add_box(meshes, b, _hexrgba("#cfcabd"))
-    for w in walls_poly:
-        for geom, z0, z1 in poly_bands(w, H, openings):
-            _add_poly_prism(meshes, geom, z0, z1, _hexrgba("#cfcabd"))
-    for c in scene.get("columns", []) + scene.get("ducts", []):
-        _add_box(meshes, (c["x"], c["x"] + c["w"], c["y"], c["y"] + c["d"], 0, H), _hexrgba("#9aa0a6"))
+    for i, w in enumerate(walls):
+        for j, b in enumerate(interval_boxes(w, H, openings)):
+            _add_box(meshes, b, _hexrgba("#cfcabd"), name=f"wall_{i}_{j}")
+    for i, w in enumerate(walls_poly):
+        for j, (geom, z0, z1) in enumerate(poly_bands(w, H, openings)):
+            _add_poly_prism(meshes, geom, z0, z1, _hexrgba("#cfcabd"),
+                            name=f"wall_p{i}_{j}")
+    # glass panes in the window voids (slightly inset to avoid z-fighting);
+    # the viewer swaps 'glass_*' meshes to a translucent material by NAME
+    for i, o in enumerate(openings):
+        if o.get("type") == "window" and o.get("footprint"):
+            x0, y0, x1, y1 = o["footprint"]
+            zb, zt = o["z"]
+            pad = 0.05
+            _add_box(meshes, (x0 + pad, x1 - pad, y0 + pad, y1 - pad,
+                              zb + pad, zt - pad),
+                     [176, 212, 232, 110], name=f"glass_{i}")
+    for i, c in enumerate(scene.get("columns", []) + scene.get("ducts", [])):
+        _add_box(meshes, (c["x"], c["x"] + c["w"], c["y"], c["y"] + c["d"], 0, H),
+                 _hexrgba("#9aa0a6"), name=f"column_{i}")
     pal = {"bed": "#7f77dd", "sidetable": "#5dcaa5", "cupboard": "#ef9f27",
            "commode": "#378add", "basin": "#1d9e75", "shower": "#85b7eb"}
-    for f in scene.get("furniture", []):
+    for i, f in enumerate(scene.get("furniture", [])):
         _add_box(meshes, (f["x"], f["x"] + f["w"], f["y"], f["y"] + f["d"], 0, f.get("h", 2.0)),
-                 _hexrgba(pal.get(f["type"], "#d85a30")))
-    trimesh.Scene(meshes).export(out_path)
-    tris = sum(len(m.faces) for m in meshes)
+                 _hexrgba(pal.get(f["type"], "#d85a30")), name=f"furn_{f['type']}_{i}")
+    sc = trimesh.Scene()
+    for name, m in meshes:
+        sc.add_geometry(m, node_name=name, geom_name=name)
+    # include_normals: without it trimesh writes POSITION-only primitives and
+    # three.js-based viewers light them as NaN -> solid black (found 2026-07-14
+    # when the window glass rendered black; our app also guards client-side,
+    # but the DOWNLOADED .glb must stand on its own in any viewer)
+    sc.export(out_path, include_normals=True)
+    tris = sum(len(m.faces) for _, m in meshes)
     print(f"wrote {out_path}: {len(meshes)} meshes, {tris} triangles")
     return out_path
 

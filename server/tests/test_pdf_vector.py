@@ -191,6 +191,53 @@ def test_build_glb_from_polygon_scene(tmp_path):
     assert out.exists() and out.stat().st_size > 500
 
 
+def test_build_glb_exports_normals(tmp_path):
+    """Every primitive must carry NORMALs: viewers that don't recompute them
+    (three.js) light POSITION-only meshes as NaN -> solid black geometry."""
+    import json
+    import struct
+    from scene_to_glb import build_glb
+    scene = {
+        "meta": {"wall_height_ft": 9.843},
+        "walls": [],
+        "walls_poly": [{"id": "wp0", "outer": [[0, 0], [10, 0], [10, 2], [0, 2]],
+                        "holes": []}],
+        "openings": [{"id": "o0", "type": "window", "footprint": [4, 0, 6, 2],
+                      "z": [3.0, 7.0]}],
+    }
+    out = tmp_path / "normals.glb"
+    build_glb(scene, str(out))
+    raw = out.read_bytes()
+    ln = struct.unpack("<I", raw[12:16])[0]
+    doc = json.loads(raw[20:20 + ln])
+    missing = [m.get("name") for m in doc["meshes"]
+               if "NORMAL" not in m["primitives"][0]["attributes"]]
+    assert missing == []
+
+
+def test_build_glb_names_parts_and_adds_glass(tmp_path):
+    """The viewer assigns PBR materials BY MESH NAME (floor/wall/column/glass),
+    and every window void gets a translucent pane."""
+    import trimesh
+    from scene_to_glb import build_glb
+    scene = {
+        "meta": {"wall_height_ft": 9.843},
+        "walls": [],
+        "walls_poly": [{"id": "wp0", "outer": [[0, 0], [10, 0], [10, 2], [0, 2]],
+                        "holes": []}],
+        "openings": [{"id": "o0", "type": "window", "footprint": [4, 0, 6, 2],
+                      "z": [3.0, 7.0]}],
+        "columns": [{"id": "c0", "x": 0, "y": 0, "w": 1, "d": 1}],
+    }
+    out = tmp_path / "named.glb"
+    build_glb(scene, str(out))
+    names = set(trimesh.load(str(out)).geometry.keys())
+    assert "floor" in names
+    assert any(n.startswith("wall_") for n in names)
+    assert "glass_0" in names
+    assert "column_0" in names
+
+
 # --- text-like decoy layers (real exports have a 'wall' layer full of outlined text) ---
 def _make_pdf_with_text_junk():
     """Real building on 'AR Wall' + columns, PLUS a decoy layer named 'wall'
@@ -381,6 +428,28 @@ def test_wing_split_two_blocks():
     assert s1["meta"]["plan_depth_ft"] == pytest.approx(10.0, abs=1.5)
 
 
+def test_wing_default_prefers_doors_over_area():
+    """Two blocks: the LARGER one is a doorless detail drawing, the smaller
+    holds the doors (= the actual floor plan). Default must pick the doors."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1200, height=800)
+    zero = doc.add_ocg("0")
+    _double_line_box(page, 100, 100, 500, 300, oc=zero)   # big doorless block
+    _double_line_box(page, 100, 600, 300, 700, oc=zero)   # small block 20x10 ft
+    door = doc.add_ocg("ALL DOOR")
+    for xc in (150, 220):                                  # 2 doors, small block
+        page.draw_line(fitz.Point(xc, 608), fitz.Point(xc, 638), oc=door)
+        page.draw_line(fitz.Point(xc, 638), fitz.Point(xc + 15, 630), oc=door)
+        page.draw_line(fitz.Point(xc + 15, 630), fitz.Point(xc + 30, 612), oc=door)
+    _add_dim_lines(doc, page, ppf=10.0, y0=740)
+    s = parse(doc.tobytes())
+    assert s["meta"]["wing"]["count"] == 2
+    assert s["meta"]["plan_width_ft"] == pytest.approx(20.0, abs=1.5)
+    assert s["meta"]["plan_depth_ft"] == pytest.approx(10.0, abs=1.5)
+    assert any("wing auto-pick" in w for w in s["meta"]["warnings"])
+
+
 def test_door_scale_sanity_warns_on_bad_scale():
     from pdf_vector import _door_scale_sanity
     mk = lambda w: {"type": "door", "snapped": True, "footprint": [0, 0, w, 0.6]}
@@ -400,6 +469,116 @@ def test_wing_arg_conversion():
     assert wing_arg("1") == 1 and wing_arg(0) == 0
     assert wing_arg("largest") == "largest"
     assert wing_arg(None) == "largest" and wing_arg("x") == "largest"
+
+
+# --- junction doors: vector-endpoint fallback (2026-07-14) ---
+def test_door_gap_endpoints_unit():
+    """Two collinear double-line wall runs with a 30 pt jamb-to-jamb gap and
+    the swing box beside it -> the strip covers the gap and the wall band."""
+    import fitz
+    from pdf_vector import _door_gap_endpoints
+    struct = [(100, 100, 300, 100), (330, 100, 500, 100),      # outer face
+              (100, 108, 300, 108), (330, 108, 500, 108)]      # inner face
+    cl = fitz.Rect(300, 108, 330, 138)                         # swing box
+    r = _door_gap_endpoints(struct, cl, ppf=10.0)
+    assert r is not None
+    x0, y0, x1, y1 = r
+    assert x0 == pytest.approx(300, abs=1.5) and x1 == pytest.approx(330, abs=1.5)
+    assert y0 < 100 and y1 > 108                # spans the full wall band
+    assert y1 - y0 < 15                          # ...but stays thin like a wall
+
+
+def test_door_gap_endpoints_rejects_crossed_gap():
+    """A third collinear line running THROUGH the gap = offset wall segments,
+    not a doorway -> no strip."""
+    import fitz
+    from pdf_vector import _door_gap_endpoints
+    struct = [(100, 100, 300, 100), (330, 100, 500, 100),
+              (100, 108, 300, 108), (330, 108, 500, 108),
+              (280, 104, 360, 104)]              # line crossing the "gap"
+    cl = fitz.Rect(300, 108, 330, 138)
+    assert _door_gap_endpoints(struct, cl, ppf=10.0) is None
+
+
+def test_door_gap_endpoints_ignores_far_gap():
+    """A door-sized gap in a DIFFERENT wall (far from the swing box) must not
+    be claimed as this door's doorway."""
+    import fitz
+    from pdf_vector import _door_gap_endpoints
+    struct = [(100, 100, 300, 100), (330, 100, 500, 100),      # gap at x 300..330
+              (100, 108, 300, 108), (330, 108, 500, 108)]
+    cl = fitz.Rect(430, 108, 460, 138)     # swing box 100 pt away from the gap
+    assert _door_gap_endpoints(struct, cl, ppf=10.0) is None
+
+
+def test_drop_stair_ladders_pure():
+    """Unit test on the pure function: 8 tread pairs (short, regular rhythm)
+    interleaved with unrelated long walls -> only inner treads are dropped."""
+    from pdf_vector import _drop_stair_ladders
+    ppf = 10.0
+    treads = [(150.0 + k * 8, 200.0, 280.0) for k in range(8)]   # 8 ft strips
+    walls = [(154.0, 320.0, 480.0), (162.0, 320.0, 480.0),       # 16 ft walls
+             (400.0, 100.0, 500.0)]
+    mixed = sorted(treads + walls)
+    warnings = []
+    kept = _drop_stair_ladders(mixed, ppf, warnings, horiz=True)
+    assert any("stair filter" in w for w in warnings)
+    kept_ps = {w[0] for w in kept}
+    for w in walls:                        # every real wall survives
+        assert w[0] in kept_ps
+    assert 150.0 in kept_ps and 206.0 in kept_ps   # outermost rungs kept
+    for k in range(1, 7):                  # inner treads dropped
+        assert 150.0 + k * 8 not in kept_ps
+
+
+def _make_pdf_with_junction_door():
+    """Doorway gap in the top edge with a perpendicular interior wall meeting
+    the top wall AT the left jamb - the classic junction door the raster
+    gap-finder misses."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1200, height=800)
+    wall = doc.add_ocg("AR Wall")
+
+    def ln(a, b):
+        page.draw_line(fitz.Point(*a), fitz.Point(*b), oc=wall)
+
+    for y in (100, 108):                       # top edge: gap x 300..330
+        ln((100, y), (300, y)); ln((330, y), (500, y))
+    for y in (292, 300):                       # bottom edge, continuous
+        ln((100, y), (500, y))
+    for x in (100, 108):                       # left edge
+        ln((x, 100), (x, 300))
+    for x in (492, 500):                       # right edge
+        ln((x, 100), (x, 300))
+    for x in (292, 300):                       # interior wall INTO the left jamb
+        ln((x, 108), (x, 220))
+    door = doc.add_ocg("ALL DOOR")
+
+    def dln(a, b):
+        page.draw_line(fitz.Point(*a), fitz.Point(*b), oc=door)
+
+    dln((330, 108), (330, 138))                # leaf on the right jamb
+    dln((330, 138), (315, 130)); dln((315, 130), (302, 112))
+    col = doc.add_ocg("COLUMN")
+    for x, y in ((100, 100), (490, 290), (100, 290)):
+        page.draw_rect(fitz.Rect(x, y, x + 10, y + 10),
+                       color=(0, 0, 0), fill=(0, 0, 0), oc=col)
+    return doc.tobytes()
+
+
+def test_junction_door_snaps(monkeypatch):
+    """Force the raster gap-finder to fail: the endpoint fallback alone must
+    still snap the junction door onto the doorway."""
+    import pdf_vector
+    monkeypatch.setattr(pdf_vector, "_door_gap_strip", lambda *a, **k: None)
+    s = pdf_vector.parse(_make_pdf_with_junction_door())
+    doors = [o for o in s["openings"] if o["type"] == "door"]
+    assert len(doors) == 1
+    assert doors[0]["snapped"] is True
+    x0, y0, x1, y1 = doors[0]["footprint"]
+    assert x1 - x0 == pytest.approx(3.0, abs=0.8)   # door-width along the wall
+    assert y1 > 18.0                                 # sits ON the top wall band
 
 
 def test_stair_treads_are_not_walls():
@@ -423,3 +602,33 @@ def test_stair_treads_are_not_walls():
                  .intersection(patch).area for w in s["walls_poly"])
     assert filled < 0.25 * patch.area
     assert s["meta"]["plan_width_ft"] == pytest.approx(40.0, abs=1.5)
+
+
+def test_stair_filter_survives_interleaved_walls():
+    """Regression for v2 inertness: a REAL wall whose position falls between
+    two treads must not break the tread chain (v2 walked the global sorted
+    list, so it did - the filter never fired on real plans)."""
+    import fitz
+    doc = fitz.open()
+    page = doc.new_page(width=1200, height=800)
+    zero = doc.add_ocg("0")
+    _double_line_box(page, 100, 100, 500, 300, oc=zero)
+    for k in range(8):                       # stair: treads 8 pt (=0.8 ft) apart
+        y = 150 + k * 8
+        page.draw_line(fitz.Point(200, y), fitz.Point(280, y), oc=zero)
+    # an unrelated LONG wall at y 154/158 - its position interleaves the treads
+    for y in (154, 158):
+        page.draw_line(fitz.Point(320, y), fitz.Point(480, y), oc=zero)
+    _add_dim_lines(doc, page, ppf=10.0)
+    s = parse(doc.tobytes())
+    assert any("stair filter" in w for w in s["meta"]["warnings"])
+    from shapely.geometry import Polygon, box as sbox
+    patch = sbox(10.5, 9.8, 17.5, 14.6)      # centre of the tread field (ft, y-up)
+    filled = sum(Polygon(w["outer"], w.get("holes") or None).buffer(0)
+                 .intersection(patch).area for w in s["walls_poly"])
+    assert filled < 0.25 * patch.area
+    # the interleaved real wall must SURVIVE (x 22..38 ft, y ~14.4 ft)
+    wall_patch = sbox(23.0, 13.6, 37.0, 15.2)
+    kept = sum(Polygon(w["outer"], w.get("holes") or None).buffer(0)
+               .intersection(wall_patch).area for w in s["walls_poly"])
+    assert kept > 0.3 * wall_patch.area

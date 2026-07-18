@@ -12,11 +12,14 @@ export type SceneMeta = {
   warnings: string[]
 }
 
+export type Room = { id: string; x: number; y: number; area_sqft: number }
+
 export type BuiltPlan = {
   meta: SceneMeta
   glbUrl: string
   doors: number
   windows: number
+  rooms: Room[]
 }
 
 async function post(path: string, file: File, q: URLSearchParams): Promise<Response> {
@@ -43,5 +46,6 @@ export async function buildPlan(file: File, widthFt?: number, wing?: number): Pr
     glbUrl: URL.createObjectURL(glb),
     doors: ops.filter((o) => o.type === 'door').length,
     windows: ops.filter((o) => o.type === 'window').length,
+    rooms: (scene.rooms ?? []) as Room[],
   }
 }

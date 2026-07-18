@@ -5,6 +5,12 @@ import type { Vector3 } from 'three'
 
 export type View = { position: [number, number, number]; target: [number, number, number] }
 
+// Without this, GSAP's lag smoothing SLOWS ITS CLOCK on low-fps machines
+// (heavy scene + weak GPU), stretching a 0.8 s camera glide into many
+// seconds. With it, tweens finish on schedule everywhere (frames may skip,
+// which is the right trade for a camera move).
+gsap.ticker.lagSmoothing(0)
+
 // Ultra-smooth camera transitions: tween camera.position AND controls.target together
 // with GSAP (0.8s, power3.out), updating controls every tick. Any in-flight tween is killed.
 export default function CameraRig({ view }: { view: View | null }) {

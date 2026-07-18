@@ -1,0 +1,50 @@
+{
+ "meta": {
+  "source": "vector_pdf_layers",
+  "units": "ft",
+  "wall_height_ft": 9.843,
+  "plan_width_ft": 40.55,
+  "plan_depth_ft": 28.55,
+  "scale": {
+   "source": "column_box_12in",
+   "pt_per_ft": 10.0
+  },
+  "wing": {
+   "count": 1,
+   "index": 0,
+   "bbox_ft": null
+  },
+  "warnings": [
+   "scale from dominant column box = 12 in (provisional)"
+  ]
+ },
+ "doors": 6,
+ "doors_snapped": 6,
+ "windows": 6,
+ "rooms": [
+  {
+   "x": 9.352,
+   "y": 7.764,
+   "area_sqft": 381.7,
+   "id": "r0"
+  },
+  {
+   "x": 30.216,
+   "y": 21.772,
+   "area_sqft": 274.7,
+   "id": "r1"
+  },
+  {
+   "x": 10.216,
+   "y": 21.772,
+   "area_sqft": 200.9,
+   "id": "r2"
+  },
+  {
+   "x": 34.165,
+   "y": 9.218,
+   "area_sqft": 158.6,
+   "id": "r3"
+  }
+ ]
+}

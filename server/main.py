@@ -4,6 +4,8 @@ Loads the CubiCasa model once at startup, then answers /perceive requests.
 Dev: runs locally (uvicorn). Prod: same app deploys to any GPU host - only
 .env and the frontend's API URL change, no code change.
 """
+import asyncio
+import io
 import os
 import tempfile
 from contextlib import asynccontextmanager
@@ -13,12 +15,26 @@ from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
+from starlette.background import BackgroundTask
 
 import openings
 import pdf_vector
-import perception
 import scene_builder
 import scene_to_glb
+
+# The photo/scan (raster) path needs torch + the CubiCasa repo. On slim
+# vector-only deploys those are absent ON PURPOSE (v1 scope: CAD PDFs are the
+# product; photos are beta) - the API must still boot and serve /scene.
+try:
+    import perception
+    _PERCEPTION_ERR = None
+except Exception as _e:          # torch/CubiCasa not installed
+    perception = None
+    _PERCEPTION_ERR = str(_e)
+
+BETA_MSG = ("This looks like a photo or scanned plan - that engine is in beta "
+            "and not enabled on this server. Upload a CAD-exported PDF "
+            "(vector) for full-quality 3D.")
 
 load_dotenv()
 
@@ -26,24 +42,41 @@ load_dotenv()
 @asynccontextmanager
 async def lifespan(app):
     # warm the model once when the server boots (the slow part happens here, not per request)
-    try:
-        perception.load_model()
-        print("CubiCasa model loaded and ready.")
-    except Exception as e:
-        print("WARNING: model failed to load at startup:", e)
+    if perception is None:
+        print("perception disabled (vector-only deploy):", _PERCEPTION_ERR)
+    else:
+        try:
+            perception.load_model()
+            print("CubiCasa model loaded and ready.")
+        except Exception as e:
+            print("WARNING: model failed to load at startup:", e)
     yield
 
 
 app = FastAPI(title="Drishti Perception API", version="0.2.0", lifespan=lifespan)
 
-origins = [o.strip() for o in os.getenv("ALLOWED_ORIGINS", "http://localhost:5173").split(",") if o.strip()]
+
+def parse_origins(value, default="http://localhost:5173"):
+    """ALLOWED_ORIGINS env -> origin list: comma-separated, whitespace and
+    trailing-slash tolerant (a trailing slash silently breaks CORS)."""
+    out = []
+    for o in (value or default).split(","):
+        o = o.strip().rstrip("/")
+        if o:
+            out.append(o)
+    return out or [default]
+
+
+origins = parse_origins(os.getenv("ALLOWED_ORIGINS"))
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
 
 @app.get("/health")
 def health():
     """Quick check the server is up (and whether the model is loaded)."""
-    return {"ok": True, "model_loaded": perception._MODEL is not None}
+    return {"ok": True,
+            "model_loaded": bool(perception and perception._MODEL is not None),
+            "raster_beta": perception is not None}
 
 
 TEST_PAGE = """<!doctype html>
@@ -95,6 +128,50 @@ def test_page():
 
 MAX_UPLOAD_MB = 25
 
+# at most N model inferences at once (default 1): extra requests QUEUE for a
+# moment instead of racing each other into GPU/CPU out-of-memory
+_INFER_SLOTS = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_INFER", "1")))
+
+
+def _is_gpu_oom(e):
+    try:
+        import torch
+        if isinstance(e, torch.cuda.OutOfMemoryError):
+            return True
+    except ImportError:
+        pass
+    return isinstance(e, RuntimeError) and "out of memory" in str(e).lower()
+
+
+def _free_gpu():
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
+async def _run_heavy(fn, *args, what="inference"):
+    """Run a heavy/model call off the event loop with (a) a concurrency slot,
+    (b) a wall-clock timeout, (c) GPU-OOM translated to a clean 503. The API
+    stays responsive no matter what the model does. Note: on timeout the
+    worker thread keeps running to completion in the background - the CLIENT
+    is released; the semaphore slot frees when the thread finishes."""
+    timeout = float(os.getenv("INFER_TIMEOUT_S", "120"))
+    try:
+        async with _INFER_SLOTS:
+            return await asyncio.wait_for(run_in_threadpool(fn, *args), timeout)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, f"{what} timed out after {timeout:.0f}s - "
+                                 "try a smaller image or PDF")
+    except Exception as e:
+        if _is_gpu_oom(e):
+            _free_gpu()
+            raise HTTPException(503, "model ran out of GPU memory - try a "
+                                     "smaller image or retry in a moment")
+        raise
+
 
 def _looks_supported(image: UploadFile):
     ct = image.content_type or ""
@@ -114,7 +191,14 @@ async def _read_upload_bytes(image: UploadFile):
         raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
     ct = image.content_type or ""
     name = (image.filename or "").lower()
-    return raw, (ct == "application/pdf" or name.endswith(".pdf"))
+    is_pdf = (ct == "application/pdf" or name.endswith(".pdf"))
+    if not is_pdf:                    # fail fast on undecodable "images"
+        try:
+            from PIL import Image
+            Image.open(io.BytesIO(raw)).verify()
+        except Exception:
+            raise HTTPException(422, "file is not a readable image")
+    return raw, is_pdf
 
 
 def _pdf_first_page_png(raw):
@@ -137,8 +221,12 @@ async def _read_upload(image: UploadFile):
 async def perceive(image: UploadFile = File(...)):
     """Send a floor-plan image or PDF, get back what the model detected."""
     raw = await _read_upload(image)
+    if perception is None:
+        raise HTTPException(503, BETA_MSG)
     try:
-        result = await run_in_threadpool(perception.detect, raw)
+        result = await _run_heavy(perception.detect, raw, what="perception")
+    except HTTPException:
+        raise
     except Exception as e:
         raise HTTPException(500, f"perception failed: {e}")
     return JSONResponse(result)
@@ -152,13 +240,21 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
     raw, is_pdf = await _read_upload_bytes(image)
     if is_pdf and await run_in_threadpool(pdf_vector.is_vector_plan, raw):
         try:
-            return await run_in_threadpool(pdf_vector.parse, raw, width_ft,
-                                           pdf_vector.wing_arg(wing))
+            return await _run_heavy(pdf_vector.parse, raw, width_ft,
+                                    pdf_vector.wing_arg(wing), what="vector parse")
         except ValueError as e:
             raise HTTPException(422, f"vector PDF parse failed: {e}")
     if is_pdf:
         raw = _pdf_first_page_png(raw)   # flat PDF -> raster path
-    segs, boxes, w, h = await run_in_threadpool(perception.detections, raw)
+    if perception is None:               # vector-only deploy: photos are beta
+        raise HTTPException(503, BETA_MSG)
+    try:
+        segs, boxes, w, h = await _run_heavy(perception.detections, raw,
+                                             what="detection")
+    except HTTPException:
+        raise
+    except Exception as e:               # model/env broken -> guidance, not a 500
+        raise HTTPException(503, f"{BETA_MSG} ({type(e).__name__})")
     segs, ops = openings.attach_openings(segs, boxes, openings.default_tol(w))
     return scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
 
@@ -183,13 +279,17 @@ async def scene_glb(image: UploadFile = File(...), width_ft: float = scene_build
     """Detect walls, build a .glb 3D model, and return the file."""
     try:
         s = await _scene_from_upload(image, width_ft, wing)
-        out = os.path.join(tempfile.gettempdir(), "drishti_scene.glb")
+        # unique temp file per request (a fixed name let concurrent users
+        # download each other's building), deleted after the response is sent
+        fd, out = tempfile.mkstemp(suffix=".glb", prefix="drishti_")
+        os.close(fd)
         await run_in_threadpool(scene_to_glb.build_glb, s, out)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"glb build failed: {e}")
-    return FileResponse(out, media_type="model/gltf-binary", filename="scene.glb")
+    return FileResponse(out, media_type="model/gltf-binary", filename="scene.glb",
+                        background=BackgroundTask(os.remove, out))
 
 
 SCENE_VIEW_PAGE = """<!doctype html>

@@ -1,0 +1,10 @@
+# Drishti "Visualize" (Beta) — GPU render stack.
+# These sit ON TOP of requirements.txt. Install the CUDA build of torch
+# SEPARATELY first (see setup_visualize.bat) — do NOT `pip install torch` here,
+# that pulls the CPU build.
+diffusers>=0.27
+transformers>=4.38
+accelerate>=0.27
+safetensors
+imageio[ffmpeg]
+# pillow, numpy, opencv-python-headless are already in requirements.txt

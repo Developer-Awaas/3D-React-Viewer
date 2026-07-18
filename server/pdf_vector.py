@@ -216,7 +216,7 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
 
     def pairs(runs, horiz):
         runs = sorted(runs)
-        walls = []                     # (p_mid, a, b)
+        walls = []                     # (p_mid, a, b, p1, p2)
         for i in range(len(runs)):
             p1, a1, b1 = runs[i]
             for j in range(i + 1, len(runs)):
@@ -228,14 +228,29 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
                 a, b = max(a1, a2), min(b1, b2)
                 if b - a < min_ovl:
                     continue
-                walls.append(((p1 + p2) / 2, a, b))
+                # a real masonry wall has EMPTY space between its two faces:
+                # if a third line runs between p1 and p2 over (nearly) the
+                # whole span, the (p1, p2) pair is a phantom spanning several
+                # drawn lines. (Phantoms bridged doorway gaps - lost door
+                # snaps - and inflated the envelope ~5%.) Threshold is HIGH
+                # on purpose: window/fixture linework drawn inside the wall
+                # covers part of the span and must NOT kill the wall.
+                blocked = False
+                for k in range(i + 1, j):
+                    pk, ak, bk = runs[k]
+                    if pk - p1 < 0.5 or p2 - pk < 0.5:
+                        continue       # collinear duplicate of a face
+                    if min(b, bk) - max(a, ak) > 0.75 * (b - a):
+                        blocked = True
+                        break
+                if not blocked:
+                    walls.append(((p1 + p2) / 2, a, b, p1, p2))
         walls = _drop_stair_ladders(walls, ppf, warnings, horiz)
-        segs = []
-        half = 0.25 * ppf              # rebuild the two faces of each kept wall
-        for p, a, b in walls:
-            for q in (p - half, p + half):
-                segs.append((a, q, b, q) if horiz else (q, a, q, b))
-        return segs
+        segs = set()                   # faces at their TRUE drawn positions
+        for _pm, a, b, p1, p2 in walls:
+            for q in (p1, p2):
+                segs.add((a, q, b, q) if horiz else (q, a, q, b))
+        return sorted(segs)
 
     segs = pairs(H, True) + pairs(V, False)
     if segs:
@@ -245,35 +260,48 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
 
 
 def _drop_stair_ladders(walls, ppf, warnings, horiz):
-    """Remove staircase treads mis-read as walls. Treads are >=4 parallel
-    spans with almost the same start/end, marching at a tight regular rhythm
-    (0.5-1.6 ft). No real building has 4+ walls stacked a foot apart."""
+    """Remove staircase treads mis-read as walls. Treads are SHORT strips
+    (a stair is <= ~8 ft wide) with near-equal spans, marching at a tight
+    regular rhythm (0.35-1.6 ft). No real building stacks 4+ walls a foot
+    apart. The OUTERMOST rungs are usually the stair enclosure walls, so
+    the chain endpoints are kept.
+
+    v3 (2026-07-14): v2 walked the globally sorted list, so ANY unrelated
+    wall interleaved by position broke the chain - it never fired on real
+    plans (the corrugated stair blob). Now the ladder is chained over
+    short-strip candidates that laterally overlap, wherever they sit."""
     if len(walls) < 5:
         return walls
-    walls = sorted(walls)
-    drop = set()
-    i = 0
-    while i < len(walls):
-        chain = [i]
-        j = i
-        while j + 1 < len(walls):
-            p0, a0, b0 = walls[j]
-            p1, a1, b1 = walls[j + 1]
-            step = p1 - p0
+    cand = sorted((k for k in range(len(walls))
+                   if walls[k][2] - walls[k][1] <= 8.0 * ppf),
+                  key=lambda k: (walls[k][0], walls[k][1]))
+    drop, used = set(), set()
+    for s in range(len(cand)):
+        if cand[s] in used:
+            continue
+        chain = [cand[s]]
+        for k in cand[s + 1:]:
+            if k in used:
+                continue
+            p0, a0, b0 = walls[chain[-1]][:3]
+            p1, a1, b1 = walls[k][:3]
+            if p1 - p0 > 1.6 * ppf:
+                break                       # rhythm broken: no rung this close
             s0, s1 = b0 - a0, b1 - a1
-            ovl = min(b0, b1) - max(a0, a1)
-            equal = min(s0, s1) >= 0.75 * max(s0, s1)   # treads have equal spans
-            if (0.35 * ppf <= step <= 1.6 * ppf and equal
-                    and ovl >= 0.8 * max(s0, s1)):
-                chain.append(j + 1)
-                j += 1
-            else:
-                break
-        # a stair flight = 5+ equal rungs; its OUTERMOST rungs are usually the
-        # real walls enclosing the stair, so keep the endpoints.
-        if len(chain) >= 5:
-            drop.update(chain[1:-1])
-        i = j + 1
+            if min(s0, s1) < 0.75 * max(s0, s1):
+                continue                    # unrelated strip; keep scanning
+            if min(b0, b1) - max(a0, a1) < 0.8 * max(s0, s1):
+                continue                    # not laterally aligned
+            chain.append(k)
+        ps = sorted(walls[k][0] for k in chain)
+        rungs = 1 + sum(1 for t in range(1, len(ps))
+                        if ps[t] - ps[t - 1] >= 0.35 * ppf)
+        if rungs >= 4:                      # a stair flight
+            used.update(chain)
+            lo, hi = ps[0], ps[-1]
+            for k in chain:                 # keep outermost = enclosure walls
+                if walls[k][0] - lo > 0.2 * ppf and hi - walls[k][0] > 0.2 * ppf:
+                    drop.add(k)
     if drop:
         warnings.append(f"stair filter: dropped {len(drop)} "
                         f"{'horizontal' if horiz else 'vertical'} tread-like strips")
@@ -400,6 +428,21 @@ def _cluster_rects(rects, gap=3.0):
     return list(groups.values())
 
 
+def fitz_rect_intersects(a, b):
+    """Axis-aligned bbox intersection test for fitz.Rect (touch counts)."""
+    return not (a.x1 < b.x0 or b.x1 < a.x0 or a.y1 < b.y0 or b.y1 < a.y0)
+
+
+def fitz_rect_overlaps_half(a, b):
+    """>= half of the smaller rect's area overlaps the other: near-duplicate
+    linework of the SAME window symbol (frame vs shutter strokes)."""
+    w = min(a.x1, b.x1) - max(a.x0, b.x0)
+    h = min(a.y1, b.y1) - max(a.y0, b.y0)
+    if w <= 0 or h <= 0:
+        return False
+    return w * h >= 0.5 * min(a.width * a.height, b.width * b.height)
+
+
 def _door_gap_strip(m, box_px, door_w_px):
     """Locate the doorway GAP in the wall mask beside a door swing box.
 
@@ -453,6 +496,72 @@ def _door_gap_strip(m, box_px, door_w_px):
         if strip is not None and (best is None or area > best[0]):
             best = (area, strip, ub, (X0, Y0))
     return best[1:] if best else None
+
+
+def _door_gap_endpoints(struct, cl, ppf, wd_ft=None):
+    """Vector fallback for doors the raster gap-finder misses (typically at
+    wall JUNCTIONS, where the closing kernel merges the doorway with the
+    crossing wall). CAD wall lines STOP at the jambs: two nearly-collinear
+    lines whose facing endpoints straddle the swing box with a door-sized
+    gap mark the doorway. Returns the strip rect in pt (x0, y0, x1, y1)
+    covering the full wall band, or None."""
+    if wd_ft:                          # this door's own width, + jamb offset /
+        wd_lo = max(DOOR_MIN_FT, wd_ft - 0.7) * ppf        # crossing wall
+        wd_hi = min(DOOR_MAX_FT + 1.0, wd_ft + 1.6) * ppf
+    else:
+        wd_lo, wd_hi = DOOR_MIN_FT * ppf, (DOOR_MAX_FT + 0.6) * ppf
+    reach = 1.2 * ppf                  # wall face may sit ~a thickness away
+    H, V = [], []
+    for ax, ay, bx, by in struct:
+        if abs(ay - by) < 0.5:
+            H.append(((ay + by) / 2, min(ax, bx), max(ax, bx)))
+        elif abs(ax - bx) < 0.5:
+            V.append(((ax + bx) / 2, min(ay, by), max(ay, by)))
+    best = None                        # (overlap, along0, along1, p_lo, p_hi)
+    for runs, horiz in ((H, True), (V, False)):
+        if horiz:
+            lo, hi, clo, chi = cl.x0, cl.x1, cl.y0, cl.y1
+        else:
+            lo, hi, clo, chi = cl.y0, cl.y1, cl.x0, cl.x1
+        near = [r for r in runs if clo - reach <= r[0] <= chi + reach]
+        for p1, a1, b1 in near:
+            for p2, a2, b2 in near:
+                if abs(p2 - p1) > 0.35 * ppf:
+                    continue           # not the same wall face
+                gap = a2 - b1          # first line ends, second line starts
+                if not (wd_lo <= gap <= wd_hi):
+                    continue
+                g0, g1 = b1, a2
+                ovl = min(g1, hi) - max(g0, lo)
+                if ovl < 0.4 * (hi - lo):
+                    continue           # gap is not at the swing box
+                # genuinely open: no third collinear line crossing the gap
+                # (offset wall segments are not a doorway)
+                crossed = any(min(g1, bk) - max(g0, ak) > 0.25 * gap
+                              for pk, ak, bk in near
+                              if abs(pk - (p1 + p2) / 2) < 0.6 * ppf
+                              and (pk, ak, bk) not in ((p1, a1, b1), (p2, a2, b2)))
+                if crossed:
+                    continue
+                # wall band = faces terminating at these jambs, within one
+                # wall thickness of this face (NOT faces of other walls that
+                # happen to sit inside the swing box reach)
+                pmid = (p1 + p2) / 2
+                band = [p for p, a, b in near
+                        if (abs(b - g0) < 0.15 * ppf or abs(a - g1) < 0.15 * ppf)
+                        and abs(p - pmid) <= 0.95 * ppf]
+                p_lo, p_hi = min(band) - 1.0, max(band) + 1.0
+                if p_hi - p_lo > 1.3 * ppf:        # thicker than any wall: clamp
+                    p_lo, p_hi = pmid - 0.65 * ppf, pmid + 0.65 * ppf
+                if p_hi - p_lo < 0.3 * ppf:        # single face: assume 4in wall
+                    mid = (p_lo + p_hi) / 2
+                    p_lo, p_hi = mid - 0.17 * ppf, mid + 0.17 * ppf
+                if best is None or ovl > best[0]:
+                    best = (ovl, g0, g1, p_lo, p_hi, horiz)
+    if best is None:
+        return None
+    _, g0, g1, p_lo, p_hi, horiz = best
+    return (g0, p_lo, g1, p_hi) if horiz else (p_lo, g0, p_hi, g1)
 
 
 def wing_arg(w):
@@ -560,21 +669,50 @@ def parse(raw, width_ft=None, wing="largest"):
     def tp(x, y):
         return (int((x - x0) * sc) + PAD_PX, int((y - y0) * sc) + PAD_PX)
 
-    m = np.zeros((H, W), np.uint8)
-    for ax, ay, bx, by in struct:
-        cv2.line(m, tp(ax, ay), tp(bx, by), 255, 2)
-    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (9, 9)))
-    m = cv2.dilate(m, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (13, 13)))
-    # merge the TWO lines of a double-line wall into one solid band: kernel =
-    # max wall thickness (10 in ~ 0.85 ft). Door gaps (>= 2'6" = 127 px) survive.
-    wk = int(0.9 * NORM_PPX) | 1
-    m = cv2.morphologyEx(m, cv2.MORPH_CLOSE, cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (wk, wk)))
-    n, lab, stt, _ = cv2.connectedComponentsWithStats(m, 8)
-    keep = np.zeros_like(m)
-    for i in range(1, n):
-        if stt[i, cv2.CC_STAT_AREA] > MIN_WALL_AREA_PX:
-            keep[lab == i] = 255
-    m = keep
+    def _mask(shape_flag, dil, ero):
+        """Rasterize struct -> solid wall bands. Two flavours are used:
+        - RECT + erode: the OUTPUT mask - square corners (no ellipse blobs),
+          net fattening ~+2 px (~0.5 in)/side instead of the old ~1.4 in.
+        - ELLIPSE, no erode: the exact pre-de-blob mask, kept ONLY for the
+          door-gap finder, which is hyper-sensitive to wall fatness (kernel
+          sweeps moved snap counts by half). Gap-finding on the fat mask +
+          polygons from the thin mask decouples the two."""
+        K = cv2.getStructuringElement
+        shp = getattr(cv2, f"MORPH_{shape_flag}")
+        mm = np.zeros((H, W), np.uint8)
+        for ax, ay, bx, by in struct:
+            cv2.line(mm, tp(ax, ay), tp(bx, by), 255, 2)
+        mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (9, 9)))
+        mm = cv2.dilate(mm, K(shp, (dil, dil)))
+        # merge the TWO lines of a double-line wall into one solid band:
+        # kernel = max wall thickness (10 in ~ 0.85 ft). Door gaps
+        # (>= 2'6" = 127 px) survive.
+        wk = int(0.9 * NORM_PPX) | 1
+        mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (wk, wk)))
+        if ero:
+            mm = cv2.erode(mm, K(cv2.MORPH_RECT, (ero, ero)))
+        n, lab, stt, _ = cv2.connectedComponentsWithStats(mm, 8)
+        keep = np.zeros_like(mm)
+        for i in range(1, n):
+            if stt[i, cv2.CC_STAT_AREA] > MIN_WALL_AREA_PX:
+                keep[lab == i] = 255
+        return keep
+
+    m = _mask("RECT", 9, 5)             # output mask (de-blobbed)
+    m_snap = _mask("ELLIPSE", 13, 0)    # fat mask for door-gap finding only
+
+    # door clusters are needed BEFORE the wing split: the default wing is the
+    # one with the most doors (the largest-area block on a mixed sheet can be
+    # a section/detail drawing, not the floor plan)
+    door_rects = [d["rect"] for d in drawings if _is_door_layer(d["lname"])]
+    has_door_layer = bool(door_rects)
+    door_clusters = _cluster_rects(door_rects) if door_rects else []
+    door_centers = []                  # ft, full-sheet frame, door-sized only
+    for cl in door_clusters:
+        wd_ = max(cl.width, cl.height) / ppf
+        if DOOR_MIN_FT <= wd_ <= DOOR_MAX_FT:
+            door_centers.append((((cl.x0 + cl.x1) / 2 - x0) / ppf,
+                                 d_ft - ((cl.y0 + cl.y1) / 2 - y0) / ppf))
 
     # --- wing split: a sheet can hold several separate building blocks; keep
     # ONE per scene (user directive: no overlapping modules). Coordinates stay
@@ -584,13 +722,36 @@ def parse(raw, width_ft=None, wing="largest"):
     wbox_ft = None
     w_idx = 0
     if wing_count > 1:
-        w_idx = 0 if wing == "largest" else int(wing)
+        if wing == "largest" and door_centers:
+            def _ft_box(wb):
+                return ((wb[0] - PAD_PX) / NORM_PPX,
+                        d_ft - (wb[3] - PAD_PX) / NORM_PPX,
+                        (wb[2] - PAD_PX) / NORM_PPX,
+                        d_ft - (wb[1] - PAD_PX) / NORM_PPX)
+            scores = []
+            for g in wing_groups:
+                bx0, by0, bx1, by1 = _ft_box(g[1])
+                scores.append(sum(1 for cx, cy in door_centers
+                                  if bx0 - 2 <= cx <= bx1 + 2
+                                  and by0 - 2 <= cy <= by1 + 2))
+            w_idx = max(range(wing_count),
+                        key=lambda i: (scores[i], wing_groups[i][2]))
+            if w_idx != 0:
+                warnings.append(f"wing auto-pick: wing {w_idx} holds the most "
+                                f"doors ({scores[w_idx]}) - overriding the "
+                                f"largest-area wing (a non-plan drawing)")
+        elif wing != "largest":
+            w_idx = int(wing)
         if not (0 <= w_idx < wing_count):
             raise ValueError(f"wing {w_idx} out of range (sheet has {wing_count})")
         labels, wb, _area = wing_groups[w_idx]
         import cv2 as _cv2
         _n, _lab = _cv2.connectedComponents(m, 8)
         m = (np.isin(_lab, list(labels)).astype(np.uint8)) * 255
+        m_snap[:wb[1], :] = 0           # crop the fat mask to the same wing
+        m_snap[wb[3]:, :] = 0
+        m_snap[:, :wb[0]] = 0
+        m_snap[:, wb[2]:] = 0
         wx0 = (wb[0] - PAD_PX) / NORM_PPX
         wx1 = (wb[2] - PAD_PX) / NORM_PPX
         wy_top = d_ft - (wb[1] - PAD_PX) / NORM_PPX
@@ -610,10 +771,8 @@ def parse(raw, width_ft=None, wing="largest"):
     # Without this the doorway is a full-height hole and the door record cuts
     # nothing; with it, scene_to_glb's z-band cut (0..DOOR_HEAD_FT) leaves a
     # proper header/lintel above the door, as built on site. ---
-    door_rects = [d["rect"] for d in drawings if _is_door_layer(d["lname"])]
-    has_door_layer = bool(door_rects)
     door_hits = []                     # (strip_bbox_px or None, cluster_rect)
-    for cl in (_cluster_rects(door_rects) if door_rects else []):
+    for cl in door_clusters:
         wd = max(cl.width, cl.height) / ppf
         if not (DOOR_MIN_FT <= wd <= DOOR_MAX_FT):
             continue
@@ -622,11 +781,29 @@ def parse(raw, width_ft=None, wing="largest"):
         if not _in_wing(ccx, ccy, pad=2.0):
             continue
         (ax, ay), (bx, by) = tp(cl.x0, cl.y0), tp(cl.x1, cl.y1)
-        hit = _door_gap_strip(m, (ax, ay, bx, by), wd * NORM_PPX)
+        hit = _door_gap_strip(m_snap, (ax, ay, bx, by), wd * NORM_PPX)
         if hit:
             comp, bbox_px, (offx, offy) = hit
-            m[offy:offy + comp.shape[0], offx:offx + comp.shape[1]][comp] = 255
+            for mm in (m, m_snap):      # fill: wall continuous, header cut works
+                mm[offy:offy + comp.shape[0], offx:offx + comp.shape[1]][comp] = 255
+            # the strip is sized to the FAT mask's jambs; the output mask's
+            # walls are eroded ~2 px shorter, leaving hairline slits beside
+            # the fill that leak rooms into the outside - overfill m a bit
+            gx0, gy0, gx1, gy1 = bbox_px
+            m[max(0, gy0 - 5):gy1 + 5, max(0, gx0 - 5):gx1 + 5] = 255
             door_hits.append((bbox_px, cl))
+            continue
+        # junction doors: the raster trick fails where a crossing wall meets
+        # the doorway - fall back to the vector endpoints (jamb-to-jamb gap)
+        r = _door_gap_endpoints(struct, cl, ppf, wd)
+        if r:
+            (sx0, sy0), (sx1, sy1) = tp(r[0], r[1]), tp(r[2], r[3])
+            sx0, sx1 = min(sx0, sx1), max(sx0, sx1)
+            sy0, sy1 = min(sy0, sy1), max(sy0, sy1)
+            for mm in (m, m_snap):      # fill: wall continuous, header cut works
+                mm[sy0:sy1, sx0:sx1] = 255
+            m[max(0, sy0 - 5):sy1 + 5, max(0, sx0 - 5):sx1 + 5] = 255  # seal slits
+            door_hits.append(((sx0, sy0, sx1, sy1), cl))
         else:
             door_hits.append((None, cl))
 
@@ -659,6 +836,34 @@ def parse(raw, width_ft=None, wing="largest"):
     if not walls_poly:
         raise ValueError("wall mask empty after morphology - no wall regions found")
 
+    # --- rooms: enclosed FREE-space components of the wall mask. Doorway
+    # strips were filled above, so every room is sealed. Components touching
+    # the raster border are the outside world (balconies open to it merge
+    # there too - fine for v1). Marker point = the component's most interior
+    # pixel (distance transform), NOT the centroid, which lands on a wall in
+    # L-shaped rooms. Used by the viewer's walk-inside beacons. ---
+    rooms = []
+    free = (m == 0).astype(np.uint8)
+    ndt = cv2.distanceTransform(free, cv2.DIST_L2, 3)
+    ncomp, rlab, rstt, _rcent = cv2.connectedComponentsWithStats(free, 4)
+    min_room_px = int(28 * NORM_PPX * NORM_PPX)          # >= ~28 sqft
+    Hpx, Wpx = m.shape
+    for i in range(1, ncomp):
+        rx, ry, rw, rh, rarea = rstt[i]
+        if rarea < min_room_px:
+            continue
+        if rx == 0 or ry == 0 or rx + rw >= Wpx or ry + rh >= Hpx:
+            continue                                     # touches border = outside
+        comp = (rlab == i)
+        d = np.where(comp, ndt, 0)
+        py_, px_ = np.unravel_index(int(d.argmax()), d.shape)
+        rooms.append({"x": fx(px_), "y": fy(py_),
+                      "area_sqft": round(rarea / (NORM_PPX ** 2), 1)})
+    rooms.sort(key=lambda r: -r["area_sqft"])
+    rooms = rooms[:16]
+    for k, r in enumerate(rooms):
+        r["id"] = f"r{k}"
+
     def ft_rect(r):
         return [round((r.x0 - x0) / ppf, 3), round(d_ft - (r.y1 - y0) / ppf, 3),
                 round((r.x1 - x0) / ppf, 3), round(d_ft - (r.y0 - y0) / ppf, 3)]
@@ -688,37 +893,57 @@ def parse(raw, width_ft=None, wing="largest"):
     # symbols. Cut = the rect itself -> a punched hole with jambs, sill 3',
     # head 7' (real construction, not a half-fallen wall). ---
     if not openings or all(o["type"] == "door" for o in openings):
-        wrects = []
+        def _on_wall(r):
+            """Centre of rect r sits on (or within ~0.35 ft of) the wall mask.
+            A single-pixel test missed hollow/thin walls - use a patch."""
+            (ax, ay), (bx, by) = tp(r.x0, r.y0), tp(r.x1, r.y1)
+            cxp, cyp = (ax + bx) // 2, (ay + by) // 2
+            R = int(0.35 * NORM_PPX)
+            y0_, y1_ = max(0, cyp - R), min(m.shape[0], cyp + R + 1)
+            x0_, x1_ = max(0, cxp - R), min(m.shape[1], cxp + R + 1)
+            return y1_ > y0_ and x1_ > x0_ and bool(m[y0_:y1_, x0_:x1_].any())
+
+        # per-rect evaluation FIRST (the old cluster-then-test merged
+        # adjacent windows into >8 ft super-rects and rejected them: on
+        # FLOOR PLAN only 1 of ~45 candidates survived)
+        accepted = []
         for d in drawings:
             if not _is_wall_layer(d["lname"]) or d["lname"] in skipped:
                 continue
             r = d["rect"]
             L = max(r.width, r.height) / ppf
             T = min(r.width, r.height) / ppf
-            if 1.5 <= L <= 8.0 and 0.05 <= T <= 1.2:
-                wrects.append(r)
+            if 1.5 <= L <= 8.0 and 0.05 <= T <= 1.2 and _on_wall(r):
+                accepted.append(r)
         added = 0
-        for cl in (_cluster_rects(wrects, gap=2.0) if wrects else []):
+        for cl in (_cluster_rects(accepted, gap=1.0) if accepted else []):
             L = max(cl.width, cl.height) / ppf
-            if not (1.5 <= L <= 8.0):
-                continue
-            (ax, ay), (bx, by) = tp(cl.x0, cl.y0), tp(cl.x1, cl.y1)
-            cxp, cyp = (ax + bx) // 2, (ay + by) // 2
-            if not (0 <= cyp < m.shape[0] and 0 <= cxp < m.shape[1]) or not m[cyp, cxp]:
-                continue                       # must sit ON a wall
-            fp = ft_rect(cl)
-            fcx, fcy = (fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2
-            if not _in_wing(fcx, fcy):
-                continue
-            near_door = any(o["type"] == "door"
-                            and abs((o["footprint"][0]+o["footprint"][2])/2 - fcx) < 2.5
-                            and abs((o["footprint"][1]+o["footprint"][3])/2 - fcy) < 2.5
-                            for o in openings)
-            if near_door:
-                continue
-            openings.append({"id": f"o{len(openings)}", "type": "window",
-                             "footprint": fp, "z": [WINDOW_SILL_FT, WINDOW_HEAD_FT]})
-            added += 1
+            if 1.5 <= L <= 8.0:
+                group = [cl]           # duplicates of ONE window: use the bbox
+            else:                      # adjacent windows fused: keep members,
+                group = []             # dropping near-duplicates
+                members = sorted((r for r in accepted
+                                  if fitz_rect_intersects(r, cl)),
+                                 key=lambda r: -(r.width * r.height))
+                for r in members:
+                    if all(not fitz_rect_overlaps_half(r, g) for g in group):
+                        group.append(r)
+            for r in group:
+                if not (1.5 <= max(r.width, r.height) / ppf <= 8.0):
+                    continue
+                fp = ft_rect(r)
+                fcx, fcy = (fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2
+                if not _in_wing(fcx, fcy):
+                    continue
+                near_door = any(o["type"] == "door"
+                                and abs((o["footprint"][0]+o["footprint"][2])/2 - fcx) < 2.5
+                                and abs((o["footprint"][1]+o["footprint"][3])/2 - fcy) < 2.5
+                                for o in openings)
+                if near_door:
+                    continue
+                openings.append({"id": f"o{len(openings)}", "type": "window",
+                                 "footprint": fp, "z": [WINDOW_SILL_FT, WINDOW_HEAD_FT]})
+                added += 1
         if added:
             has_window_layer = True
             warnings.append(f"{added} window(s) extracted from wall-layer symbols")
@@ -741,12 +966,18 @@ def parse(raw, width_ft=None, wing="largest"):
         pxc = tp(cx, cy)
         if not (0 <= pxc[1] < m.shape[0] and 0 <= pxc[0] < m.shape[1]):
             continue
-        # find the wall within ~2.5 ft of the tag; orientation from local mask
-        R = int(2.5 * NORM_PPX)
-        y0_, y1_ = max(0, pxc[1]-R), min(m.shape[0], pxc[1]+R)
-        x0_, x1_ = max(0, pxc[0]-R), min(m.shape[1], pxc[0]+R)
-        patch = m[y0_:y1_, x0_:x1_]
-        if not patch.any():
+        # find the wall near the tag; orientation from local mask. Try a tight
+        # 2.5 ft radius first (right wall), widen to 4 ft only if empty (tags
+        # sit up to ~3.8 ft off the wall now that walls are true-position).
+        patch = None
+        for R_ft in (2.5, 4.0):
+            R = int(R_ft * NORM_PPX)
+            y0_, y1_ = max(0, pxc[1]-R), min(m.shape[0], pxc[1]+R)
+            x0_, x1_ = max(0, pxc[0]-R), min(m.shape[1], pxc[0]+R)
+            patch = m[y0_:y1_, x0_:x1_]
+            if patch.any():
+                break
+        if patch is None or not patch.any():
             continue
         import numpy as _np
         ys, xs2 = _np.nonzero(patch)
@@ -839,6 +1070,9 @@ def parse(raw, width_ft=None, wing="largest"):
         for c in columns:
             c["x"] = round(c["x"] - sx, 3)
             c["y"] = round(c["y"] - sy, 3)
+        for r in rooms:
+            r["x"] = round(r["x"] - sx, 3)
+            r["y"] = round(r["y"] - sy, 3)
     else:
         out_w, out_d = w_ft, d_ft
     return {
@@ -854,7 +1088,7 @@ def parse(raw, width_ft=None, wing="largest"):
             "warnings": warnings,
         },
         "wall_types": {},
-        "rooms": [],
+        "rooms": rooms,             # walk-inside beacons: most-interior point per room
         "walls": [],                # axis-aligned walls unused on this path
         "walls_poly": walls_poly,   # exact footprints incl. angled walls
         "openings": openings,
