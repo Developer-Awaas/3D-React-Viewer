@@ -25,3 +25,13 @@ plans/*
 
 # batch eval outputs
 out/
+
+# old prototype leftovers (kept on disk, not in git)
+colored_plan.png
+tools/auto_preview.png
+public/bedroom.glb
+public/bedroom_toilet.glb
+public/flat.glb
+public/from_schema.glb
+public/rooms3d.glb
+public/typical_floor.glb
