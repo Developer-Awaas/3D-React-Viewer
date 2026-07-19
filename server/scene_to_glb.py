@@ -99,6 +99,90 @@ def _add_poly_prism(meshes, geom, z0, z1, rgba, name=None):
         meshes.append((f"{name}_{k}" if name else f"part_{len(meshes)}", m))
 
 
+# Parametric furniture: each plan footprint becomes a small assembly of boxes
+# (a bed gets frame+mattress+pillows, a sofa gets seat+back+arms, ...) so
+# uploaded plans render RECOGNIZABLE furniture, not flat slabs. Muted real-
+# world colours; the viewer keeps vertex colours on furn_* meshes by name.
+_WOOD = _hexrgba("#8a6a48")
+_WOOD_DARK = _hexrgba("#6f5238")
+_MATTRESS = _hexrgba("#f1ecdf")
+_PILLOW = _hexrgba("#fbfbf6")
+_BLANKET = _hexrgba("#b0653f")
+_FABRIC = _hexrgba("#7d8fa3")
+_SANITARY = _hexrgba("#f4f6f7")
+_GRANITE = _hexrgba("#55585c")
+
+
+def _furn_frame(f):
+    """Footprint -> (x0, x1, y0, y1, along_x): along_x = long axis is X."""
+    x0, y0 = f["x"], f["y"]
+    return x0, x0 + f["w"], y0, y0 + f["d"], f["w"] >= f["d"]
+
+
+def _add_furniture(meshes, f, i):
+    t = f.get("type", "box")
+    x0, x1, y0, y1, ax = _furn_frame(f)
+    nm = lambda part: f"furn_{t}_{i}_{part}"
+    B = lambda box, rgba, part: _add_box(meshes, box, rgba, name=nm(part))
+    if t == "bed":
+        B((x0, x1, y0, y1, 0.35, 1.2), _WOOD, "frame")
+        B((x0 + 0.25, x1 - 0.25, y0 + 0.25, y1 - 0.25, 1.2, 1.9), _MATTRESS, "mattress")
+        # pillows at the head end (start of the long axis); blanket over the rest
+        if ax:
+            B((x0 + 0.4, x0 + 1.9, y0 + 0.5, y0 + (y1 - y0) / 2 - 0.15, 1.9, 2.2), _PILLOW, "pillow0")
+            B((x0 + 0.4, x0 + 1.9, y0 + (y1 - y0) / 2 + 0.15, y1 - 0.5, 1.9, 2.2), _PILLOW, "pillow1")
+            B((x0 + 2.3, x1 - 0.15, y0 + 0.2, y1 - 0.2, 1.9, 2.05), _BLANKET, "blanket")
+        else:
+            B((x0 + 0.5, x0 + (x1 - x0) / 2 - 0.15, y0 + 0.4, y0 + 1.9, 1.9, 2.2), _PILLOW, "pillow0")
+            B((x0 + (x1 - x0) / 2 + 0.15, x1 - 0.5, y0 + 0.4, y0 + 1.9, 1.9, 2.2), _PILLOW, "pillow1")
+            B((x0 + 0.2, x1 - 0.2, y0 + 2.3, y1 - 0.15, 1.9, 2.05), _BLANKET, "blanket")
+    elif t == "sofa":
+        B((x0, x1, y0, y1, 0.3, 1.35), _FABRIC, "seat")
+        if ax:  # back along the far long edge, arms at the short ends
+            B((x0, x1, y1 - 0.55, y1, 0.3, 2.5), _FABRIC, "back")
+            B((x0, x0 + 0.45, y0, y1, 0.3, 1.9), _FABRIC, "arm0")
+            B((x1 - 0.45, x1, y0, y1, 0.3, 1.9), _FABRIC, "arm1")
+        else:
+            B((x1 - 0.55, x1, y0, y1, 0.3, 2.5), _FABRIC, "back")
+            B((x0, x1, y0, y0 + 0.45, 0.3, 1.9), _FABRIC, "arm0")
+            B((x0, x1, y1 - 0.45, y1, 0.3, 1.9), _FABRIC, "arm1")
+    elif t == "cupboard":
+        B((x0, x1, y0, y1, 0.0, 0.35), _WOOD_DARK, "plinth")
+        B((x0, x1, y0, y1, 0.35, 6.5), _WOOD, "body")
+        B((x0 - 0.04, x1 + 0.04, y0 - 0.04, y1 + 0.04, 6.5, 6.7), _WOOD_DARK, "top")
+    elif t == "table":
+        leg = 0.18
+        for k, (lx, ly) in enumerate(((x0, y0), (x1 - leg, y0),
+                                      (x0, y1 - leg), (x1 - leg, y1 - leg))):
+            B((lx, lx + leg, ly, ly + leg, 0.0, 2.3), _WOOD_DARK, f"leg{k}")
+        B((x0 - 0.05, x1 + 0.05, y0 - 0.05, y1 + 0.05, 2.3, 2.5), _WOOD, "top")
+    elif t == "chair":
+        B((x0 + 0.1, x1 - 0.1, y0 + 0.1, y1 - 0.1, 0.0, 1.4), _WOOD, "seat")
+        if ax:
+            B((x0 + 0.1, x0 + 0.35, y0 + 0.1, y1 - 0.1, 1.4, 2.8), _WOOD_DARK, "back")
+        else:
+            B((x0 + 0.1, x1 - 0.1, y0 + 0.1, y0 + 0.35, 1.4, 2.8), _WOOD_DARK, "back")
+    elif t == "sidetable":
+        B((x0, x1, y0, y1, 0.0, 1.5), _WOOD, "body")
+        B((x0 - 0.04, x1 + 0.04, y0 - 0.04, y1 + 0.04, 1.5, 1.62), _WOOD_DARK, "top")
+    elif t == "commode":
+        if ax:  # tank against the start of the long axis, bowl in front
+            B((x0, x0 + 0.55, y0 + 0.05, y1 - 0.05, 0.0, 2.4), _SANITARY, "tank")
+            B((x0 + 0.55, x1 - 0.15, y0 + 0.2, y1 - 0.2, 0.0, 1.35), _SANITARY, "bowl")
+        else:
+            B((x0 + 0.05, x1 - 0.05, y0, y0 + 0.55, 0.0, 2.4), _SANITARY, "tank")
+            B((x0 + 0.2, x1 - 0.2, y0 + 0.55, y1 - 0.15, 0.0, 1.35), _SANITARY, "bowl")
+    elif t == "basin":
+        cx, cy = (x0 + x1) / 2, (y0 + y1) / 2
+        B((cx - 0.3, cx + 0.3, cy - 0.3, cy + 0.3, 0.0, 2.3), _SANITARY, "pedestal")
+        B((x0, x1, y0, y1, 2.3, 2.65), _SANITARY, "bowl")
+    elif t == "counter":
+        B((x0, x1, y0, y1, 0.0, 2.6), _hexrgba("#7a6a55"), "body")
+        B((x0 - 0.05, x1 + 0.05, y0 - 0.05, y1 + 0.05, 2.6, 2.8), _GRANITE, "top")
+    else:
+        B((x0, x1, y0, y1, 0.0, f.get("h", 2.0)), _hexrgba("#d85a30"), "body")
+
+
 def build_glb(scene, out_path):
     """Build a .glb from a scene dict (the canonical scene.json)."""
     import trimesh
@@ -136,11 +220,8 @@ def build_glb(scene, out_path):
     for i, c in enumerate(scene.get("columns", []) + scene.get("ducts", [])):
         _add_box(meshes, (c["x"], c["x"] + c["w"], c["y"], c["y"] + c["d"], 0, H),
                  _hexrgba("#9aa0a6"), name=f"column_{i}")
-    pal = {"bed": "#7f77dd", "sidetable": "#5dcaa5", "cupboard": "#ef9f27",
-           "commode": "#378add", "basin": "#1d9e75", "shower": "#85b7eb"}
     for i, f in enumerate(scene.get("furniture", [])):
-        _add_box(meshes, (f["x"], f["x"] + f["w"], f["y"], f["y"] + f["d"], 0, f.get("h", 2.0)),
-                 _hexrgba(pal.get(f["type"], "#d85a30")), name=f"furn_{f['type']}_{i}")
+        _add_furniture(meshes, f, i)
     sc = trimesh.Scene()
     for name, m in meshes:
         sc.add_geometry(m, node_name=name, geom_name=name)

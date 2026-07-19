@@ -593,10 +593,12 @@ def _door_scale_sanity(openings, warnings):
             f"check the column size or provide width_ft")
 
 
-def parse(raw, width_ft=None, wing="largest"):
+def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
     wing: "largest" or an int index - which building wing to build when the
-    sheet holds several separate blocks (sorted largest first)."""
+    sheet holds several separate blocks (sorted largest first).
+    ppf_hint: EXACT pt-per-ft when known (CAD DXF/DWG route: real units) -
+    overrides dimension-text and column-box scale guessing."""
     import cv2
     import fitz
     import numpy as np
@@ -612,11 +614,14 @@ def parse(raw, width_ft=None, wing="largest"):
     col_rects = _column_rects(drawings)
 
     # scale from live dimension text beats every other signal
+    # (unless the caller KNOWS the scale - CAD files carry real units)
     text_ppf, _tv, dim_keys = _text_scale(page, drawings, warnings)
+    if ppf_hint:
+        text_ppf = None
 
     mode = "layers"
     if len(struct) < 30:            # no usable wall layer -> geometry detection
-        seed = text_ppf
+        seed = ppf_hint or text_ppf
         if seed is None and col_rects:
             import numpy as np
             sizes = [round(max(r.width, r.height), 1) for r in col_rects]
@@ -652,7 +657,9 @@ def parse(raw, width_ft=None, wing="largest"):
     ys = [s[1] for s in struct] + [s[3] for s in struct]
     x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
 
-    if text_ppf:
+    if ppf_hint:
+        ppf, scale_src = float(ppf_hint), "cad_units"
+    elif text_ppf:
         ppf, scale_src = text_ppf, "dimension_text"
     else:
         ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
@@ -1023,8 +1030,13 @@ def parse(raw, width_ft=None, wing="largest"):
     # --- columns (dominant-size boxes only, deduplicated by cluster) ---
     columns = []
     if col_rects:
-        dom_candidates = [max(r.width, r.height) for r in col_rects
-                          if abs(max(r.width, r.height) - ppf * COL_FT) < 0.6]
+        if scale_src == "cad_units":
+            # real units known - accept any plausible column size (9x9..24x24 in)
+            dom_candidates = [max(r.width, r.height) for r in col_rects
+                              if 0.5 * ppf <= max(r.width, r.height) <= 2.2 * ppf]
+        else:
+            dom_candidates = [max(r.width, r.height) for r in col_rects
+                              if abs(max(r.width, r.height) - ppf * COL_FT) < 0.6]
         if dom_candidates:
             dom = max(dom_candidates)
             uniq = _cluster_rects([r for r in col_rects
@@ -1041,7 +1053,7 @@ def parse(raw, width_ft=None, wing="largest"):
 
     if scale_src == "column_box_12in":
         warnings.append("scale from dominant column box = 12 in (provisional)")
-    elif scale_src != "dimension_text":
+    elif scale_src not in ("dimension_text", "cad_units"):
         warnings.append("scale is a placeholder until dimension text is readable")
     if not has_window_layer:
         warnings.append("no window layer found - windows not extracted")

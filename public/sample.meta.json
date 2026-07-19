@@ -15,6 +15,7 @@
    "bbox_ft": null
   },
   "warnings": [
+   "17 furniture item(s) from furniture/sanitary/kitchen layers",
    "scale from dominant column box = 12 in (provisional)"
   ]
  },
@@ -46,5 +47,6 @@
    "area_sqft": 158.6,
    "id": "r3"
   }
- ]
+ ],
+ "furniture": 17
 }

@@ -33,6 +33,9 @@ def build_pdf():
     win = doc.add_ocg("window")
     door = doc.add_ocg("ALL DOOR")
     col = doc.add_ocg("COLUMN")
+    furn = doc.add_ocg("furniture")
+    san = doc.add_ocg("SANITARY")
+    kit = doc.add_ocg("KITCHEN-SYMB")
 
     def ln(a, b, oc=wall):
         page.draw_line(fitz.Point(*a), fitz.Point(*b), oc=oc)
@@ -120,6 +123,30 @@ def build_pdf():
     wrect(31, 27.45, 35, 28.05)                    # north, kitchen
     wrect(-0.05, 6, 0.55, 10)                      # west, living tall window
     wrect(39.45, 20, 40.05, 23)                    # east, bath vent
+    # ---- furniture: frame rects on the furniture-ish layers, footprint
+    # sizes matched to the classifier (beds/sofa/table/chairs/cupboards +
+    # sanitary + kitchen counters). Kept clear of door swings and walls.
+    def frect(x0f, y0f, x1f, y1f, oc):
+        page.draw_rect(fitz.Rect(*_pt(x0f, y0f), *_pt(x1f, y1f)), oc=oc)
+
+    frect(33, 1.5, 39.5, 8.5, furn)      # bed1: double bed 6.5 x 7
+    frect(31, 1.5, 32.8, 3.3, furn)      # bed1: side table
+    frect(31, 6.7, 32.8, 8.5, furn)      # bed1: side table
+    frect(18, 10.8, 19.5, 12.5, furn)    # bed1: side unit
+    frect(1.5, 20, 7.5, 26.8, furn)      # bed2: double bed 6 x 6.8
+    frect(8.2, 25.6, 10, 27.4, furn)     # bed2: side table
+    frect(13.2, 14.5, 14.7, 20.5, furn)  # bed2: wardrobe 1.5 x 6
+    frect(1, 3.5, 3.8, 9, furn)          # living: sofa 2.8 x 5.5
+    frect(4.2, 9.7, 5.7, 11.2, furn)     # living: side table
+    frect(10, 6, 13.5, 11, furn)         # living: dining table 3.5 x 5
+    frect(10.3, 3.6, 12.3, 5.8, furn)    # dining chair
+    frect(11.2, 11.2, 13.2, 12.9, furn)  # dining chair (1.7 -> sidetable-ish ok)
+    frect(15.3, 9, 16.8, 12.3, furn)     # living: cupboard 1.5 x 3.3
+    frect(18, 25, 19.5, 27.2, san)       # bath: commode
+    frect(25.9, 25.6, 27.1, 27.2, san)   # bath: basin
+    frect(33.5, 25.2, 39, 27.4, kit)     # kitchen: counter 2.2 x 5.5
+    frect(28.8, 15, 30.8, 18, kit)       # kitchen: counter return
+
     # ---- columns: corners + midspans (12 in -> drives the scale)
     for xf, yf in ((0, 0), (39, 0), (0, 27), (39, 27), (16.5, 0), (16.5, 27)):
         column(xf, yf)
@@ -142,6 +169,7 @@ def main():
         "doors_snapped": sum(1 for o in doors if o.get("snapped")),
         "windows": sum(1 for o in ops if o["type"] == "window"),
         "rooms": scene.get("rooms", []),   # walk-inside beacons
+        "furniture": len(scene.get("furniture", [])),
     }
     scene_to_glb.build_glb(scene, os.path.join(pub, "sample.glb"))
     json.dump(meta, open(os.path.join(pub, "sample.meta.json"), "w"), indent=1)

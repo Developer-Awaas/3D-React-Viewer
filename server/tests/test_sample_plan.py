@@ -83,3 +83,34 @@ def test_sample_glb_parts(sample_scene, tmp_path):
     assert any(n.startswith("wall") for n in names)
     assert sum(1 for n in names if n.startswith("glass_")) == 6
     assert any(n.startswith("column_") for n in names)
+
+
+def test_sample_furniture(sample_scene):
+    """The demo 2BHK ships furnished: beds, sofa, table, wardrobe, sanitary
+    and kitchen items all classified from the furniture-ish layers."""
+    furn = sample_scene["furniture"]
+    types = {f["type"] for f in furn}
+    assert len(furn) >= 15
+    assert {"bed", "sofa", "table", "cupboard", "commode",
+            "basin", "counter"} <= types
+    assert sum(1 for f in furn if f["type"] == "bed") == 2
+    m = sample_scene["meta"]
+    for f in furn:                       # inside the plan, sane sizes
+        assert -0.5 <= f["x"] and f["x"] + f["w"] <= m["plan_width_ft"] + 0.5
+        assert -0.5 <= f["y"] and f["y"] + f["d"] <= m["plan_depth_ft"] + 0.5
+        assert 0.5 <= f["w"] <= 9 and 0.5 <= f["d"] <= 9
+
+
+def test_sample_glb_has_detailed_furniture(sample_scene, tmp_path):
+    """Furniture must export as parametric assemblies (bed = frame +
+    mattress + pillows...), named furn_* so the viewer keeps their colours."""
+    import trimesh
+    from scene_to_glb import build_glb
+    out = tmp_path / "furn.glb"
+    build_glb(sample_scene, str(out))
+    names = set(trimesh.load(str(out)).geometry.keys())
+    beds = [n for n in names if n.startswith("furn_bed_")]
+    assert any("mattress" in n for n in beds)
+    assert any("pillow" in n for n in beds)
+    assert any(n.startswith("furn_sofa_") and "back" in n for n in names)
+    assert any(n.startswith("furn_commode_") for n in names)

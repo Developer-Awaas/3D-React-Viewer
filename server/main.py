@@ -17,6 +17,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
 from fastapi.concurrency import run_in_threadpool
 from starlette.background import BackgroundTask
 
+import cad_vector
 import openings
 import pdf_vector
 import scene_builder
@@ -177,13 +178,20 @@ def _looks_supported(image: UploadFile):
     ct = image.content_type or ""
     name = (image.filename or "").lower()
     return (ct.startswith("image/") or ct == "application/pdf"
-            or name.endswith((".pdf", ".png", ".jpg", ".jpeg", ".webp")))
+            or name.endswith((".pdf", ".png", ".jpg", ".jpeg", ".webp",
+                              ".dxf", ".dwg")))
+
+
+def _is_cad(image: UploadFile):
+    """CAD drawing uploads (.dxf / .dwg) by extension."""
+    name = (image.filename or "").lower()
+    return name.endswith((".dxf", ".dwg"))
 
 
 async def _read_upload_bytes(image: UploadFile):
     """Read + validate an upload. Returns (raw_bytes, is_pdf) - no conversion."""
     if not _looks_supported(image):
-        raise HTTPException(415, "upload a PNG/JPG image or a PDF")
+        raise HTTPException(415, "upload a PNG/JPG image, a PDF, or a CAD file (.dxf/.dwg)")
     raw = await image.read()
     if not raw:
         raise HTTPException(400, "empty file")
@@ -237,6 +245,24 @@ async def perceive(image: UploadFile = File(...)):
 # incl. angled walls); anything else -> CubiCasa raster path.
 # ---------------------------------------------------------------------------
 async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "largest"):
+    # CAD files (.dxf native; .dwg via converter): real units, exact scale.
+    # Re-drawn as a layered PDF in memory, then parsed by the SAME engine as
+    # CAD-exported PDFs (walls, doors, wings, rooms all reused).
+    if _is_cad(image):
+        raw = await image.read()
+        if not raw:
+            raise HTTPException(400, "empty file")
+        if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
+            raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
+        try:
+            pdf_bytes, ppf, _info = await _run_heavy(
+                cad_vector.to_layered_pdf, raw, image.filename or "",
+                what="CAD conversion")
+            return await _run_heavy(pdf_vector.parse, pdf_bytes, width_ft,
+                                    pdf_vector.wing_arg(wing), ppf,
+                                    what="CAD parse")
+        except ValueError as e:
+            raise HTTPException(422, f"CAD parse failed: {e}")
     raw, is_pdf = await _read_upload_bytes(image)
     if is_pdf and await run_in_threadpool(pdf_vector.is_vector_plan, raw):
         try:

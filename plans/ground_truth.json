@@ -185,6 +185,136 @@
    ],
    "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
    "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive"
+  },
+  "BRICK WORK LAYOUT.pdf": {
+   "source": "THE ZENITH, Architrave Design & Infraprojects (SAME FIRM as FLOOR PLAN.pdf, DIFFERENT building - geometry compared 2026-07-19: ZENITH = tall block, stretcher lift 9'6\"x6'0\"; FLOOR PLAN = long strip, lift 5'x5'). Drawing no. 9, Ar. Rehan Ahamed / Er. P.K. Tripathy",
+   "type": "vector-cad pdf",
+   "units": "ft-in (schedule header says MTRS but values are ft-in - drawing quirk)",
+   "flats": "2 large flats + lobby + staircase 14'11\"x8'0\" + stretcher lift 9'6\"x6'0\" + EB",
+   "floor": "FIRST FLOOR (brick work layout - wall construction drawing)",
+   "opening_schedule_from_sheet": {
+    "D": {
+     "w": "3'9\"",
+     "h": "7'0\"",
+     "sill": "0",
+     "lintel": "7'0\""
+    },
+    "D1": {
+     "w": "3'3\"",
+     "h": "7'0\"",
+     "sill": "0",
+     "lintel": "7'0\""
+    },
+    "D2": {
+     "w": "3'0\"",
+     "h": "7'0\"",
+     "sill": "0",
+     "lintel": "7'0\""
+    },
+    "D3": {
+     "w": "2'6\"",
+     "h": "7'0\"",
+     "sill": "0",
+     "lintel": "7'0\""
+    },
+    "SD": {
+     "w": "7'0\"",
+     "h": "7'0\"",
+     "sill": "0",
+     "lintel": "7'0\""
+    },
+    "V": {
+     "w": "2'0\"",
+     "h": "2'0\"",
+     "sill": "5'0\"",
+     "lintel": "7'0\""
+    },
+    "W": {
+     "w": "6'0\"",
+     "h": "4'6\"",
+     "sill": "2'6\"",
+     "lintel": "7'0\""
+    },
+    "W1": {
+     "w": "5'0\"",
+     "h": "4'6\"",
+     "sill": "2'6\"",
+     "lintel": "7'0\""
+    }
+   },
+   "rooms_sample": [
+    "BEDROOM 10'-8 x ~14'",
+    "KITCHEN 6'-11\"",
+    "DRAWING CUM DINNING HALL 13'-7",
+    "A.TOILET 4'6\"x8'0\"",
+    "C.TOILET",
+    "BALCONY",
+    "LOBBY",
+    "ELEC",
+    "WASH",
+    "STAIRCASE 14'11\"x8'0\"",
+    "STRETCHER LIFT 9'6\"x6'0\""
+   ],
+   "doors_expected": "~20 door tags (D/D1/D2/D3/SD) on sheet",
+   "notes": "slab projection marked; site boundary slanted at bottom-left"
+  },
+  "plan1.dwg": {
+   "source": "user upload 2026-07-19",
+   "type": "cad-dwg",
+   "units": "inches (drawing units)",
+   "plot": "29'-0\" x 70'-8\", MAIN GATE + ROAD at bottom",
+   "views_on_sheet": "2 side by side: GROUND (portico 12'4\"x19'9\", car, SHOP-1/2 8'2\"x10'0\", staircase 13'6\"x7'10\", 2 bed 12'5\"x12'6\"/11'1\"x12'6\", 2 living halls, kitchen) + FIRST (3 bed, dining hall 13'3\"x10'0\", drawing hall 11'6\"x10'8\", puja 6'x4', kitchen 7'7\"x9'6\", balconies, living hall 12'0\"x8'6\")",
+   "layers": [
+    "wall (real walls + 44 column boxes 12in)",
+    "column new (hatch strokes only)",
+    "DIM",
+    "text",
+    "site",
+    "STEPS",
+    "hat",
+    "elev",
+    "FORMAT"
+   ],
+   "parser_status_2026_07_19": "CAD path: wing0 27.6x65.6 ft, wing1 27.6x68.7 ft; 2 wings split OK; no door/window layers (arcs on wall/0) -> rooms leak (1 room found)",
+   "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
+  },
+  "plan2.dwg": {
+   "source": "user upload 2026-07-19",
+   "type": "cad-dwg",
+   "units": "inches (drawing units)",
+   "plot": "58'-0\" wide IRREGULAR pentagon (angled boundaries) - hardest stress test",
+   "views_on_sheet": "2 stacked: GROUND FLOOR PLAN (office 15'0\"x12'0\", lobby 11'7\"x11'7\", living hall 9'5\"x16'0\", bedroom 15'0\"x12'0\", kitchen 5'4\"x8'6\", two-wheeler parking, car, staircase 7'6\"x15'0\", lift 4'x4') + TYPICAL FLOOR PLAN (3 bedrooms 15/16/12'x12', dining 16'5\"x12'0\", drawing room 16'0\"x13'0\", kitchen 9'0\"x12'5\", 4'0\" wide balconies)",
+   "layers": [
+    "AR Wall (real walls)",
+    "wall (fine detail - dropped as text-like)",
+    "column (96 boxes, dominant 16in)",
+    "AR Plot",
+    "AR Stairs",
+    "Text",
+    "ELEWIN",
+    "AR Tree"
+   ],
+   "parser_status_2026_07_19": "CAD path: both wings 65.0x39.9 ft, 17-19 columns found (16in accepted via cad_units rule); rooms 0 (no door layer, open plan leaks)",
+   "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
+  },
+  "plan3.dwg": {
+   "source": "user upload 2026-07-19",
+   "type": "cad-dwg",
+   "units": "inches (drawing units)",
+   "plot": "40'-10\" x 51'-9\" (56'-10\" left edge), slanted top boundary, N marker",
+   "views_on_sheet": "2 similar layout VARIANTS side by side (not floors): sitout 12'7\"x6'8\", 4-5 bedrooms (12'2\"x12'1\", 16'1\"x14'10\", 14'5\"x12'9\", 18'9\"x9', 12'3\"x9'10\"), drawing, dining/kitchen 16'1\", C.TOI 5'0\"x6'0\" x2, A.TOI, staircase 11'4\"x7'6\", W.M, loft above",
+   "layers": [
+    "wall (hatch-heavy - dropped as text-like)",
+    "column new",
+    "DIM",
+    "text",
+    "SANITARY",
+    "WINDOW (4 entities)",
+    "HID",
+    "hatch"
+   ],
+   "parser_status_2026_07_19": "CAD path: GEOMETRY-mode walls (186 spans), wing0 36.8x49.6 ft 9 wall polys + 16 cols, wing1 36.8x51.7 ft 15 polys + 17 cols; stair filter dropped 76 tread strips",
+   "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
   }
  },
  "_data_policy": "plans/ = raw drawings (gitignored, confidential). ground_truth.json + INDEX.txt = the LABELS, small text, tracked in git so every change is versioned and reversible - nothing gets messed up. batch_eval reads labels, never writes them; parser outputs go to out/ (gitignored). Later: human-corrected scene.json snapshots join this file as training pairs (Phase-2 flywheel).",
@@ -235,5 +365,12 @@
    }
   },
   "notes": "door widths D1-D3 (2.5-3.5 ft) double as the door-width prior for multi-signal scale estimation"
+ },
+ "_cad_upload_v1_1": {
+  "shipped": "2026-07-19",
+  "what": "upload accepts .dxf/.dwg (+ existing pdf/png/jpg): server/cad_vector.py re-draws DXF into an in-memory layered PDF (OCG = DXF layer names) and the standard pdf_vector engine parses it with ppf_hint = EXACT scale from CAD units (no guessing)",
+  "units_rule": "$INSUNITS is only a candidate (often wrong; ezdxf defaults new files to metres) - every unit guess is scored: building width 12-400 ft + dominant column 0.5-2.2 ft",
+  "dwg_rule": "dwg2dxf (LibreDWG) looked up on PATH or DWG_CONVERTER env; Dockerfile builds it best-effort; absent -> friendly 'Save As DXF' 422 message",
+  "columns_rule": "scale_src=cad_units accepts any column 9-24in (12in-only rule kept for PDFs)"
  }
 }

@@ -632,3 +632,36 @@ def test_stair_filter_survives_interleaved_walls():
     kept = sum(Polygon(w["outer"], w.get("holes") or None).buffer(0)
                .intersection(wall_patch).area for w in s["walls_poly"])
     assert kept > 0.3 * wall_patch.area
+
+
+# ---------------------------------------------------------------------------
+# furniture classification (pure)
+# ---------------------------------------------------------------------------
+def test_classify_furniture_sizes():
+    from pdf_vector import _classify_furniture as cf
+    assert cf(7.6, 7.9, "furn") == "bed"       # corpus double bed
+    assert cf(3.0, 6.5, "furn") == "bed"       # single bed
+    assert cf(2.8, 5.5, "furn") == "sofa"
+    assert cf(1.5, 6.0, "furn") == "cupboard"
+    assert cf(3.5, 5.0, "furn") == "table"
+    assert cf(1.9, 2.5, "furn") == "chair"
+    assert cf(1.8, 1.8, "furn") == "sidetable"
+    assert cf(1.5, 2.1, "san") == "commode"
+    assert cf(1.1, 1.5, "san") == "basin"
+    assert cf(2.2, 3.7, "kit") == "counter"
+    assert cf(0.3, 0.3, "furn") is None        # symbol fragments
+    assert cf(5.0, 15.0, "furn") is None       # whole-room outline
+    assert cf(0.4, 4.9, "san") is None
+
+
+def test_furniture_dedupe_drops_stacked_frames():
+    """CAD blocks stack an outline rect on a detail rect of the same
+    footprint - only one item may survive."""
+    import fitz
+    from pdf_vector import _furniture_items
+    ppf = 10.0
+    d1 = {"lname": "furniture", "rect": fitz.Rect(100, 100, 176, 179)}
+    d2 = {"lname": "furniture", "rect": fitz.Rect(101, 101, 175, 178)}
+    items = _furniture_items([d1, d2], ppf)
+    assert len(items) == 1
+    assert items[0][0] == "bed"

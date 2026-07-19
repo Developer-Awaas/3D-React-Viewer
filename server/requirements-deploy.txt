@@ -12,3 +12,4 @@ opencv-python-headless
 trimesh
 mapbox-earcut
 pymupdf
+ezdxf

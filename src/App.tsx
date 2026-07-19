@@ -165,7 +165,7 @@ export default function App() {
   const [pLoading, setPLoading] = useState(false)
   const [pPlan, setPPlan] = useState<BuiltPlan | null>(null)
   const [pWidthFt, setPWidthFt] = useState<number>(0) // 0 = let the backend decide
-  const [pStatus, setPStatus] = useState('Upload a plan (PDF or image) — the backend parses it and builds real 3D.')
+  const [pStatus, setPStatus] = useState('Upload a plan (PDF, image, or CAD .dxf/.dwg) — the backend parses it and builds real 3D.')
 
   // bundled demo building: built by tools/make_sample_plan.py through the
   // REAL engine; loads straight from public/ with NO backend needed, so the
@@ -395,12 +395,12 @@ export default function App() {
 
               {mode === 'plan' && (
                 <>
-                  <Status>Upload a CAD-exported floor plan (PDF) — the engine reads the geometry, finds walls, doors and scale, and builds real 3D. Photos &amp; scans are beta.</Status>
+                  <Status>Upload any floor plan — CAD files (DWG/DXF) are read in real units for exact scale; CAD-exported PDFs read by layer. Photos &amp; scans are beta.</Status>
                   <Field label="Width override (ft)">
                     <NumberInput value={pWidthFt || ''} min={0} step={1} placeholder="auto"
                       onChange={(e) => setPWidthFt(+e.target.value || 0)} />
                   </Field>
-                  <Upload onFile={(f) => handlePlan(f)} accept=".pdf,.png,.jpg,.jpeg">Upload plan</Upload>
+                  <Upload onFile={(f) => handlePlan(f)} accept=".pdf,.png,.jpg,.jpeg,.dxf,.dwg">Upload plan</Upload>
                   <div className="grid grid-cols-2 gap-2">
                     <Button size="sm" variant="secondary" onClick={loadSample}>✨ Try a sample</Button>
                     <a href="/sample-plan.pdf" download

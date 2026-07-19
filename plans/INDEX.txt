@@ -4,3 +4,7 @@ filename | one known dimension (any room label or total width) | flats/type | do
 FLOOR PLAN.pdf | building ~122ft wide (parser: column 12in -> 23.8pt/ft) | 2 flats 2BHK + lobby/lift | 12+ doors | windows in wall layer | Architrave, AutoCAD export, page rotated 270
 NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf | column size TBC (dominant box 8.8pt); overall dims TBC | 3 floor plans on 1 sheet, 2 flats/floor | ~20 doors/floor TBC | W1/W2/W3 TBC | Neelachala, layers: geometry on '0', live text
 neelachala FIRST FLOOR.pdf | rooms in ft-in text (bed room 11'-5" x 12'-0") | first floor, 2 flats | door tags D1/D2 | TBC | Neelachala single floor, no wall/column layers
+BRICK WORK LAYOUT.pdf | staircase 14'11"x8'0"; stretcher lift 9'6"x6'0" | 2 large flats, first-floor brick work | ~20 door tags D/D1-D3/SD | W/W1/V schedule on sheet | THE ZENITH, Architrave drawing no.9 - DIFFERENT building from FLOOR PLAN.pdf (compared 2026-07-19)
+plan1.dwg | plot 29'-0" x 70'-8" (29ft = 348 units -> INCHES) | G+1 house + 2 shops, 2 views on sheet | door arcs only, no door layer | no window layer | DWG 2013-17, CAD path v1.1: wings 27.6x65.6 / 27.6x68.7 ft
+plan2.dwg | plot 58'-0" wide, IRREGULAR pentagon | ground (office+parking+lift 4'x4') + typical 3BHK, 2 views | no door layer | ELEWIN = elevations only | DWG, real walls on 'AR Wall', columns 16in x96, CAD path: 65.0x39.9 ft
+plan3.dwg | plot 40'-10" x 51'-9" slanted top | two layout VARIANTS side by side | no door layer | WINDOW layer (4) | DWG, geometry-mode walls (186 spans), CAD path: 36.8x49.6 ft + 16 cols
