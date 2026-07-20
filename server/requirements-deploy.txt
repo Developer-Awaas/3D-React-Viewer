@@ -13,3 +13,4 @@ trimesh==4.12.2
 mapbox-earcut==2.0.0
 pymupdf==1.28.0
 ezdxf
+httpx==0.28.1

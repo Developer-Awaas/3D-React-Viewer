@@ -136,19 +136,25 @@ let cached: PlanMaterials | null = null
 function materials(): PlanMaterials {
   if (cached) return cached
   cached = {
+    // envMapIntensity lets the CDN environment ground each surface: matte
+    // walls barely reflect, tiled floor + glass pick up more sheen. Reads as
+    // "lit by a real room" instead of flat paint.
     plaster: new THREE.MeshStandardMaterial({
       map: plasterTexture(), color: '#f4efe6', roughness: 0.92, metalness: 0.0,
+      envMapIntensity: 0.55,
     }),
     floor: new THREE.MeshStandardMaterial({
-      map: floorTexture(), color: '#ffffff', roughness: 0.55, metalness: 0.02,
+      map: floorTexture(), color: '#ffffff', roughness: 0.5, metalness: 0.04,
+      envMapIntensity: 1.25,
     }),
     concrete: new THREE.MeshStandardMaterial({
       map: concreteTexture(), color: '#e2e5e9', roughness: 0.85, metalness: 0.0,
+      envMapIntensity: 0.7,
     }),
     glass: new THREE.MeshStandardMaterial({
       color: '#a8cfe3', transparent: true, opacity: 0.38,
-      roughness: 0.15, metalness: 0.0, side: THREE.DoubleSide,
-      depthWrite: false,
+      roughness: 0.12, metalness: 0.0, side: THREE.DoubleSide,
+      depthWrite: false, envMapIntensity: 1.6,
       // small emissive floor so panes read as glass even if the HDR
       // environment fails to load (offline demo) — never black
       emissive: '#5f7f96', emissiveIntensity: 0.35,

@@ -259,6 +259,99 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
     return segs
 
 
+def gap_openings(segs, min_w, max_w, min_flank=1.0,
+                 face_tol=0.35, group_tol=1.2, junction_pad=0.4):
+    """Detect openings (doorway / window gaps) in axis-aligned wall-face
+    segments WITHOUT layer names. Pure geometry, so it is unit-testable:
+    `segs` is a list of (x0, y0, x1, y1) and EVERY threshold is in the SAME
+    unit (feet in production).
+
+    An opening is a run-to-run gap along one wall line whose width is in
+    [min_w, max_w], flanked by wall >= min_flank on both sides, with NO
+    perpendicular wall crossing the gap (that crossing = a T/L junction, not a
+    doorway). Returns [{'cx','cy','w','orient'}] where orient is 'h' or 'v'
+    (the wall's direction) and (cx, cy) is the gap centre.
+
+    This is what lets flattened PDFs (no CAD layers, no door symbols) still
+    get doors + sealed rooms: the gaps we fill to make walls continuous ARE
+    the openings.
+    """
+    # bucket every segment as horizontal or vertical by its dominant axis
+    H, V = [], []                        # (lo, hi, perp) along-axis intervals
+    for x0, y0, x1, y1 in segs:
+        if abs(y1 - y0) <= abs(x1 - x0):        # horizontal wall face
+            if abs(y1 - y0) <= face_tol:
+                H.append((min(x0, x1), max(x0, x1), (y0 + y1) / 2))
+        else:                                    # vertical wall face
+            if abs(x1 - x0) <= face_tol:
+                V.append((min(y0, y1), max(y0, y1), (x0 + x1) / 2))
+
+    def _runs_by_line(lines):
+        """Group faces by their perpendicular coord (merging the two faces of
+        one wall), then union the along-axis intervals into solid runs."""
+        lines = sorted(lines, key=lambda s: s[2])
+        groups = []                       # [perp_mean, [intervals]]
+        for lo, hi, perp in lines:
+            if groups and perp - groups[-1][0] <= group_tol:
+                groups[-1][1].append((lo, hi))
+                # rolling mean keeps the key near the wall centre-line
+                groups[-1][0] = (groups[-1][0] + perp) / 2
+            else:
+                groups.append([perp, [(lo, hi)]])
+        out = []
+        for perp, ivs in groups:
+            ivs.sort()
+            merged = [list(ivs[0])]
+            for lo, hi in ivs[1:]:
+                if lo <= merged[-1][1] + face_tol:
+                    merged[-1][1] = max(merged[-1][1], hi)
+                else:
+                    merged.append([lo, hi])
+            out.append((perp, merged))
+        return out
+
+    def _crosses(cross_runs, at_perp, at_along):
+        """True if a perpendicular wall run passes through (at_perp, at_along)
+        — i.e. a junction sits in this gap, so it is not a doorway."""
+        for perp, merged in cross_runs:
+            if abs(perp - at_along) <= junction_pad:
+                for lo, hi in merged:
+                    if lo - junction_pad <= at_perp <= hi + junction_pad:
+                        return True
+        return False
+
+    h_runs = _runs_by_line(H)
+    v_runs = _runs_by_line(V)
+    out = []
+    for orient, runs, cross in (('h', h_runs, v_runs), ('v', v_runs, h_runs)):
+        for perp, merged in runs:
+            for i in range(len(merged) - 1):
+                a_lo, a_hi = merged[i]
+                b_lo, b_hi = merged[i + 1]
+                gap = b_lo - a_hi
+                if not (min_w <= gap <= max_w):
+                    continue
+                if (a_hi - a_lo) < min_flank or (b_hi - b_lo) < min_flank:
+                    continue
+                mid = (a_hi + b_lo) / 2
+                if _crosses(cross, perp, mid):
+                    continue
+                if orient == 'h':
+                    out.append({'cx': mid, 'cy': perp, 'w': gap, 'orient': 'h'})
+                else:
+                    out.append({'cx': perp, 'cy': mid, 'w': gap, 'orient': 'v'})
+
+    # dedup: the two faces of a wall can survive as separate lines and yield
+    # the same gap twice — keep one per (centre, orientation)
+    ded = []
+    for o in out:
+        if not any(o['orient'] == p['orient']
+                   and abs(o['cx'] - p['cx']) <= min_w
+                   and abs(o['cy'] - p['cy']) <= group_tol for p in ded):
+            ded.append(o)
+    return ded
+
+
 def _drop_stair_ladders(walls, ppf, warnings, horiz):
     """Remove staircase treads mis-read as walls. Treads are SHORT strips
     (a stair is <= ~8 ft wide) with near-equal spans, marching at a tight
@@ -572,6 +665,86 @@ def wing_arg(w):
         return "largest"
 
 
+def _classify_furniture(a, b, hint):
+    """Name a furniture block from its two side lengths (feet) + a layer hint.
+    Pure + unit-tested. hint prefix 'san' -> sanitaryware, 'kit' -> kitchen,
+    anything else -> general furniture. Returns a type string the GLB builder
+    knows (bed/sofa/cupboard/table/chair/sidetable/commode/basin/counter) or
+    None for symbol fragments and whole-room outlines."""
+    w, l = (a, b) if a <= b else (b, a)         # short side, long side
+    h = (hint or "").lower()
+    if h.startswith("san"):
+        if not (0.7 <= w <= 2.5 and 1.0 <= l <= 3.0):
+            return None
+        return "commode" if l >= 1.8 else "basin"
+    if h.startswith("kit"):
+        if not (0.9 <= w <= 4.0 and 1.5 <= l <= 12.0):
+            return None
+        return "counter"
+    # general furniture
+    if w < 0.7 or l > 12.0:
+        return None
+    if w >= 4.5 and l >= 5.5:
+        return "bed"                             # double bed
+    if 2.6 <= w <= 3.6 and l >= 6.0:
+        return "bed"                             # single bed
+    if 2.2 <= w <= 3.2 and 4.5 <= l < 6.5:
+        return "sofa"
+    if w >= 3.2 and 4.0 <= l <= 6.0:
+        return "table"
+    if w < 2.0 and l >= 4.0:
+        return "cupboard"
+    if l / w <= 1.2 and l <= 2.2:
+        return "sidetable"
+    if w <= 2.4 and l <= 3.0:
+        return "chair"
+    return None
+
+
+_FURN_LAYER_KW = ("furn", "sanitar", "kitchen", "fixture", "toilet",
+                  "wardrobe", "wc")
+
+
+def _furn_hint(lname):
+    if "sanitar" in lname or "toilet" in lname or "wc" in lname:
+        return "san"
+    if "kitchen" in lname:
+        return "kit"
+    return "furn"
+
+
+def _rect_overlap_frac(a, b):
+    """Intersection area / smaller-rect area (0..1)."""
+    ix = max(0.0, min(a.x1, b.x1) - max(a.x0, b.x0))
+    iy = max(0.0, min(a.y1, b.y1) - max(a.y0, b.y0))
+    inter = ix * iy
+    small = min(a.width * a.height, b.width * b.height) or 1.0
+    return inter / small
+
+
+def _furniture_items(drawings, ppf):
+    """Extract + classify + dedupe furniture rects from furniture/sanitary/
+    kitchen layers. CAD blocks often stack an outline rect on a detail rect of
+    the same footprint — keep the larger one only. Returns [(type, fitz.Rect)]."""
+    cand = []
+    for d in drawings:
+        ln = d.get("lname", "")
+        if not any(k in ln for k in _FURN_LAYER_KW):
+            continue
+        r = d.get("rect")
+        if r is None:
+            continue
+        t = _classify_furniture(r.width / ppf, r.height / ppf, _furn_hint(ln))
+        if t:
+            cand.append((t, r))
+    kept = []
+    for t, r in sorted(cand, key=lambda tr: -(tr[1].width * tr[1].height)):
+        if any(_rect_overlap_frac(r, kr) > 0.6 for _, kr in kept):
+            continue
+        kept.append((t, r))
+    return kept
+
+
 def _door_scale_sanity(openings, warnings):
     """Practical cross-check: snapped doors are real doors (2'0"-4'6" wide in
     Indian residential work). If their median width is far outside that band,
@@ -826,6 +999,45 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         else:
             door_hits.append((None, cl))
 
+    # --- geometric doors: flattened PDFs have no door layer and no clean swing
+    # symbols, so doors are found as door-width GAPS in the wall lines. Filling
+    # each gap makes the wall continuous (so scene_to_glb's header cut works and
+    # the room seals); the gap itself is emitted as the door. Pure detection is
+    # in gap_openings() (unit-tested). Gated on `not has_door_layer`, so layered
+    # CAD plans never enter here and cannot regress. ---
+    if not has_door_layer and struct:
+        import fitz as _fitz
+        seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
+        geo = gap_openings(seg_px,
+                           DOOR_MIN_FT * NORM_PPX, DOOR_MAX_FT * NORM_PPX,
+                           min_flank=0.8 * NORM_PPX, face_tol=0.35 * NORM_PPX,
+                           group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX)
+        th = int(0.9 * NORM_PPX)          # fill thickness ~ one wall band
+        placed = 0
+        for o in geo:
+            cx, cy, w = o["cx"], o["cy"], o["w"]
+            if o["orient"] == "h":
+                gx0, gx1 = int(cx - w / 2), int(cx + w / 2)
+                gy0, gy1 = int(cy - th / 2), int(cy + th / 2)
+            else:
+                gy0, gy1 = int(cy - w / 2), int(cy + w / 2)
+                gx0, gx1 = int(cx - th / 2), int(cx + th / 2)
+            gx0, gy0 = max(0, gx0), max(0, gy0)
+            fcx = (cx - PAD_PX) / NORM_PPX
+            fcy = d_ft - (cy - PAD_PX) / NORM_PPX
+            if not _in_wing(fcx, fcy):
+                continue
+            for mm in (m, m_snap):        # seal the doorway, both masks
+                mm[gy0:gy1, gx0:gx1] = 255
+            px0, py0 = x0 + (gx0 - PAD_PX) / sc, y0 + (gy0 - PAD_PX) / sc
+            px1, py1 = x0 + (gx1 - PAD_PX) / sc, y0 + (gy1 - PAD_PX) / sc
+            cl = _fitz.Rect(px0, py0, px1, py1).normalize()
+            door_hits.append(((gx0, gy0, gx1, gy1), cl))
+            placed += 1
+        if placed:
+            warnings.append(f"{placed} door(s) detected by GEOMETRY (wall-gap "
+                            f"rule) - no door layer/symbols on this sheet")
+
     # --- contours -> polygons in FEET (origin bottom-left, y up) ---
     def fx(px):
         return round((px - PAD_PX) / NORM_PPX, 3)
@@ -1069,10 +1281,24 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         warnings.append("scale is a placeholder until dimension text is readable")
     if not has_window_layer:
         warnings.append("no window layer found - windows not extracted")
-    if not has_door_layer:
+    if not has_door_layer and not any(o.get("type") == "door" for o in openings):
         warnings.append("no door layer found - doors not extracted")
 
     _door_scale_sanity(openings, warnings)
+
+    # --- furniture: rects on furniture/sanitary/kitchen layers, classified by
+    # size (the GLB builder turns each into a recognizable assembly). Empty on
+    # flattened plans with no furniture layer — additive, never blocks. ---
+    furniture = []
+    for t, r in _furniture_items(drawings, ppf):
+        fr = ft_rect(r)
+        cx, cy = (fr[0] + fr[2]) / 2, (fr[1] + fr[3]) / 2
+        if not _in_wing(cx, cy):
+            continue
+        furniture.append({"type": t, "x": round(fr[0], 3), "y": round(fr[1], 3),
+                          "w": round(fr[2] - fr[0], 3), "d": round(fr[3] - fr[1], 3)})
+    if furniture:
+        warnings.append(f"{len(furniture)} furniture item(s) placed from layers")
 
     if wbox_ft is not None:
         out_w = float(wbox_ft[2] - wbox_ft[0])
@@ -1097,6 +1323,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         for r in rooms:
             r["x"] = round(r["x"] - sx, 3)
             r["y"] = round(r["y"] - sy, 3)
+        for f in furniture:
+            f["x"] = round(f["x"] - sx, 3)
+            f["y"] = round(f["y"] - sy, 3)
     else:
         out_w, out_d = w_ft, d_ft
     return {
@@ -1117,5 +1346,5 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         "walls_poly": walls_poly,   # exact footprints incl. angled walls
         "openings": openings,
         "columns": columns,
-        "ducts": [], "furniture": [],
+        "ducts": [], "furniture": furniture,
     }

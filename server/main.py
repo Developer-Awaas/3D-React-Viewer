@@ -9,6 +9,7 @@ import functools
 import io
 import math
 import os
+import time
 from contextlib import asynccontextmanager
 
 import anyio.to_thread
@@ -19,6 +20,7 @@ from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
 
 import cad_vector
+import db
 import openings
 import pdf_vector
 import scene_builder
@@ -338,12 +340,23 @@ async def scene(image: UploadFile = File(...),
     """Detect walls and return them as canonical scene.json (feet, z-up).
     wing: which building block to build when a sheet holds several ("largest" or 0,1,...)."""
     _check_width_ft(width_ft)
+    fname = getattr(image, "filename", None)
+    t0 = time.perf_counter()
     try:
         s = await _scene_from_upload(image, width_ft, wing)
-    except HTTPException:
+    except HTTPException as e:
+        db.log_parse(None, filename=fname, width_ft=width_ft, ok=False,
+                     duration_ms=int((time.perf_counter() - t0) * 1000),
+                     error=f"{e.status_code}: {e.detail}")
         raise
     except Exception as e:
+        db.log_parse(None, filename=fname, width_ft=width_ft, ok=False,
+                     duration_ms=int((time.perf_counter() - t0) * 1000),
+                     error=f"{type(e).__name__}: {e}")
         raise HTTPException(500, f"scene build failed: {e}")
+    # fire-and-forget corpus log (no-op unless SUPABASE_URL/KEY are set)
+    db.log_parse(s, filename=fname, width_ft=width_ft,
+                 duration_ms=int((time.perf_counter() - t0) * 1000), ok=True)
     return JSONResponse(s)
 
 

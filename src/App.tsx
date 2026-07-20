@@ -239,6 +239,7 @@ export default function App() {
   // carries the model's scale/offset — needed to place room beacons.
   const lastFrame = useRef<FrameInfo | null>(null)
   const [frame, setFrame] = useState<FrameInfo | null>(null)
+  const [roofOn, setRoofOn] = useState(false)  // R toggles a roof slab over the plan
   const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
     setFrame(info)
@@ -300,13 +301,14 @@ export default function App() {
     a.download = 'plan.json'; a.click()
   }
 
-  // desktop keyboard shortcuts: T = top view, F = re-frame, 1-9 = enter room
+  // desktop keyboard shortcuts: T = top view, F = re-frame, R = roof, 1-9 = enter room
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const tag = (e.target as HTMLElement | null)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
       if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
+      if (e.key === 'r' || e.key === 'R') setRoofOn((v) => !v)
       if (/^[1-9]$/.test(e.key)) enterRoom(Number(e.key) - 1)
     }
     window.addEventListener('keydown', onKey)
@@ -477,7 +479,13 @@ export default function App() {
       </aside>
 
       {/* ─────────── 3D scene ─────────── */}
-      <Canvas shadows camera={{ position: PRESETS.default.position, fov: 50 }} className="!absolute inset-0">
+      <Canvas
+        shadows="soft"
+        dpr={[1, 2]}
+        gl={{ antialias: true, toneMappingExposure: 1.08 }}
+        camera={{ position: PRESETS.default.position, fov: 50 }}
+        className="!absolute inset-0"
+      >
         {/* plan mode needs a building-sized sun; the room lights' shadow
             camera (~3.5 m) silently clipped shadows on 14 m plans */}
         {mode === 'plan' ? <PlanLights /> : <Lights />}
@@ -526,6 +534,30 @@ export default function App() {
                 </ErrorBoundary>
               </Suspense>
             )}
+            {/* roof slab (press R): a low pyramid cap over the whole envelope,
+                sized to the measured model box. Off by default so the rooms
+                stay visible; on = see the finished building from outside. */}
+            {pPlan && frame && roofOn && (() => {
+              const [cx, , cz] = frame.center
+              const top = frame.position[1] + frame.size[1]
+              const w = frame.size[0] * 1.06
+              const d = frame.size[2] * 1.06
+              const rise = Math.min(w, d) * 0.18
+              return (
+                <group position={[cx, top, cz]}>
+                  {/* eave overhang */}
+                  <mesh position={[0, 0.04, 0]} castShadow>
+                    <boxGeometry args={[w, 0.08, d]} />
+                    <meshStandardMaterial color="#6b5545" roughness={0.9} />
+                  </mesh>
+                  {/* hipped cap */}
+                  <mesh position={[0, 0.08 + rise / 2, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
+                    <coneGeometry args={[Math.max(w, d) * 0.62, rise, 4]} />
+                    <meshStandardMaterial color="#7d3b2e" roughness={0.85} />
+                  </mesh>
+                </group>
+              )
+            })()}
             {/* walk-inside beacons: one per detected room — click to step in */}
             {pPlan && frame && pPlan.rooms.map((r, i) => (
               <CameraMarker key={r.id}
@@ -593,6 +625,9 @@ export default function App() {
         drag to orbit · scroll to zoom ·{' '}
         <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
         <span className="rounded border border-white/20 px-1">F</span> frame plan
+        {mode === 'plan' && pPlan && (
+          <> · <span className={`rounded border px-1 ${roofOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>R</span> roof</>
+        )}
         {mode === 'plan' && (pPlan?.rooms.length ?? 0) > 0 && (
           <> · <span className="rounded border border-white/20 px-1">1–{Math.min(9, pPlan!.rooms.length)}</span> step inside · click a beacon</>
         )}
