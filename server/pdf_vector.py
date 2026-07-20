@@ -627,6 +627,18 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
             sizes = [round(max(r.width, r.height), 1) for r in col_rects]
             v, c = np.unique(sizes, return_counts=True)
             seed = float(v[c.argmax()]) / COL_FT
+        if seed is None and width_ft:
+            # last-resort seed: user-supplied plan width vs drawn linework
+            # extent (flattened PDFs: no layers, no on-line dim text, no
+            # columns - the only signal left is the user's own number).
+            xs = [v for d in drawings for v in (d["rect"].x0, d["rect"].x1)]
+            if xs and width_ft > 0:
+                span = max(xs) - min(xs)
+                if span > 0:
+                    seed = span / width_ft
+                    warnings.append(f"scale seeded from width override: "
+                                    f"{seed:.2f} pt/ft (linework span "
+                                    f"{span:.0f} pt / {width_ft} ft)")
         if seed:
             gsegs = _geometry_wall_segs(drawings, seed, warnings, dim_keys)
             if len(gsegs) >= 8:
@@ -942,10 +954,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
                 fcx, fcy = (fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2
                 if not _in_wing(fcx, fcy):
                     continue
-                near_door = any(o["type"] == "door"
-                                and abs((o["footprint"][0]+o["footprint"][2])/2 - fcx) < 2.5
-                                and abs((o["footprint"][1]+o["footprint"][3])/2 - fcy) < 2.5
-                                for o in openings)
+                # door openings are appended AFTER this section - test against
+                # the door cluster centres found earlier instead
+                near_door = any(abs(dcx - fcx) < 2.5 and abs(dcy - fcy) < 2.5
+                                for dcx, dcy in door_centers)
                 if near_door:
                     continue
                 openings.append({"id": f"o{len(openings)}", "type": "window",

@@ -1,6 +1,6 @@
 import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, ContactShadows, Sky } from '@react-three/drei'
+import { OrbitControls, Environment, ContactShadows, Sky, useGLTF } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import Room from './components/Room'
 import Lights from './components/Lights'
@@ -72,9 +72,11 @@ function Upload({ onFile, accept, children }: { onFile: (f: File) => void; accep
   return (
     <motion.label whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={{ duration: 0.15 }}
       className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-full
-                 bg-neon px-4 text-sm font-semibold text-white shadow-glow hover:brightness-105">
+                 bg-neon px-4 text-sm font-semibold text-white shadow-glow hover:brightness-105
+                 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
       {children}
-      <input type="file" accept={accept} className="hidden"
+      {/* sr-only (not `hidden`) keeps the input focusable, so the upload is keyboard-reachable */}
+      <input type="file" accept={accept} className="sr-only"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.currentTarget.value = '' }} />
     </motion.label>
   )
@@ -149,7 +151,15 @@ export default function App() {
   const [modelUrl, setModelUrl] = useState<string | null>(null)
   const [vStatus, setVStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [urlText, setUrlText] = useState('')
-  const loadUrl = (u: string) => { setVStatus('loading'); setModelUrl(u) }
+  const loadUrl = (u: string) => {
+    // release the previous model's blob URL (and its GLTF cache entry) so
+    // repeated uploads don't leak memory
+    if (modelUrl && modelUrl !== u && modelUrl.startsWith('blob:')) {
+      useGLTF.clear(modelUrl)
+      URL.revokeObjectURL(modelUrl)
+    }
+    setVStatus('loading'); setModelUrl(u)
+  }
 
   // convert = auto-detect a draft, then trace-fix
   const [cSegs, setCSegs] = useState<Seg[]>([])
@@ -170,7 +180,13 @@ export default function App() {
   // bundled demo building: built by tools/make_sample_plan.py through the
   // REAL engine; loads straight from public/ with NO backend needed, so the
   // first-visit wow works even while the API is cold or down
+  // request sequencing: each build gets an id; a finished build whose id no
+  // longer matches lost the race — its state updates are dropped and its blob
+  // URL revoked, so a stale slow response can't overwrite a newer plan
+  const planReqId = useRef(0)
+
   const loadSample = async () => {
+    planReqId.current++ // invalidate any in-flight build
     setPFile(null)
     setPLoading(true)
     setPStatus('Loading the sample building…')
@@ -191,11 +207,16 @@ export default function App() {
   }
 
   const handlePlan = async (f: File, wing?: number) => {
+    const id = ++planReqId.current
     setPFile(f)
     setPLoading(true)
     setPStatus(wing === undefined ? 'Parsing plan + building 3D…' : `Building wing ${wing}…`)
     try {
       const built = await buildPlan(f, pWidthFt || undefined, wing)
+      if (id !== planReqId.current) { // a newer request won — drop this result
+        URL.revokeObjectURL(built.glbUrl)
+        return
+      }
       // swap in the new model FIRST, then release the old one's blob URL —
       // revoking before the rebuild finishes can break the model on screen
       const old = pPlan
@@ -205,10 +226,11 @@ export default function App() {
       setPStatus(`${m.plan_width_ft.toFixed(1)} × ${m.plan_depth_ft.toFixed(1)} ft · ` +
         `${built.doors} doors · ${built.windows} windows · scale: ${m.scale.source}`)
     } catch (e: any) {
+      if (id !== planReqId.current) return // stale failure — a newer request owns the UI
       setPPlan(null)
       setPStatus('Error: ' + (e?.message || 'backend unreachable — is uvicorn running on :8000?'))
     } finally {
-      setPLoading(false)
+      if (id === planReqId.current) setPLoading(false)
     }
   }
 
@@ -372,9 +394,13 @@ export default function App() {
                 <>
                   <Status>1 · Upload a plan — it auto-detects a draft. 2 · Click along walls it missed. 3 · The 3D updates live.</Status>
                   <Field label="Building width (m)">
-                    <NumberInput value={cWidthM} min={1} step={0.5} onChange={(e) => setCWidthM(+e.target.value)} />
+                    <NumberInput value={cWidthM} min={1} step={0.5} onChange={(e) => {
+                      // guard: an emptied field parses to NaN — keep the last valid width
+                      const v = +e.target.value
+                      if (Number.isFinite(v) && v > 0) setCWidthM(v)
+                    }} />
                   </Field>
-                  <Upload onFile={handleConvert} accept=".jpg,.jpeg,.png,.pdf,.glb,.gltf">Upload plan</Upload>
+                  <Upload onFile={handleConvert} accept=".jpg,.jpeg,.png,.glb,.gltf">Upload plan</Upload>
                   {cUnder && (
                     <div className="flex flex-col gap-2">
                       <div className="grid grid-cols-3 gap-2">

@@ -1,5 +1,5 @@
-import { ReactNode, useRef } from 'react'
-import { motion, useInView, useScroll, useTransform } from 'framer-motion'
+import { ReactNode, useEffect, useRef, useState } from 'react'
+import { motion, useScroll, useTransform } from 'framer-motion'
 
 /* Scrollable story below the Plan → 3D viewer. Drishti's own identity
  * (orange accent, glass surfaces, Playfair italics) with cinematic craft:
@@ -7,27 +7,63 @@ import { motion, useInView, useScroll, useTransform } from 'framer-motion'
  * feature cards. All copy is REAL project data — engine steps, measured
  * accuracy, shipped features — not marketing filler. */
 
-const EASE = [0.16, 1, 0.3, 1] as const
+
 
 /* ---------- shared animation helpers ---------- */
 
+/* Own once-only in-view hook on a raw IntersectionObserver. framer-motion's
+ * useInView proved unreliable when the page is programmatically scrolled
+ * right after mount (landing nav → section deep-link): its callback never
+ * fired while a hand-rolled observer did. This is deterministic. */
+function useSeen<T extends Element>(margin = '-60px 0px') {
+  const ref = useRef<T | null>(null)
+  const [seen, setSeen] = useState(false)
+  useEffect(() => {
+    const el = ref.current
+    if (!el || seen) return
+    // synchronous fallback: IntersectionObserver callbacks can lag seconds
+    // behind on a starved main thread (WebGL warmup on weak GPUs), but
+    // scroll events + rect math fire in-step with the scroll itself
+    const pad = Math.abs(parseFloat(margin)) || 0
+    const check = () => {
+      const r = el.getBoundingClientRect()
+      if (r.top < window.innerHeight - pad && r.bottom > pad) {
+        setSeen(true)
+        window.removeEventListener('scroll', check, true)
+      }
+    }
+    check()
+    window.addEventListener('scroll', check, { capture: true, passive: true })
+    let o: IntersectionObserver | null = null
+    if (typeof IntersectionObserver !== 'undefined') {
+      o = new IntersectionObserver(
+        (es) => { if (es.some((e) => e.isIntersecting)) { setSeen(true); o?.disconnect() } },
+        { rootMargin: margin },
+      )
+      o.observe(el)
+    }
+    return () => { window.removeEventListener('scroll', check, true); o?.disconnect() }
+  }, [margin, seen])
+  return [ref, seen] as const
+}
+
+/* Pull-up + fade-in run as pure CSS transitions (compositor-side): a busy
+ * main thread — WebGL warmup, parsing — can delay a JS-driven tween by
+ * seconds on weak machines, but can't touch a CSS transform/opacity. */
 function WordsPullUp({
   text, className = '', delay = 0,
 }: { text: string; className?: string; delay?: number }) {
-  const ref = useRef<HTMLSpanElement>(null)
-  const inView = useInView(ref, { once: true, margin: '-60px' })
+  const [ref, inView] = useSeen<HTMLSpanElement>()
   return (
     <span ref={ref} className={`inline-flex flex-wrap ${className}`}>
       {text.split(' ').map((w, i) => (
-        <motion.span
+        <span
           key={i}
-          initial={{ y: 20, opacity: 0 }}
-          animate={inView ? { y: 0, opacity: 1 } : {}}
-          transition={{ duration: 0.5, ease: EASE, delay: delay + i * 0.08 }}
-          className="mr-[0.28em] inline-block"
+          style={{ transitionDelay: `${delay + i * 0.08}s` }}
+          className={`sect-rise mr-[0.28em] inline-block ${inView ? 'sect-on' : ''}`}
         >
           {w}
-        </motion.span>
+        </span>
       ))}
     </span>
   )
@@ -53,18 +89,15 @@ function Char({ c, progress, range }: { c: string; progress: any; range: [number
 }
 
 function FadeIn({ children, delay = 0, className = '' }: { children: ReactNode; delay?: number; className?: string }) {
-  const ref = useRef<HTMLDivElement>(null)
-  const inView = useInView(ref, { once: true, margin: '-80px' })
+  const [ref, inView] = useSeen<HTMLDivElement>('-80px 0px')
   return (
-    <motion.div
+    <div
       ref={ref}
-      initial={{ opacity: 0, y: 24, scale: 0.97 }}
-      animate={inView ? { opacity: 1, y: 0, scale: 1 } : {}}
-      transition={{ duration: 0.6, ease: EASE, delay }}
-      className={className}
+      style={{ transitionDelay: `${delay}s` }}
+      className={`sect-card ${inView ? 'sect-on' : ''} ${className}`}
     >
       {children}
-    </motion.div>
+    </div>
   )
 }
 
@@ -122,7 +155,7 @@ const FAQ = [
 
 /* ---------- the sections ---------- */
 
-export default function AppSections() {
+export default function AppSections({ onEnterApp }: { onEnterApp?: () => void }) {
   return (
     <div className="relative bg-background">
       {/* 1 · engine story */}
@@ -200,7 +233,7 @@ export default function AppSections() {
       </section>
 
       {/* 4 · FAQ */}
-      <section className="relative border-t border-white/5 bg-[#0b1120] px-6 py-24">
+      <section id="drishti-docs" className="relative border-t border-white/5 bg-[#0b1120] px-6 py-24">
         <div className="mx-auto max-w-3xl">
           <h2 className="text-2xl leading-tight text-foreground sm:text-3xl">
             <WordsPullUp text="Good to know" />
@@ -217,13 +250,28 @@ export default function AppSections() {
               </FadeIn>
             ))}
           </div>
-          <div className="mt-16 flex items-center justify-between border-t border-white/5 pt-6 text-xs text-muted-foreground/60">
+          {/* final CTA: the whole landing exists to get here */}
+          <div className="mt-16 flex flex-col items-center gap-5 rounded-3xl border border-white/5 bg-surface-soft/40 px-6 py-12 text-center">
+            <h3 className="max-w-xl text-2xl leading-tight text-foreground sm:text-3xl">
+              <WordsPullUp text="Upload a plan — watch it stand up." />
+            </h3>
+            <p className="max-w-md text-xs leading-relaxed text-muted-foreground sm:text-sm">
+              Try the bundled sample instantly, or drop your own CAD PDF / DXF / DWG. No sign-up.
+            </p>
+            <button
+              onClick={onEnterApp}
+              className="rounded-full bg-neon px-7 py-3 text-sm font-semibold text-white shadow-glow transition-transform hover:scale-[1.03]"
+            >
+              Convert a plan →
+            </button>
+          </div>
+          <div className="mt-12 flex items-center justify-between border-t border-white/5 pt-6 text-xs text-muted-foreground/60">
             <span className="font-playfair italic">Drishti — every plan holds a building within</span>
             <button
-              onClick={() => document.getElementById('drishti-viewer')?.scrollIntoView({ behavior: 'smooth' })}
+              onClick={() => document.getElementById('drishti-top')?.scrollIntoView({ behavior: 'smooth' })}
               className="rounded-full border border-white/10 px-4 py-2 text-foreground/80 hover:border-neon/50 hover:text-foreground"
             >
-              ↑ back to the viewer
+              ↑ back to top
             </button>
           </div>
         </div>

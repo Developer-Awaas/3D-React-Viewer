@@ -1,15 +1,15 @@
 # Vector-only production server (v1 scope: CAD PDFs = the product; the
 # photo/scan path is beta and needs torch + CubiCasa - NOT installed here,
 # main.py degrades gracefully with a 503 "beta" message).
-fastapi
-uvicorn[standard]
-python-multipart
-python-dotenv
-pillow
-numpy
-shapely
-opencv-python-headless
-trimesh
-mapbox-earcut
-pymupdf
+fastapi==0.139.2
+uvicorn[standard]==0.46.0
+python-multipart==0.0.26
+python-dotenv==1.2.2
+pillow==12.2.0
+numpy==2.4.4
+shapely==2.1.2
+opencv-python-headless==4.13.0.92
+trimesh==4.12.2
+mapbox-earcut==2.0.0
+pymupdf==1.28.0
 ezdxf

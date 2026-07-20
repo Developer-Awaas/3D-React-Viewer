@@ -112,6 +112,7 @@ function wallRunsHough(cv, mask, W, H, mpp, toM) {
 
 function process(msg) {
   const cv = self.cv
+  const id = msg.id // echoed back so the caller can match replies to requests
   try {
     const { data, width, height, realWidthM } = msg
     const src = cv.matFromImageData({ data: new Uint8ClampedArray(data), width, height })
@@ -136,8 +137,8 @@ function process(msg) {
     for (const dd of diag) segments.push(dd)
 
     src.delete(); small.delete(); gray.delete(); mask.delete()
-    self.postMessage({ segments, widthM: W * mpp, depthM: H * mpp })
+    self.postMessage({ id, segments, widthM: W * mpp, depthM: H * mpp })
   } catch (err) {
-    self.postMessage({ error: (err && err.message) || 'detection failed' })
+    self.postMessage({ id, error: (err && err.message) || 'detection failed' })
   }
 }

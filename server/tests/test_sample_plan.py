@@ -114,3 +114,36 @@ def test_sample_glb_has_detailed_furniture(sample_scene, tmp_path):
     assert any("pillow" in n for n in beds)
     assert any(n.startswith("furn_sofa_") and "back" in n for n in names)
     assert any(n.startswith("furn_commode_") for n in names)
+
+
+def test_sample_glb_roof_and_window_frames(sample_scene, tmp_path):
+    """Every built plan ships a 'roof' slab (viewer toggles it by name) and
+    windows carry a rectangular frame unit (sill/head/jambs), not a bare cut."""
+    import trimesh
+    from scene_to_glb import build_glb
+    out = tmp_path / "roof.glb"
+    build_glb(sample_scene, str(out))
+    names = set(trimesh.load(str(out)).geometry.keys())
+    assert "roof" in names
+    frames = [n for n in names if n.startswith("furn_wframe_")]
+    assert any("sill" in n for n in frames)
+    assert any("head" in n for n in frames)
+    assert any("jamb" in n for n in frames)
+    n_windows = sum(1 for n in names if n.startswith("glass_"))
+    assert n_windows == 6              # frames must not eat the glass panes
+
+
+def test_walls_reach_full_height(sample_scene, tmp_path):
+    """Regression: the band-lift matrix bug piled every wall band at ground
+    level (walls topped at ~4 ft; only columns touched the roof). Walls must
+    reach wall_height_ft, and the wall band above window head must exist."""
+    import trimesh
+    from scene_to_glb import build_glb
+    out = tmp_path / "h.glb"
+    build_glb(sample_scene, str(out))
+    sc = trimesh.load(str(out))
+    FT = 0.3048
+    H = sample_scene["meta"]["wall_height_ft"]
+    wall_top = max(float(g.vertices[:, 1].max()) / FT
+                   for n, g in sc.geometry.items() if n.startswith("wall"))
+    assert wall_top > H - 0.1, f"walls top out at {wall_top:.2f} ft"

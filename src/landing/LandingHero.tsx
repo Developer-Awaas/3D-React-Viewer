@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import './landing.css';
 import heroPlan from './assets/hero-plan.webp';
 import hero3d from './assets/hero-3d.webp';
+import AppSections from '../components/AppSections';
 
 /**
  * Drishti landing hero.
@@ -71,7 +72,14 @@ export default function LandingHero({ onEnter }: LandingHeroProps) {
     if (leavingRef.current) return;
     leavingRef.current = true;
     setLeaving(true);
-    window.setTimeout(onEnter, 700);
+    window.setTimeout(() => onEnter(), 700);
+  };
+
+  // nav "How it works" / "Docs" now scroll DOWN the landing page (the story
+  // sections live here, below the hero) instead of opening the app
+  const scrollTo = (id: string) => {
+    setMenuOpen(false);
+    document.getElementById(id)?.scrollIntoView({ behavior: 'smooth' });
   };
 
   useEffect(() => {
@@ -142,6 +150,10 @@ export default function LandingHero({ onEnter }: LandingHeroProps) {
   }, []);
 
   return (
+    // the landing is now a scrollable page: the hero fills the first screen,
+    // and the story sections (how it works · accuracy · features · FAQ)
+    // continue below. dl-page is the scroll container.
+    <div className="dl-page" id="drishti-top">
     <div className={`dl-root${leaving ? ' dl-leaving' : ''}`}>
       {/* ---------- nav ---------- */}
       <nav className="dl-nav">
@@ -161,13 +173,13 @@ export default function LandingHero({ onEnter }: LandingHeroProps) {
         </div>
 
         <div className="dl-nav-pill">
-          <button className="dl-active" onClick={enter}>Plan → 3D</button>
-          <button onClick={enter}>Viewer</button>
-          <button type="button">How it works</button>
-          <button type="button">Docs</button>
+          <button className="dl-active" onClick={() => enter()}>Plan → 3D</button>
+          <button onClick={() => enter()}>Viewer</button>
+          <button onClick={() => scrollTo('drishti-story')}>How it works</button>
+          <button onClick={() => scrollTo('drishti-docs')}>Docs</button>
         </div>
 
-        <button className="dl-signup" onClick={enter}>Open App</button>
+        <button className="dl-signup" onClick={() => enter()}>Open App</button>
 
         <button
           className="dl-burger"
@@ -178,9 +190,11 @@ export default function LandingHero({ onEnter }: LandingHeroProps) {
         </button>
         {menuOpen && (
           <div className="dl-mobile-menu">
-            <button onClick={enter}>Plan → 3D</button>
-            <button onClick={enter}>Viewer</button>
-            <button onClick={enter}>Open App</button>
+            <button onClick={() => enter()}>Plan → 3D</button>
+            <button onClick={() => enter()}>Viewer</button>
+            <button onClick={() => scrollTo('drishti-story')}>How it works</button>
+            <button onClick={() => scrollTo('drishti-docs')}>Docs</button>
+            <button onClick={() => enter()}>Open App</button>
           </div>
         )}
       </nav>
@@ -256,11 +270,25 @@ export default function LandingHero({ onEnter }: LandingHeroProps) {
             into true-to-scale, walk-through 3D. Upload a PDF and watch it
             stand up.
           </p>
-          <button className="dl-cta" onClick={enter}>
+          <button className="dl-cta" onClick={() => enter()}>
             Convert a Plan
           </button>
         </div>
+
+        {/* scroll cue — the page continues below the hero */}
+        <button
+          className="dl-scrollcue dl-anim dl-fade"
+          style={{ animationDelay: '1.6s' }}
+          onClick={() => scrollTo('drishti-story')}
+          aria-label="See how it works"
+        >
+          how it works <span className="dl-scrollcue-arrow">↓</span>
+        </button>
       </section>
+    </div>
+
+      {/* ---------- story sections (moved here from the converter page) ---------- */}
+      <AppSections onEnterApp={() => enter()} />
     </div>
   );
 }

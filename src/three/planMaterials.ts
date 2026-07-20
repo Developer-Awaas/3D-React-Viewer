@@ -157,6 +157,17 @@ function materials(): PlanMaterials {
   return cached
 }
 
+/** Dispose a replaced material (and any textures it owns) — GPU leak guard. */
+function disposeMaterial(mat: THREE.Material | THREE.Material[]) {
+  for (const m of Array.isArray(mat) ? mat : [mat]) {
+    if (!m) continue
+    for (const v of Object.values(m)) {
+      if (v instanceof THREE.Texture) v.dispose()
+    }
+    m.dispose()
+  }
+}
+
 /** Swap the flat vertex-colour GLB materials for the PBR set, by mesh name. */
 export function applyPlanMaterials(root: THREE.Object3D) {
   const m = materials()
@@ -164,16 +175,20 @@ export function applyPlanMaterials(root: THREE.Object3D) {
     const mesh = o as THREE.Mesh
     if (!mesh.isMesh) return
     const name = (mesh.name || mesh.parent?.name || '').toLowerCase()
+    const oldMaterial = mesh.material
     if (name.includes('glass')) {
       // the exporter writes glass boxes without NORMALs — without this the
       // lighting math goes NaN and the pane renders solid black
       if (!mesh.geometry.attributes.normal) mesh.geometry.computeVertexNormals()
       mesh.material = m.glass
+      if (oldMaterial !== mesh.material) disposeMaterial(oldMaterial)
       mesh.castShadow = false
       mesh.receiveShadow = false
       return
     }
+    const oldGeometry = mesh.geometry
     mesh.geometry = boxUV(mesh.geometry)
+    if (mesh.geometry !== oldGeometry) oldGeometry.dispose() // old indexed copy
     if (name.includes('floor')) mesh.material = m.floor
     else if (name.includes('column')) mesh.material = m.concrete
     else if (name.includes('furn')) {
@@ -182,6 +197,7 @@ export function applyPlanMaterials(root: THREE.Object3D) {
         vertexColors: true, roughness: 0.7, metalness: 0.0,
       })
     } else mesh.material = m.plaster
+    if (oldMaterial !== mesh.material) disposeMaterial(oldMaterial)
     mesh.castShadow = !name.includes('floor')
     mesh.receiveShadow = true
   })

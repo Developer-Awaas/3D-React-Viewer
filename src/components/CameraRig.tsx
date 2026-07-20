@@ -38,5 +38,14 @@ export default function CameraRig({ view }: { view: View | null }) {
     return () => { tween.current?.kill() }
   }, [view, controls, camera])
 
+  // the user grabbing the controls must win: kill any in-flight glide the
+  // moment a drag starts, or the tween fights the pointer for the camera
+  useEffect(() => {
+    if (!controls) return
+    const onStart = () => { tween.current?.kill(); tween.current = null }
+    controls.addEventListener('start', onStart)
+    return () => { controls.removeEventListener('start', onStart) }
+  }, [controls])
+
   return null
 }

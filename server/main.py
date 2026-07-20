@@ -5,17 +5,18 @@ Dev: runs locally (uvicorn). Prod: same app deploys to any GPU host - only
 .env and the frontend's API URL change, no code change.
 """
 import asyncio
+import functools
 import io
+import math
 import os
-import tempfile
 from contextlib import asynccontextmanager
 
+import anyio.to_thread
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, UploadFile, HTTPException
+from fastapi import FastAPI, File, Query, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, HTMLResponse, FileResponse
+from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
-from starlette.background import BackgroundTask
 
 import cad_vector
 import openings
@@ -157,12 +158,17 @@ async def _run_heavy(fn, *args, what="inference"):
     """Run a heavy/model call off the event loop with (a) a concurrency slot,
     (b) a wall-clock timeout, (c) GPU-OOM translated to a clean 503. The API
     stays responsive no matter what the model does. Note: on timeout the
-    worker thread keeps running to completion in the background - the CLIENT
-    is released; the semaphore slot frees when the thread finishes."""
+    worker thread keeps running to completion in the background (abandoned) -
+    the CLIENT is released and the semaphore slot frees immediately."""
     timeout = float(os.getenv("INFER_TIMEOUT_S", "120"))
     try:
         async with _INFER_SLOTS:
-            return await asyncio.wait_for(run_in_threadpool(fn, *args), timeout)
+            # abandon_on_cancel: wait_for's cancellation must actually reach
+            # this await (run_in_threadpool ignores it - the 504 never fired)
+            return await asyncio.wait_for(
+                anyio.to_thread.run_sync(functools.partial(fn, *args),
+                                         abandon_on_cancel=True),
+                timeout)
     except asyncio.TimeoutError:
         raise HTTPException(504, f"{what} timed out after {timeout:.0f}s - "
                                  "try a smaller image or PDF")
@@ -188,15 +194,37 @@ def _is_cad(image: UploadFile):
     return name.endswith((".dxf", ".dwg"))
 
 
+async def _read_capped(image: UploadFile):
+    """Read an upload in chunks, rejecting oversize files EARLY (declared size
+    first, then abort mid-stream) instead of buffering the whole body."""
+    cap = MAX_UPLOAD_MB * 1024 * 1024
+    declared = getattr(image, "size", None)
+    if declared is None:
+        try:
+            declared = int(image.headers.get("content-length", ""))
+        except (AttributeError, TypeError, ValueError):
+            declared = None
+    if declared is not None and declared > cap:
+        raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
+    chunks, size = [], 0
+    while True:
+        chunk = await image.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
 async def _read_upload_bytes(image: UploadFile):
     """Read + validate an upload. Returns (raw_bytes, is_pdf) - no conversion."""
     if not _looks_supported(image):
         raise HTTPException(415, "upload a PNG/JPG image, a PDF, or a CAD file (.dxf/.dwg)")
-    raw = await image.read()
+    raw = await _read_capped(image)
     if not raw:
         raise HTTPException(400, "empty file")
-    if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
-        raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
     ct = image.content_type or ""
     name = (image.filename or "").lower()
     is_pdf = (ct == "application/pdf" or name.endswith(".pdf"))
@@ -210,19 +238,32 @@ async def _read_upload_bytes(image: UploadFile):
 
 
 def _pdf_first_page_png(raw):
-    """PDF bytes -> PNG bytes of page 1 (for the raster/CubiCasa path)."""
+    """PDF bytes -> PNG bytes of page 1 (for the raster/CubiCasa path).
+    dpi is clamped so the longest page side renders <= 4000 px (a huge sheet
+    at a fixed 200 dpi could eat all the RAM). CPU-heavy: call via _run_heavy."""
+    doc = None
     try:
         import fitz  # PyMuPDF
         doc = fitz.open(stream=raw, filetype="pdf")
-        return doc[0].get_pixmap(dpi=200).tobytes("png")
+        page = doc[0]
+        side_pt = max(page.rect.width, page.rect.height)
+        dpi = 200
+        if side_pt > 0:
+            dpi = max(1, min(dpi, int(4000 * 72 / side_pt)))
+        return page.get_pixmap(dpi=dpi).tobytes("png")
     except Exception as e:
         raise HTTPException(422, f"could not read PDF: {e}")
+    finally:
+        if doc is not None:
+            doc.close()
 
 
 async def _read_upload(image: UploadFile):
     """Read an upload; accept images OR PDFs (PDF -> PNG of page 1). Returns image bytes."""
     raw, is_pdf = await _read_upload_bytes(image)
-    return _pdf_first_page_png(raw) if is_pdf else raw
+    if is_pdf:
+        return await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
+    return raw
 
 
 @app.post("/perceive")
@@ -249,11 +290,9 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
     # Re-drawn as a layered PDF in memory, then parsed by the SAME engine as
     # CAD-exported PDFs (walls, doors, wings, rooms all reused).
     if _is_cad(image):
-        raw = await image.read()
+        raw = await _read_capped(image)
         if not raw:
             raise HTTPException(400, "empty file")
-        if len(raw) > MAX_UPLOAD_MB * 1024 * 1024:
-            raise HTTPException(413, f"file too large (> {MAX_UPLOAD_MB} MB)")
         try:
             pdf_bytes, ppf, _info = await _run_heavy(
                 cad_vector.to_layered_pdf, raw, image.filename or "",
@@ -270,8 +309,8 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
                                     pdf_vector.wing_arg(wing), what="vector parse")
         except ValueError as e:
             raise HTTPException(422, f"vector PDF parse failed: {e}")
-    if is_pdf:
-        raw = _pdf_first_page_png(raw)   # flat PDF -> raster path
+    if is_pdf:                           # flat PDF -> raster path
+        raw = await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
     if perception is None:               # vector-only deploy: photos are beta
         raise HTTPException(503, BETA_MSG)
     try:
@@ -285,11 +324,20 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
     return scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
 
 
+def _check_width_ft(width_ft):
+    """Query(gt/le) rejects out-of-range values; older pydantic still lets
+    inf/nan through the comparisons - refuse them explicitly."""
+    if not math.isfinite(width_ft):
+        raise HTTPException(422, "width_ft must be a finite number")
+
+
 @app.post("/scene")
-async def scene(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT,
+async def scene(image: UploadFile = File(...),
+                width_ft: float = Query(scene_builder.DEFAULT_WIDTH_FT, gt=0, le=2000),
                 wing: str = "largest"):
     """Detect walls and return them as canonical scene.json (feet, z-up).
     wing: which building block to build when a sheet holds several ("largest" or 0,1,...)."""
+    _check_width_ft(width_ft)
     try:
         s = await _scene_from_upload(image, width_ft, wing)
     except HTTPException:
@@ -300,22 +348,22 @@ async def scene(image: UploadFile = File(...), width_ft: float = scene_builder.D
 
 
 @app.post("/scene.glb")
-async def scene_glb(image: UploadFile = File(...), width_ft: float = scene_builder.DEFAULT_WIDTH_FT,
+async def scene_glb(image: UploadFile = File(...),
+                    width_ft: float = Query(scene_builder.DEFAULT_WIDTH_FT, gt=0, le=2000),
                     wing: str = "largest"):
     """Detect walls, build a .glb 3D model, and return the file."""
+    _check_width_ft(width_ft)
     try:
         s = await _scene_from_upload(image, width_ft, wing)
-        # unique temp file per request (a fixed name let concurrent users
-        # download each other's building), deleted after the response is sent
-        fd, out = tempfile.mkstemp(suffix=".glb", prefix="drishti_")
-        os.close(fd)
-        await run_in_threadpool(scene_to_glb.build_glb, s, out)
+        # export straight to bytes: no temp file to leak (or to collide
+        # between concurrent users), nothing to clean up on failure
+        glb = await run_in_threadpool(scene_to_glb.build_glb_bytes, s)
     except HTTPException:
         raise
     except Exception as e:
         raise HTTPException(500, f"glb build failed: {e}")
-    return FileResponse(out, media_type="model/gltf-binary", filename="scene.glb",
-                        background=BackgroundTask(os.remove, out))
+    return Response(content=glb, media_type="model/gltf-binary",
+                    headers={"Content-Disposition": 'attachment; filename="scene.glb"'})
 
 
 SCENE_VIEW_PAGE = """<!doctype html>

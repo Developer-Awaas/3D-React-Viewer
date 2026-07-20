@@ -25,9 +25,18 @@ export default function ImportScene({
   depthM: number
 }) {
   const [tex, setTex] = useState<THREE.Texture | null>(null)
+  // cancel late loads + dispose the GPU texture on replace/unmount
   useEffect(() => {
     if (!underlay) { setTex(null); return }
-    new THREE.TextureLoader().load(underlay, (t) => { t.colorSpace = THREE.SRGBColorSpace; setTex(t) })
+    let cancelled = false
+    let loaded: THREE.Texture | null = null
+    new THREE.TextureLoader().load(underlay, (t) => {
+      if (cancelled) { t.dispose(); return }
+      t.colorSpace = THREE.SRGBColorSpace
+      loaded = t
+      setTex(t)
+    })
+    return () => { cancelled = true; loaded?.dispose() }
   }, [underlay])
 
   return (
