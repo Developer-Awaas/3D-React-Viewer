@@ -74,6 +74,16 @@ def parse_origins(value, default="http://localhost:5173"):
 origins = parse_origins(os.getenv("ALLOWED_ORIGINS"))
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
+# Visualize (Beta): SDXL + ControlNet photoreal render / SVD walkthrough. Safe
+# to mount on any host — torch/diffusers are imported lazily inside the calls,
+# and every endpoint returns a clean 503 when no CUDA GPU is present, so a slim
+# CPU deploy is unaffected. Set RENDER_BACKEND=local on your GPU box.
+try:
+    import visualize
+    app.include_router(visualize.router)
+except Exception as _ve:          # never let an optional feature block boot
+    print(f"[visualize] not mounted: {type(_ve).__name__}: {_ve}")
+
 
 @app.get("/health")
 def health():

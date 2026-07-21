@@ -135,16 +135,71 @@ def _require_local():
                                  "CPU host set RENDER_BACKEND=fal (hosted GPU).")
 
 
-def _load_sdxl():
-    if "sdxl" in _PIPES:
-        return _PIPES["sdxl"]
+# which ControlNet to load per conditioning type. depth locks the room's true
+# 3D volume/perspective (Drishti renders a real depth pass from the scene, so it
+# beats Canny edges); canny is the fallback when only a screenshot is available.
+_CONTROLNETS = {
+    "canny": ("CONTROLNET_MODEL", "diffusers/controlnet-canny-sdxl-1.0"),
+    "depth": ("DEPTH_CONTROLNET", "diffusers/controlnet-depth-sdxl-1.0"),
+}
+
+
+def required_models(include_video=False):
+    """SINGLE SOURCE OF TRUTH for which weights this code loads. The downloader
+    (fetch_models.py) reads this too, so what you download and what the runtime
+    utilises can never drift. `variant` mirrors the from_pretrained() call — the
+    SDXL base is loaded fp16, so only fp16 files are needed; ControlNets load
+    their default file. Keep this in lockstep with _load_sdxl()/_load_svd()."""
+    models = [
+        {"name": "sdxl",
+         "id": os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
+         "variant": "fp16"},
+    ]
+    for ctype, (env, default) in _CONTROLNETS.items():
+        models.append({"name": f"controlnet_{ctype}",
+                       "id": os.getenv(env, default), "variant": None})
+    if include_video:
+        models.append({"name": "svd",
+                       "id": os.getenv("SVD_MODEL",
+                                       "stabilityai/stable-video-diffusion-img2vid-xt"),
+                       "variant": "fp16"})
+    return models
+
+
+def models_status(include_video=False):
+    """For each required model, whether it is present in the local HF cache.
+    Lets /health confirm download == utilisation before the first render."""
+    req = required_models(include_video)
+    present = set()
+    try:
+        from huggingface_hub import scan_cache_dir
+        present = {r.repo_id for r in scan_cache_dir().repos}
+    except Exception:
+        pass
+    return [{**m, "cached": m["id"] in present} for m in req]
+
+
+def _prep_control(image, max_side=1024):
+    """PIL image -> RGB, downscaled to max_side (ControlNet input)."""
+    image = image.convert("RGB")
+    w, h = image.size
+    s = min(1.0, max_side / max(w, h))
+    if s < 1.0:
+        image = image.resize((int(w * s), int(h * s)))
+    return image
+
+
+def _load_sdxl(control="canny"):
+    key = f"sdxl_{control}"
+    if key in _PIPES:
+        return _PIPES[key]
     _require_local()
-    _evict("sdxl")
+    _evict(key)                       # one control pipeline on the 12 GB card at a time
     import torch
     from diffusers import ControlNetModel, StableDiffusionXLControlNetPipeline
-    cn = ControlNetModel.from_pretrained(
-        os.getenv("CONTROLNET_MODEL", "diffusers/controlnet-canny-sdxl-1.0"),
-        torch_dtype=torch.float16)
+    env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
+    cn = ControlNetModel.from_pretrained(os.getenv(env, default),
+                                         torch_dtype=torch.float16)
     pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
         os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
         controlnet=cn, torch_dtype=torch.float16, use_safetensors=True,
@@ -154,14 +209,22 @@ def _load_sdxl():
         pipe.enable_vae_tiling()
     except Exception:
         pass
-    _PIPES["sdxl"] = pipe
+    _PIPES[key] = pipe
     return pipe
 
 
-def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed):
+def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
+                  depth_bytes=None):
     import torch
-    pipe = _load_sdxl()
-    control = _canny(image_bytes)
+    from PIL import Image
+    # depth map from the 3D scene locks geometry best; fall back to Canny edges
+    if depth_bytes:
+        control = _prep_control(Image.open(io.BytesIO(depth_bytes)))
+        ctype = "depth"
+    else:
+        control = _canny(image_bytes)
+        ctype = "canny"
+    pipe = _load_sdxl(ctype)
     gen = torch.Generator(device="cpu").manual_seed(int(seed))
     out = pipe(prompt=prompt, negative_prompt=negative, image=control,
                num_inference_steps=int(steps), guidance_scale=float(guidance),
@@ -216,7 +279,8 @@ def _animate_local(image_bytes, motion, fps, seed, frames):
 # --------------------------------------------------------------------------- #
 # hosted (fal.ai) backend  — production, no local GPU. See README to fill in.
 # --------------------------------------------------------------------------- #
-def _render_fal(image_bytes, prompt, negative, steps, guidance, cn_scale, seed):
+def _render_fal(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
+                depth_bytes=None):
     raise HTTPException(501, "RENDER_BACKEND=fal is not configured yet — add your "
                              "fal.ai call in visualize._render_fal (README_VISUALIZE.md).")
 
@@ -239,14 +303,20 @@ def _animate(*a):
 # --------------------------------------------------------------------------- #
 @router.get("/health")
 def vhealth():
-    """Is the Visualize feature ready, and on which backend?"""
+    """Is the Visualize feature ready, and on which backend? `models` reports,
+    for each weight the render code loads, whether it is downloaded yet — so you
+    can confirm download and utilisation are in sync before the first render."""
+    models = models_status()
     return {"backend": RENDER_BACKEND, "cuda": _cuda_ok(),
-            "warm": sorted(_PIPES.keys())}
+            "warm": sorted(_PIPES.keys()),
+            "models": models,
+            "models_ready": all(m["cached"] for m in models)}
 
 
 @router.post("/render")
 async def render_ep(
     image: UploadFile = File(...),
+    depth: UploadFile = File(None),
     room_type: str = Form("living room"),
     style: str = Form("scandinavian"),
     prompt: str = Form(""),
@@ -256,15 +326,20 @@ async def render_ep(
     seed: int = Form(12345),
 ):
     """Eye-level screenshot of the 3D scene -> photorealistic furnished still.
-    The walls are locked by ControlNet (canny); `style`/`room_type` set the look."""
+    Geometry is locked by ControlNet: if a `depth` map (rendered from the 3D
+    scene) is sent, depth-ControlNet is used (best fidelity); otherwise Canny
+    edges of the screenshot. `style`/`room_type` set the look."""
     raw = await image.read()
     if not raw:
         raise HTTPException(400, "empty image")
+    depth_bytes = await depth.read() if depth is not None else None
     full_prompt = prompt.strip() or _compose_prompt(room_type, style)
     png = await _run_heavy(_render, raw, full_prompt, NEG_PROMPT, steps,
-                           guidance, control_scale, seed, what="render")
+                           guidance, control_scale, seed, depth_bytes,
+                           what="render")
     return JSONResponse({"image_base64": base64.b64encode(png).decode(),
-                         "prompt": full_prompt})
+                         "prompt": full_prompt,
+                         "conditioning": "depth" if depth_bytes else "canny"})
 
 
 @router.post("/animate")

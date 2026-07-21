@@ -15,6 +15,7 @@ export type RenderOpts = {
   style?: string
   prompt?: string
   seed?: number
+  depthDataUrl?: string   // depth map rendered from the 3D scene -> depth ControlNet
 }
 
 /** data:image/png;base64,... -> a Blob we can POST as multipart form-data. */
@@ -34,6 +35,7 @@ export async function renderImage(
 ): Promise<{ imageDataUrl: string; prompt: string }> {
   const form = new FormData()
   form.append('image', dataUrlToBlob(pngDataUrl), 'view.png')
+  if (opts.depthDataUrl) form.append('depth', dataUrlToBlob(opts.depthDataUrl), 'depth.png')
   if (opts.roomType) form.append('room_type', opts.roomType)
   if (opts.style) form.append('style', opts.style)
   if (opts.prompt) form.append('prompt', opts.prompt)

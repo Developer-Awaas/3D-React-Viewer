@@ -7,6 +7,8 @@ import Lights from './components/Lights'
 import PlanLights from './components/PlanLights'
 import Furniture from './components/Furniture'
 import Model from './components/Model'
+import VisualizeButton from './components/VisualizeButton'
+import GBufferBridge from './components/GBufferBridge'
 import ErrorBoundary from './components/ErrorBoundary'
 import CameraMarker from './components/CameraMarker'
 import CameraRig, { View } from './components/CameraRig'
@@ -482,7 +484,7 @@ export default function App() {
       <Canvas
         shadows="soft"
         dpr={[1, 2]}
-        gl={{ antialias: true, toneMappingExposure: 1.08 }}
+        gl={{ antialias: true, toneMappingExposure: 1.08, preserveDrawingBuffer: true }}
         camera={{ position: PRESETS.default.position, fov: 50 }}
         className="!absolute inset-0"
       >
@@ -589,6 +591,7 @@ export default function App() {
         )}
 
         <CameraRig view={view} />
+        <GBufferBridge />
         <OrbitControls makeDefault enableDamping target={[0, 1.5, 0]} />
       </Canvas>
 
@@ -619,6 +622,9 @@ export default function App() {
           )}
         </motion.div>
       )}
+
+      {/* ── Visualize (Beta): photoreal render of the current view (GPU backend) ── */}
+      {mode === 'plan' && pPlan && <VisualizeButton />}
 
       {/* ── desktop controls hint ── */}
       <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">

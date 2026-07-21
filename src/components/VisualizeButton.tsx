@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { renderImage, animateImage } from '../api/visualize'
+import { captureGBuffer } from '../three/gbuffer'
 import { Button } from './ui/Button'
 
 // Drishti "Visualize" (Beta): a self-contained overlay. Grabs the current 3D
@@ -32,23 +33,57 @@ export default function VisualizeButton() {
   const [img, setImg] = useState<string | null>(null)
   const [vid, setVid] = useState<string | null>(null)
   const [err, setErr] = useState<string | null>(null)
+  // style grid: same geometry, all 4 styles at once (fixed seed → fair compare)
+  const [grid, setGrid] = useState<{ style: string; img?: string; err?: string }[] | null>(null)
 
   const doRender = async () => {
     setErr(null); setVid(null)
-    const shot = captureCanvas()
+    // depth pass from the 3D scene locks geometry best; fall back to a plain
+    // screenshot (backend then uses Canny edges) if the G-buffer isn't ready.
+    const gb = captureGBuffer()
+    const shot = gb?.beauty ?? captureCanvas()
     if (!shot) {
       setErr('Could not capture the 3D view. Make sure the model is on screen.')
       return
     }
     setBusy('render')
     try {
-      const { imageDataUrl } = await renderImage(shot, { roomType: room, style })
+      const { imageDataUrl } = await renderImage(shot, {
+        roomType: room, style, depthDataUrl: gb?.depth,
+      })
       setImg(imageDataUrl)
     } catch (e: any) {
       setErr(e?.message || 'render failed')
     } finally {
       setBusy('idle')
     }
+  }
+
+  const GRID_SEED = 12345
+  const doStyleGrid = async () => {
+    setErr(null); setImg(null); setVid(null)
+    // capture ONCE so every tile shares identical geometry — only style differs
+    const gb = captureGBuffer()
+    const shot = gb?.beauty ?? captureCanvas()
+    if (!shot) {
+      setErr('Could not capture the 3D view. Make sure the model is on screen.')
+      return
+    }
+    setBusy('render')
+    setGrid(STYLES.map((s) => ({ style: s })))
+    // fire all 4; the backend semaphore runs them one at a time, each tile fills
+    // in as it finishes
+    await Promise.all(STYLES.map(async (s, i) => {
+      try {
+        const { imageDataUrl } = await renderImage(shot, {
+          style: s, roomType: room, seed: GRID_SEED, depthDataUrl: gb?.depth,
+        })
+        setGrid((g) => g && g.map((t, j) => (j === i ? { ...t, img: imageDataUrl } : t)))
+      } catch (e: any) {
+        setGrid((g) => g && g.map((t, j) => (j === i ? { ...t, err: e?.message || 'failed' } : t)))
+      }
+    }))
+    setBusy('idle')
   }
 
   const doAnimate = async () => {
@@ -113,8 +148,40 @@ export default function VisualizeButton() {
           </label>
 
           <Button className="w-full" disabled={busy !== 'idle'} onClick={doRender}>
-            {busy === 'render' ? 'Rendering… (~20–40s)' : img ? 'Re-render' : 'Render photoreal view'}
+            {busy === 'render' && !grid ? 'Rendering… (~20–40s)' : img ? 'Re-render' : 'Render photoreal view'}
           </Button>
+          <button
+            disabled={busy !== 'idle'}
+            onClick={doStyleGrid}
+            className="w-full rounded-md border border-input bg-surface/60 py-2 text-xs text-muted-foreground
+                       hover:text-foreground disabled:opacity-50"
+          >
+            {busy === 'render' && grid ? 'Rendering 4 styles…' : '▦ Compare 4 styles'}
+          </button>
+
+          {grid && (
+            <div className="grid grid-cols-2 gap-2">
+              {grid.map((t) => (
+                <button
+                  key={t.style}
+                  onClick={() => t.img && setImg(t.img)}
+                  className="group relative flex aspect-square items-center justify-center overflow-hidden
+                             rounded-lg border border-white/10 bg-surface/40 text-[10px] text-muted-foreground"
+                >
+                  {t.img
+                    ? <img src={t.img} alt={t.style} className="h-full w-full object-cover" />
+                    : t.err
+                      ? <span className="px-1 text-center text-red-300">⚠ {t.style}</span>
+                      : <span className="animate-pulse">{t.style}…</span>}
+                  {t.img && (
+                    <span className="absolute inset-x-0 bottom-0 bg-black/50 py-0.5 text-center capitalize text-white/90">
+                      {t.style}
+                    </span>
+                  )}
+                </button>
+              ))}
+            </div>
+          )}
 
           {img && (
             <div className="flex flex-col gap-2">
