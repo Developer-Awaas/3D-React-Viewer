@@ -19,8 +19,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
 
+import area_report
+import area_statement
+import boq
 import cad_vector
 import db
+import pipeline
+import plan_health
+import vastu
 import openings
 import pdf_vector
 import scene_builder
@@ -35,6 +41,19 @@ try:
 except Exception as _e:          # torch/CubiCasa not installed
     perception = None
     _PERCEPTION_ERR = str(_e)
+
+# Pluggable ML reader for the cascade: CubiCasa (perception) by default, or
+# TF2DeepFloorplan when ML_READER=tf2 (the commercial-viable model). Both expose
+# detections(image_bytes) -> (segs, boxes, w, h), so the cascade is unchanged.
+_ML_READER_NAME = os.getenv("ML_READER", "cubicasa").lower()
+if _ML_READER_NAME in ("tf2", "tf2deepfloorplan", "deepfloorplan"):
+    try:
+        import tf2_floorplan as ml_reader
+    except Exception as _e:
+        ml_reader = None
+        print(f"[ml] TF2DeepFloorplan not available: {_e}")
+else:
+    ml_reader = perception
 
 BETA_MSG = ("This looks like a photo or scanned plan - that engine is in beta "
             "and not enabled on this server. Upload a CAD-exported PDF "
@@ -316,24 +335,57 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
             raise HTTPException(422, f"CAD parse failed: {e}")
     raw, is_pdf = await _read_upload_bytes(image)
     if is_pdf and await run_in_threadpool(pdf_vector.is_vector_plan, raw):
+        # VECTOR-FIRST / ML-FALLBACK cascade: run the fast, exact vector parser;
+        # keep its result if healthy. Only when it's unhealthy (or failed) do we
+        # rasterize + run the ML reader, and keep whichever scores higher. A good
+        # vector reading is never replaced -> output can only get better.
         try:
-            return await _run_heavy(pdf_vector.parse, raw, width_ft,
-                                    pdf_vector.wing_arg(wing), what="vector parse")
+            vscene = await _run_heavy(pdf_vector.parse, raw, width_ft,
+                                      pdf_vector.wing_arg(wing), what="vector parse")
+            vscene.setdefault("meta", {})["reader"] = "vector"
         except ValueError as e:
-            raise HTTPException(422, f"vector PDF parse failed: {e}")
+            vscene, vec_err = None, str(e)
+        else:
+            vec_err = None
+        if plan_health.is_healthy(vscene):
+            return vscene
+        if ml_reader is not None:        # ML reader available -> try to do better
+            try:
+                png = await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
+                ml_scene = await _ml_scene_from_png(png, width_ft)
+                best = plan_health.better_scene(vscene, ml_scene)
+                if best is not None:
+                    return best
+            except Exception as e:
+                print(f"[cascade] ML fallback skipped: {type(e).__name__}: {e}")
+        if vscene is not None:
+            return vscene               # flagged but it's the best we have
+        raise HTTPException(422, f"vector PDF parse failed: {vec_err}")
     if is_pdf:                           # flat PDF -> raster path
         raw = await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
-    if perception is None:               # vector-only deploy: photos are beta
+    if ml_reader is None:                # vector-only deploy: photos are beta
+        raise HTTPException(503, BETA_MSG)
+    return await _ml_scene_from_png(raw, width_ft)
+
+
+async def _ml_scene_from_png(png_bytes, width_ft):
+    """Run the selected ML reader (CubiCasa or TF2DeepFloorplan, per ML_READER)
+    on a rasterized plan and build a scene. Model-agnostic: the cascade doesn't
+    care which model produced it. Raises HTTPException(503) if the model is
+    unavailable/broken so the caller can fall back."""
+    if ml_reader is None:
         raise HTTPException(503, BETA_MSG)
     try:
-        segs, boxes, w, h = await _run_heavy(perception.detections, raw,
+        segs, boxes, w, h = await _run_heavy(ml_reader.detections, png_bytes,
                                              what="detection")
     except HTTPException:
         raise
     except Exception as e:               # model/env broken -> guidance, not a 500
         raise HTTPException(503, f"{BETA_MSG} ({type(e).__name__})")
     segs, ops = openings.attach_openings(segs, boxes, openings.default_tol(w))
-    return scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
+    scene = scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
+    scene.setdefault("meta", {})["reader"] = "ml_fallback"
+    return scene
 
 
 def _check_width_ft(width_ft):
@@ -346,9 +398,14 @@ def _check_width_ft(width_ft):
 @app.post("/scene")
 async def scene(image: UploadFile = File(...),
                 width_ft: float = Query(scene_builder.DEFAULT_WIDTH_FT, gt=0, le=2000),
+                loading_factor: float = Query(1.30, gt=1.0, le=2.0),
+                north_deg: float = Query(0.0, ge=0.0, lt=360.0),
                 wing: str = "largest"):
-    """Detect walls and return them as canonical scene.json (feet, z-up).
-    wing: which building block to build when a sheet holds several ("largest" or 0,1,...)."""
+    """Detect walls and return them as canonical scene.json (feet, z-up), plus a
+    RERA-style area statement (carpet / built-up / super built-up) and a Vastu
+    report. wing: which building block when a sheet holds several.
+    loading_factor: developer's super-built-up loading (India typ. 1.25-1.35).
+    north_deg: compass North on the sheet, degrees clockwise from up (default 0)."""
     _check_width_ft(width_ft)
     fname = getattr(image, "filename", None)
     t0 = time.perf_counter()
@@ -364,10 +421,55 @@ async def scene(image: UploadFile = File(...),
                      duration_ms=int((time.perf_counter() - t0) * 1000),
                      error=f"{type(e).__name__}: {e}")
         raise HTTPException(500, f"scene build failed: {e}")
+    # RERA-style area statement (pure geometry) — never let it break the scene
+    try:
+        s["area_statement"] = area_statement.compute_area_statement(s, loading_factor)
+    except Exception as e:
+        print(f"[area] skipped: {type(e).__name__}: {e}")
+    # Vastu report (pure geometry; guidance only) — never breaks the scene
+    try:
+        s["vastu"] = vastu.analyze(s, north_deg)
+    except Exception as e:
+        print(f"[vastu] skipped: {type(e).__name__}: {e}")
+    # rough BOQ + cost estimate (pure geometry) — never breaks the scene
+    try:
+        s["boq"] = boq.compute_boq(s)
+    except Exception as e:
+        print(f"[boq] skipped: {type(e).__name__}: {e}")
+    # streamlined analysis block: scored + reviewable value extraction, the one
+    # object a dashboard/reviewer reads (also logged to Supabase below)
+    try:
+        s["analysis"] = pipeline.analyze(s, loading_factor)
+    except Exception as e:
+        print(f"[pipeline] analyze skipped: {type(e).__name__}: {e}")
     # fire-and-forget corpus log (no-op unless SUPABASE_URL/KEY are set)
     db.log_parse(s, filename=fname, width_ft=width_ft,
                  duration_ms=int((time.perf_counter() - t0) * 1000), ok=True)
     return JSONResponse(s)
+
+
+@app.post("/area-statement.xlsx")
+async def area_statement_xlsx(image: UploadFile = File(...),
+                             width_ft: float = Query(scene_builder.DEFAULT_WIDTH_FT, gt=0, le=2000),
+                             loading_factor: float = Query(1.30, gt=1.0, le=2.0),
+                             project: str = Query(""),
+                             wing: str = "largest"):
+    """Parse the plan and return a downloadable RERA area-statement spreadsheet."""
+    _check_width_ft(width_ft)
+    try:
+        s = await _scene_from_upload(image, width_ft, wing)
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"scene build failed: {e}")
+    st = area_statement.compute_area_statement(s, loading_factor)
+    plan_name = getattr(image, "filename", "") or ""
+    xlsx = await run_in_threadpool(area_report.build_area_xlsx, st, project,
+                                   plan_name, time.strftime("%Y-%m-%d"))
+    return Response(
+        content=xlsx,
+        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        headers={"Content-Disposition": 'attachment; filename="area-statement.xlsx"'})
 
 
 @app.post("/scene.glb")

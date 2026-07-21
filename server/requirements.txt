@@ -24,3 +24,4 @@ mapbox-earcut==2.0.0   # triangulates polygon walls (trimesh.extrude_polygon)
 # PDF -> image (accept PDF uploads)
 pymupdf==1.28.0
 httpx==0.28.1
+openpyxl==3.1.5

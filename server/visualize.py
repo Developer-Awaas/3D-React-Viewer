@@ -141,6 +141,10 @@ def _require_local():
 _CONTROLNETS = {
     "canny": ("CONTROLNET_MODEL", "diffusers/controlnet-canny-sdxl-1.0"),
     "depth": ("DEPTH_CONTROLNET", "diffusers/controlnet-depth-sdxl-1.0"),
+    # segmentation = the moat: Drishti renders a perfect surface-class map from
+    # its named meshes and feeds it here. Community SDXL seg ControlNet; override
+    # via SEG_CONTROLNET if you use another.
+    "seg": ("SEG_CONTROLNET", "SargeZT/sdxl-controlnet-seg"),
 }
 
 
@@ -156,8 +160,10 @@ def required_models(include_video=False):
          "variant": "fp16"},
     ]
     for ctype, (env, default) in _CONTROLNETS.items():
+        # fp16 only — the loader casts to fp16 anyway; pulling the fp32 copies too
+        # bloated the download ~5x (15 GB -> ~2.5 GB per ControlNet)
         models.append({"name": f"controlnet_{ctype}",
-                       "id": os.getenv(env, default), "variant": None})
+                       "id": os.getenv(env, default), "variant": "fp16"})
     if include_video:
         models.append({"name": "svd",
                        "id": os.getenv("SVD_MODEL",
@@ -189,20 +195,35 @@ def _prep_control(image, max_side=1024):
     return image
 
 
-def _load_sdxl(control="canny"):
-    key = f"sdxl_{control}"
+def _one_controlnet(control):
+    import torch
+    from diffusers import ControlNetModel
+    env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
+    cn_id = os.getenv(env, default)
+    try:                              # prefer the fp16 files (half the disk/VRAM)
+        return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16,
+                                               variant="fp16")
+    except Exception:                 # repo has no fp16 variant -> default files
+        return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16)
+
+
+def _load_sdxl(controls=("canny",)):
+    """Load an SDXL+ControlNet pipeline for ONE or MANY control types. Passing
+    e.g. ('depth','seg') builds a multi-ControlNet (depth locks volume, seg locks
+    what each surface is)."""
+    controls = tuple(controls)
+    key = "sdxl_" + "_".join(controls)
     if key in _PIPES:
         return _PIPES[key]
     _require_local()
-    _evict(key)                       # one control pipeline on the 12 GB card at a time
+    _evict(key)                       # one pipeline on the 12 GB card at a time
     import torch
-    from diffusers import ControlNetModel, StableDiffusionXLControlNetPipeline
-    env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
-    cn = ControlNetModel.from_pretrained(os.getenv(env, default),
-                                         torch_dtype=torch.float16)
+    from diffusers import StableDiffusionXLControlNetPipeline
+    cns = [_one_controlnet(c) for c in controls]
+    controlnet = cns[0] if len(cns) == 1 else cns   # list -> MultiControlNet
     pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
         os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
-        controlnet=cn, torch_dtype=torch.float16, use_safetensors=True,
+        controlnet=controlnet, torch_dtype=torch.float16, use_safetensors=True,
         variant="fp16")
     pipe.enable_model_cpu_offload()   # only the active submodule sits on GPU -> fits 12 GB
     try:
@@ -214,21 +235,36 @@ def _load_sdxl(control="canny"):
 
 
 def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
-                  depth_bytes=None):
+                  depth_bytes=None, seg_bytes=None):
     import torch
     from PIL import Image
-    # depth map from the 3D scene locks geometry best; fall back to Canny edges
+    # Build the control stack from whatever maps the frontend rendered:
+    # depth (3D volume) + seg (surface classes) = the moat; else Canny fallback.
+    controls, images, scales = [], [], []
     if depth_bytes:
-        control = _prep_control(Image.open(io.BytesIO(depth_bytes)))
-        ctype = "depth"
-    else:
-        control = _canny(image_bytes)
-        ctype = "canny"
-    pipe = _load_sdxl(ctype)
+        controls.append("depth")
+        images.append(_prep_control(Image.open(io.BytesIO(depth_bytes))))
+        scales.append(float(cn_scale))
+    if seg_bytes:
+        controls.append("seg")
+        images.append(_prep_control(Image.open(io.BytesIO(seg_bytes))))
+        scales.append(float(cn_scale) * 0.8)     # seg guides, depth leads
+    if not controls:
+        controls, images, scales = ["canny"], [_canny(image_bytes)], [float(cn_scale)]
+
+    try:
+        pipe = _load_sdxl(tuple(controls))
+    except Exception:
+        if "seg" in controls:                    # seg model missing -> drop it,
+            return _render_local(image_bytes, prompt, negative, steps, guidance,
+                                 cn_scale, seed, depth_bytes=depth_bytes)
+        raise
     gen = torch.Generator(device="cpu").manual_seed(int(seed))
-    out = pipe(prompt=prompt, negative_prompt=negative, image=control,
+    img = images[0] if len(images) == 1 else images
+    scl = scales[0] if len(scales) == 1 else scales
+    out = pipe(prompt=prompt, negative_prompt=negative, image=img,
                num_inference_steps=int(steps), guidance_scale=float(guidance),
-               controlnet_conditioning_scale=float(cn_scale), generator=gen)
+               controlnet_conditioning_scale=scl, generator=gen)
     buf = io.BytesIO()
     out.images[0].save(buf, format="PNG")
     return buf.getvalue()
@@ -280,7 +316,7 @@ def _animate_local(image_bytes, motion, fps, seed, frames):
 # hosted (fal.ai) backend  — production, no local GPU. See README to fill in.
 # --------------------------------------------------------------------------- #
 def _render_fal(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
-                depth_bytes=None):
+                depth_bytes=None, seg_bytes=None):
     raise HTTPException(501, "RENDER_BACKEND=fal is not configured yet — add your "
                              "fal.ai call in visualize._render_fal (README_VISUALIZE.md).")
 
@@ -317,6 +353,7 @@ def vhealth():
 async def render_ep(
     image: UploadFile = File(...),
     depth: UploadFile = File(None),
+    seg: UploadFile = File(None),
     room_type: str = Form("living room"),
     style: str = Form("scandinavian"),
     prompt: str = Form(""),
@@ -326,20 +363,36 @@ async def render_ep(
     seed: int = Form(12345),
 ):
     """Eye-level screenshot of the 3D scene -> photorealistic furnished still.
-    Geometry is locked by ControlNet: if a `depth` map (rendered from the 3D
-    scene) is sent, depth-ControlNet is used (best fidelity); otherwise Canny
-    edges of the screenshot. `style`/`room_type` set the look."""
+    Geometry is locked by ControlNet: `depth` (3D volume) + `seg` (surface
+    classes = the moat) rendered from the scene, else Canny edges of the
+    screenshot. `style`/`room_type` set the look."""
     raw = await image.read()
     if not raw:
         raise HTTPException(400, "empty image")
     depth_bytes = await depth.read() if depth is not None else None
+    seg_bytes = await seg.read() if seg is not None else None
     full_prompt = prompt.strip() or _compose_prompt(room_type, style)
+    ctype = "+".join([c for c, b in (("depth", depth_bytes), ("seg", seg_bytes)) if b]) or "canny"
+
+    # cache lookup BEFORE the GPU semaphore: a repeat of the same view+style+seed
+    # returns instantly and never queues behind a live render
+    import render_cache
+    ckey = render_cache.make_key((depth_bytes or b"") + (seg_bytes or b"") or raw,
+                                 full_prompt, NEG_PROMPT,
+                                 steps, guidance, control_scale, seed, ctype)
+    hit = render_cache.get(ckey)
+    if hit is not None:
+        return JSONResponse({"image_base64": base64.b64encode(hit).decode(),
+                             "prompt": full_prompt, "conditioning": ctype,
+                             "cached": True})
+
     png = await _run_heavy(_render, raw, full_prompt, NEG_PROMPT, steps,
-                           guidance, control_scale, seed, depth_bytes,
+                           guidance, control_scale, seed, depth_bytes, seg_bytes,
                            what="render")
+    render_cache.put(ckey, png)
     return JSONResponse({"image_base64": base64.b64encode(png).decode(),
-                         "prompt": full_prompt,
-                         "conditioning": "depth" if depth_bytes else "canny"})
+                         "prompt": full_prompt, "conditioning": ctype,
+                         "cached": False})
 
 
 @router.post("/animate")

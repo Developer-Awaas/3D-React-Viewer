@@ -20,7 +20,23 @@ export type SceneMeta = {
   warnings: string[]
 }
 
-export type Room = { id: string; x: number; y: number; area_sqft: number }
+export type Room = { id: string; x: number; y: number; area_sqft: number; type?: string }
+
+export type AreaPair = { sqft: number; sqm: number }
+export type AreaStatement = {
+  carpet_area: AreaPair
+  built_up_area: AreaPair
+  super_built_up_area: AreaPair
+  wall_and_circulation?: AreaPair
+  loading_factor: number
+  efficiency_pct: number
+}
+
+export type VastuSummary = {
+  score: number | null
+  rooms_scored: number
+  verdicts: { room: string; type: string; zone: string; verdict: string; advice?: string }[]
+}
 
 export type BuiltPlan = {
   meta: SceneMeta
@@ -28,6 +44,9 @@ export type BuiltPlan = {
   doors: number
   windows: number
   rooms: Room[]
+  areaStatement?: AreaStatement
+  vastu?: VastuSummary
+  costInr?: number          // BOQ total incl. labour (budgeting estimate)
 }
 
 async function post(path: string, file: File, q: URLSearchParams, signal?: AbortSignal): Promise<Response> {
@@ -73,5 +92,26 @@ export async function buildPlan(file: File, widthFt?: number, wing?: number): Pr
     doors: ops.filter((o) => o.type === 'door').length,
     windows: ops.filter((o) => o.type === 'window').length,
     rooms: (scene.rooms ?? []) as Room[],
+    areaStatement: scene.area_statement as AreaStatement | undefined,
+    vastu: scene.vastu as VastuSummary | undefined,
+    costInr: scene.boq?.cost_inr?.total_with_labour as number | undefined,
   }
+}
+
+/** Download the RERA area-statement spreadsheet for a plan (re-parses server-side). */
+export async function downloadAreaStatement(
+  file: File, widthFt?: number, loadingFactor = 1.3, project = '',
+): Promise<void> {
+  const q = new URLSearchParams()
+  if (widthFt && widthFt > 0) q.set('width_ft', String(widthFt))
+  if (loadingFactor) q.set('loading_factor', String(loadingFactor))
+  if (project) q.set('project', project)
+  const res = await post('/area-statement.xlsx', file, q, AbortSignal.timeout(BUILD_TIMEOUT_MS))
+  const blob = await res.blob()
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'area-statement.xlsx'
+  a.click()
+  URL.revokeObjectURL(url)
 }

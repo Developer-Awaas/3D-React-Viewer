@@ -35,3 +35,4 @@ public/flat.glb
 public/from_schema.glb
 public/rooms3d.glb
 public/typical_floor.glb
+server/.render_cache/

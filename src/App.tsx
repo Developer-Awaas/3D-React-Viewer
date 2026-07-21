@@ -1,4 +1,5 @@
-import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as THREE from 'three'
 import { Canvas } from '@react-three/fiber'
 import { OrbitControls, Environment, ContactShadows, Sky, useGLTF } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
@@ -20,7 +21,7 @@ import { FLOOR_MATERIALS, FloorKey } from './materials'
 import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
-import { buildPlan, type BuiltPlan } from './api/scene'
+import { buildPlan, downloadAreaStatement, type BuiltPlan } from './api/scene'
 import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
 import LoadingScreen from './components/LoadingScreen'
 import LandingHero from './landing/LandingHero'
@@ -70,6 +71,41 @@ function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
     className="h-9 w-full rounded-md border border-input bg-surface/60 px-3 text-sm text-foreground
                placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
 }
+// Hip roof fitted to the building footprint: ridge along the LONG axis, sloped
+// trapezoid sides + triangular hip ends, plus a thin eave slab. Replaces the
+// old 4-sided cone, which ballooned into a huge pyramid on elongated plans.
+function HipRoof({ center, w, d }: { center: [number, number, number]; w: number; d: number }) {
+  const rise = Math.min(w, d) * 0.35
+  const geom = useMemo(() => {
+    const hw = w / 2, hd = d / 2
+    const alongX = w >= d
+    const r = (Math.max(w, d) - Math.min(w, d)) / 2       // ridge half-length
+    type V = [number, number, number]
+    const R1: V = alongX ? [-r, rise, 0] : [0, rise, -r]
+    const R2: V = alongX ? [r, rise, 0] : [0, rise, r]
+    const A: V = [-hw, 0, -hd], B: V = [hw, 0, -hd]
+    const C: V = [hw, 0, hd], D: V = [-hw, 0, hd]
+    const tris: V[] = alongX
+      ? [A, B, R2, A, R2, R1, C, D, R1, C, R1, R2, D, A, R1, B, C, R2]
+      : [A, D, R2, A, R2, R1, C, B, R1, C, R1, R2, B, A, R1, D, C, R2]
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3))
+    g.computeVertexNormals()
+    return g
+  }, [w, d, rise])
+  return (
+    <group position={center}>
+      <mesh position={[0, 0.04, 0]} castShadow>
+        <boxGeometry args={[w, 0.08, d]} />
+        <meshStandardMaterial color="#6b5545" roughness={0.9} />
+      </mesh>
+      <mesh position={[0, 0.08, 0]} geometry={geom} castShadow>
+        <meshStandardMaterial color="#7d3b2e" roughness={0.85} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
 function Upload({ onFile, accept, children }: { onFile: (f: File) => void; accept: string; children: ReactNode }) {
   return (
     <motion.label whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={{ duration: 0.15 }}
@@ -242,6 +278,8 @@ export default function App() {
   const lastFrame = useRef<FrameInfo | null>(null)
   const [frame, setFrame] = useState<FrameInfo | null>(null)
   const [roofOn, setRoofOn] = useState(false)  // R toggles a roof slab over the plan
+  const [areaBusy, setAreaBusy] = useState(false)
+  const [currentRoomType, setCurrentRoomType] = useState<string | undefined>(undefined)
   const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
     setFrame(info)
@@ -259,6 +297,7 @@ export default function App() {
     const room = pPlan?.rooms?.[n]
     if (f && room) {
       setView(roomView(room, f, pPlan!.rooms.filter((_, i) => i !== n)))
+      setCurrentRoomType(room.type)   // so Visualize can auto-match the room
     }
   }, [pPlan])
 
@@ -536,30 +575,16 @@ export default function App() {
                 </ErrorBoundary>
               </Suspense>
             )}
-            {/* roof slab (press R): a low pyramid cap over the whole envelope,
-                sized to the measured model box. Off by default so the rooms
-                stay visible; on = see the finished building from outside. */}
-            {pPlan && frame && roofOn && (() => {
-              const [cx, , cz] = frame.center
-              const top = frame.position[1] + frame.size[1]
-              const w = frame.size[0] * 1.06
-              const d = frame.size[2] * 1.06
-              const rise = Math.min(w, d) * 0.18
-              return (
-                <group position={[cx, top, cz]}>
-                  {/* eave overhang */}
-                  <mesh position={[0, 0.04, 0]} castShadow>
-                    <boxGeometry args={[w, 0.08, d]} />
-                    <meshStandardMaterial color="#6b5545" roughness={0.9} />
-                  </mesh>
-                  {/* hipped cap */}
-                  <mesh position={[0, 0.08 + rise / 2, 0]} rotation={[0, Math.PI / 4, 0]} castShadow>
-                    <coneGeometry args={[Math.max(w, d) * 0.62, rise, 4]} />
-                    <meshStandardMaterial color="#7d3b2e" roughness={0.85} />
-                  </mesh>
-                </group>
-              )
-            })()}
+            {/* roof (press R): a HIP roof fitted to the building's footprint —
+                ridge along the long axis, 45°-style hip ends, slight eave
+                overhang. Off by default so the rooms stay visible. */}
+            {pPlan && frame && roofOn && (
+              <HipRoof
+                center={[frame.center[0], frame.position[1] + frame.size[1], frame.center[2]]}
+                w={frame.size[0] * 1.05}
+                d={frame.size[2] * 1.05}
+              />
+            )}
             {/* walk-inside beacons: one per detected room — click to step in */}
             {pPlan && frame && pPlan.rooms.map((r, i) => (
               <CameraMarker key={r.id}
@@ -604,6 +629,64 @@ export default function App() {
         </div>
       )}
 
+      {/* ── RERA area statement card (top-right) ── */}
+      {mode === 'plan' && pPlan?.areaStatement && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
+          style={{ background: 'rgba(15, 23, 42, 0.6)' }}
+          className="absolute right-5 top-5 z-20 w-56 rounded-2xl border border-white/10 p-4 text-xs
+                     text-white/80 shadow-2xl backdrop-blur-md"
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-semibold text-white">Area statement</span>
+            <span className="text-[10px] text-neon">RERA</span>
+          </div>
+          {([
+            ['Carpet', pPlan.areaStatement.carpet_area],
+            ['Built-up', pPlan.areaStatement.built_up_area],
+            ['Super built-up', pPlan.areaStatement.super_built_up_area],
+          ] as const).map(([label, pair]) => (
+            <div key={label} className="flex items-baseline justify-between py-0.5">
+              <span className="text-white/60">{label}</span>
+              <span className="font-medium text-white">
+                {pair.sqft.toLocaleString()} <span className="text-white/40">sqft</span>
+              </span>
+            </div>
+          ))}
+          <div className="mt-1 flex items-baseline justify-between border-t border-white/10 pt-1.5 text-white/60">
+            <span>Efficiency</span><span>{pPlan.areaStatement.efficiency_pct}%</span>
+          </div>
+          {pPlan.vastu?.score != null && (
+            <div className="flex items-baseline justify-between py-0.5 text-white/60">
+              <span>Vastu <span className="text-white/30">({pPlan.vastu.rooms_scored} rooms)</span></span>
+              <span className={pPlan.vastu.score >= 70 ? 'text-emerald-300' : pPlan.vastu.score >= 45 ? 'text-amber-300' : 'text-red-300'}>
+                {pPlan.vastu.score}/100
+              </span>
+            </div>
+          )}
+          {pPlan.costInr != null && pPlan.costInr > 0 && (
+            <div className="flex items-baseline justify-between py-0.5 text-white/60">
+              <span>Est. cost <span className="text-white/30">(masonry+finish)</span></span>
+              <span className="text-white">₹{Math.round(pPlan.costInr / 1000).toLocaleString()}k</span>
+            </div>
+          )}
+          <button
+            disabled={areaBusy || !pFile}
+            onClick={async () => {
+              if (!pFile) return
+              setAreaBusy(true)
+              try { await downloadAreaStatement(pFile, pWidthFt || undefined, pPlan.areaStatement!.loading_factor) }
+              catch { /* surfaced by the button label reset */ }
+              finally { setAreaBusy(false) }
+            }}
+            className="mt-3 w-full rounded-lg border border-neon/40 bg-neon/10 py-2 text-xs font-medium
+                       text-white hover:border-neon/70 hover:bg-neon/20 disabled:opacity-50"
+          >
+            {areaBusy ? 'Preparing…' : '⬇ Download Excel'}
+          </button>
+        </motion.div>
+      )}
+
       {/* ── meta HUD: the built plan's numbers, landing-style glass pill ── */}
       {mode === 'plan' && pPlan && (
         <motion.div
@@ -624,7 +707,7 @@ export default function App() {
       )}
 
       {/* ── Visualize (Beta): photoreal render of the current view (GPU backend) ── */}
-      {mode === 'plan' && pPlan && <VisualizeButton />}
+      {mode === 'plan' && pPlan && <VisualizeButton roomType={currentRoomType} />}
 
       {/* ── desktop controls hint ── */}
       <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">

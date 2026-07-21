@@ -99,4 +99,5 @@ def test_flat_plan_gets_geometric_doors_and_rooms():
     assert scene["meta"]["plan_depth_ft"] == pytest.approx(45.0, abs=1.0)
     doors = [o for o in scene["openings"] if o["type"] == "door"]
     assert len(doors) >= 3           # geometric doors recovered (was 0)
-    assert len(scene["rooms"]) >= 2  # sealing the doorways separated rooms
+    # envelope sealing bridges fragmented walls -> more rooms enclose (was 2)
+    assert len(scene["rooms"]) >= 4

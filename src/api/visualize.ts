@@ -16,6 +16,7 @@ export type RenderOpts = {
   prompt?: string
   seed?: number
   depthDataUrl?: string   // depth map rendered from the 3D scene -> depth ControlNet
+  segDataUrl?: string     // segmentation map (surface classes) -> seg ControlNet (moat)
 }
 
 /** data:image/png;base64,... -> a Blob we can POST as multipart form-data. */
@@ -36,6 +37,7 @@ export async function renderImage(
   const form = new FormData()
   form.append('image', dataUrlToBlob(pngDataUrl), 'view.png')
   if (opts.depthDataUrl) form.append('depth', dataUrlToBlob(opts.depthDataUrl), 'depth.png')
+  if (opts.segDataUrl) form.append('seg', dataUrlToBlob(opts.segDataUrl), 'seg.png')
   if (opts.roomType) form.append('room_type', opts.roomType)
   if (opts.style) form.append('style', opts.style)
   if (opts.prompt) form.append('prompt', opts.prompt)

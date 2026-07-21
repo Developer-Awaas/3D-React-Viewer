@@ -1,7 +1,13 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { renderImage, animateImage } from '../api/visualize'
 import { captureGBuffer } from '../three/gbuffer'
 import { Button } from './ui/Button'
+
+// detected room type (bedroom/kitchen/…) -> the Visualize room dropdown value
+const TYPE_TO_ROOM: Record<string, string> = {
+  bedroom: 'bedroom', kitchen: 'kitchen', bathroom: 'bathroom',
+  living: 'living room', dining: 'living room', study: 'office',
+}
 
 // Drishti "Visualize" (Beta): a self-contained overlay. Grabs the current 3D
 // view from the WebGL <canvas>, sends it to the backend for a photoreal render
@@ -25,10 +31,15 @@ function captureCanvas(): string | null {
   }
 }
 
-export default function VisualizeButton() {
+export default function VisualizeButton({ roomType }: { roomType?: string }) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState<'idle' | 'render' | 'animate'>('idle')
   const [room, setRoom] = useState<string>('living room')
+  // when you walk into a detected room, auto-match the render's room type
+  useEffect(() => {
+    const mapped = roomType && TYPE_TO_ROOM[roomType]
+    if (mapped) setRoom(mapped)
+  }, [roomType])
   const [style, setStyle] = useState<string>('scandinavian')
   const [img, setImg] = useState<string | null>(null)
   const [vid, setVid] = useState<string | null>(null)
@@ -49,7 +60,7 @@ export default function VisualizeButton() {
     setBusy('render')
     try {
       const { imageDataUrl } = await renderImage(shot, {
-        roomType: room, style, depthDataUrl: gb?.depth,
+        roomType: room, style, depthDataUrl: gb?.depth, segDataUrl: gb?.seg,
       })
       setImg(imageDataUrl)
     } catch (e: any) {

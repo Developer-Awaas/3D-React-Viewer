@@ -16,6 +16,8 @@ column box = 12 in, else PPF env, else the width_ft parameter.
 import math
 import os
 
+import furnish
+
 COL_FT = 1.0                 # standard column = 12 in = 1 ft (locked decision)
 NORM_PPX = 50.9              # raster px per ft (keeps morphology physical)
 BORDER_MAXLEN_PT = 900       # drop page-border / site-boundary mega-lines
@@ -97,6 +99,10 @@ def _segs(drawings, want, maxlen=BORDER_MAXLEN_PT):
 
 
 TEXT_MED_MAXLEN_PT = 5.0     # a layer whose MEDIAN segment is shorter = outlined text
+WALL_MINLEN_PT = 8.0         # a real wall line is longer than this; below = brick
+                             # hatch / outlined text (median can be ~0.2 pt)
+WALL_MINKEEP = 8             # need this many long lines to treat a hatch-heavy
+                             # layer as walls (else it is genuinely just text)
 
 
 def _filter_text_layers(drawings, want, warnings):
@@ -113,17 +119,34 @@ def _filter_text_layers(drawings, want, warnings):
         if want(d["lname"]):
             by_layer.setdefault(d["lname"], []).append(d)
     segs, dropped = [], set()
+    # Pass 1: proper wall layers (median line is feet-long = real walls).
+    short = []
     for name, ds in sorted(by_layer.items()):
         ls = _segs(ds, lambda n: True)
         if not ls:
             continue
         med = statistics.median(math.hypot(x2 - x1, y2 - y1) for x1, y1, x2, y2 in ls)
-        if med < TEXT_MED_MAXLEN_PT:
+        if med >= TEXT_MED_MAXLEN_PT:
+            segs += ls
+        else:
+            short.append((name, ls, med))
+    have_proper = bool(segs)
+    # Pass 2: short-median layers are brick HATCH or outlined text. Recover the
+    # LONG lines (real walls) ONLY when there is NO proper wall layer — else those
+    # long strokes are hatch/projections/decoys that would over-extend the plan
+    # (e.g. FLOOR PLAN has a real 'ar wall' AND a hatch 'wall'; use 'ar wall').
+    for name, ls, med in short:
+        long_ls = [s for s in ls
+                   if math.hypot(s[2] - s[0], s[3] - s[1]) >= WALL_MINLEN_PT]
+        if not have_proper and len(long_ls) >= WALL_MINKEEP:
+            segs += long_ls
+            warnings.append(f"layer '{name}': brick-hatch walls - kept "
+                            f"{len(long_ls)} wall lines, dropped "
+                            f"{len(ls) - len(long_ls)} hatch/text strokes")
+        else:
             dropped.add(name)
             warnings.append(f"layer '{name}' skipped: text-like "
                             f"(median seg {med:.1f} pt, n={len(ls)})")
-        else:
-            segs += ls
     return segs, dropped
 
 
@@ -485,6 +508,73 @@ def _column_rects(drawings):
     return out
 
 
+_DIMPAIR = None
+
+
+def _room_dim_scale(page, drawings, warnings):
+    """Scale from room-DIMENSION text like 9'0"X12'0" (a W x H pair written
+    inside a room). Very common on Indian/CAD residential plans that carry no
+    column layer and no on-line dimension text. For each such label we measure
+    the room it sits in (nearest walls in each direction) and vote
+    extent_points / stated_feet; the true scale is where the votes cluster.
+    Returns pt/ft or None. Scale-free: uses only ratios."""
+    import re
+    import statistics
+    import fitz
+    global _DIMPAIR
+    if _DIMPAIR is None:
+        _DIMPAIR = re.compile(r"(\d+)'(\d+)?\"?[xX×](\d+)'(\d+)?\"?")
+    mat = page.rotation_matrix
+    toks = []                             # (cx, cy, w_ft, h_ft) in points
+    for w in page.get_text("words"):
+        m = _DIMPAIR.search((w[4] or "").replace(" ", ""))
+        if not m:
+            continue
+        wf = int(m.group(1)) + int(m.group(2) or 0) / 12.0
+        hf = int(m.group(3)) + int(m.group(4) or 0) / 12.0
+        if not (3 <= wf <= 60 and 3 <= hf <= 60):
+            continue
+        r = (fitz.Rect(w[:4]) * mat).normalize()
+        toks.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, wf, hf))
+    if len(toks) < 2:
+        return None
+
+    H, V = [], []                         # H: (y, x0, x1); V: (x, y0, y1)
+    for d in drawings:
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            if abs(a.y - b.y) < 1.5 and abs(a.x - b.x) > 3:
+                H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
+            elif abs(a.x - b.x) < 1.5 and abs(a.y - b.y) > 3:
+                V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
+
+    votes = []
+    for cx, cy, wf, hf in toks:
+        above = max((y for y, x0, x1 in H if y < cy and x0 - 2 <= cx <= x1 + 2), default=None)
+        below = min((y for y, x0, x1 in H if y > cy and x0 - 2 <= cx <= x1 + 2), default=None)
+        left = max((x for x, y0, y1 in V if x < cx and y0 - 2 <= cy <= y1 + 2), default=None)
+        right = min((x for x, y0, y1 in V if x > cx and y0 - 2 <= cy <= y1 + 2), default=None)
+        vext = (below - above) if (above is not None and below is not None) else None
+        hext = (right - left) if (left is not None and right is not None) else None
+        # room orientation is unknown (and pages rotate), so try both pairings;
+        # correct ppf clusters, wrong ones scatter and get trimmed
+        for ext, dim in ((hext, wf), (vext, hf), (hext, hf), (vext, wf)):
+            if ext and dim and ext / dim > 2:
+                votes.append(ext / dim)
+    if len(votes) < 2:
+        return None
+    med = statistics.median(votes)
+    good = [v for v in votes if 0.82 * med <= v <= 1.18 * med]
+    if len(good) < 2:
+        return None
+    ppf = statistics.median(good)
+    warnings.append(f"scale from room-dimension text (WxH): {ppf:.2f} pt/ft "
+                    f"({len(good)} agreeing votes)")
+    return ppf
+
+
 def _scale_ppf(col_rects, bbox_w_pt, width_ft):
     """Points-per-foot. Priority: dominant column box (=1 ft) > PPF env > width_ft."""
     if col_rects:
@@ -791,10 +881,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     text_ppf, _tv, dim_keys = _text_scale(page, drawings, warnings)
     if ppf_hint:
         text_ppf = None
+    # room-dimension text (9'0"X12'0") — the scale signal on plans with no column
+    # layer and no on-line dimensions (very common on internet/CAD plans)
+    room_ppf = None
+    if not ppf_hint and not text_ppf:
+        room_ppf = _room_dim_scale(page, drawings, warnings)
 
     mode = "layers"
     if len(struct) < 30:            # no usable wall layer -> geometry detection
-        seed = ppf_hint or text_ppf
+        seed = ppf_hint or text_ppf or room_ppf
         if seed is None and col_rects:
             import numpy as np
             sizes = [round(max(r.width, r.height), 1) for r in col_rects]
@@ -846,6 +941,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         ppf, scale_src = float(ppf_hint), "cad_units"
     elif text_ppf:
         ppf, scale_src = text_ppf, "dimension_text"
+    elif room_ppf:
+        ppf, scale_src = room_ppf, "room_dim_text"
     else:
         ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
     w_ft = (x1 - x0) / ppf
@@ -861,7 +958,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     def tp(x, y):
         return (int((x - x0) * sc) + PAD_PX, int((y - y0) * sc) + PAD_PX)
 
-    def _mask(shape_flag, dil, ero):
+    def _mask(shape_flag, dil, ero, seal_ft=0.0):
         """Rasterize struct -> solid wall bands. Two flavours are used:
         - RECT + erode: the OUTPUT mask - square corners (no ellipse blobs),
           net fattening ~+2 px (~0.5 in)/side instead of the old ~1.4 in.
@@ -881,6 +978,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         # (>= 2'6" = 127 px) survive.
         wk = int(0.9 * NORM_PPX) | 1
         mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (wk, wk)))
+        # envelope sealing (wings/rooms mask only): directionally bridge gaps in
+        # wall runs BEFORE the area filter, so a fragmented building reconnects
+        # into one region that survives instead of being dropped as slivers.
+        if seal_ft > 0:
+            g = int(seal_ft * NORM_PPX) | 1
+            mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (g, 3)))
+            mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (3, g)))
         if ero:
             mm = cv2.erode(mm, K(cv2.MORPH_RECT, (ero, ero)))
         n, lab, stt, _ = cv2.connectedComponentsWithStats(mm, 8)
@@ -890,8 +994,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
                 keep[lab == i] = 255
         return keep
 
-    m = _mask("RECT", 9, 5)             # output mask (de-blobbed)
+    m = _mask("RECT", 9, 5)             # output mask (de-blobbed) -> walls_poly
     m_snap = _mask("ELLIPSE", 13, 0)    # fat mask for door-gap finding only
+    # sealed mask used ONLY for wing-grouping + room free-space: bridges wall
+    # gaps so a fragmented building is one region and rooms enclose. walls_poly
+    # stays from the unsealed `m`, so stairs/open features are never filled.
+    _SEAL_FT = float(os.getenv("DRISHTI_SEAL_FT", "4") or 0)
+    m_env = _mask("RECT", 9, 5, seal_ft=_SEAL_FT) if _SEAL_FT > 0 else m
 
     # door clusters are needed BEFORE the wing split: the default wing is the
     # one with the most doors (the largest-area block on a mixed sheet can be
@@ -909,8 +1018,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     # --- wing split: a sheet can hold several separate building blocks; keep
     # ONE per scene (user directive: no overlapping modules). Coordinates stay
     # in the full-sheet frame; meta reports the wing bbox + count. ---
-    wing_groups = _wing_groups(m)
-    wing_count = len(wing_groups)
+    wing_groups = _wing_groups(m_env)        # sealed: a fragmented building
+    wing_count = len(wing_groups)            # groups as ONE wing, not slivers
     wbox_ft = None
     w_idx = 0
     if wing_count > 1:
@@ -937,13 +1046,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         if not (0 <= w_idx < wing_count):
             raise ValueError(f"wing {w_idx} out of range (sheet has {wing_count})")
         labels, wb, _area = wing_groups[w_idx]
-        import cv2 as _cv2
-        _n, _lab = _cv2.connectedComponents(m, 8)
-        m = (np.isin(_lab, list(labels)).astype(np.uint8)) * 255
-        m_snap[:wb[1], :] = 0           # crop the fat mask to the same wing
-        m_snap[wb[3]:, :] = 0
-        m_snap[:, :wb[0]] = 0
-        m_snap[:, wb[2]:] = 0
+        # crop every mask to the selected wing's bbox (wings are spatially
+        # separated, so a box crop cleanly isolates it). m_env drives rooms,
+        # m drives walls_poly, m_snap drives door snapping — keep them aligned.
+        for _mm in (m, m_snap, m_env):
+            _mm[:wb[1], :] = 0
+            _mm[wb[3]:, :] = 0
+            _mm[:, :wb[0]] = 0
+            _mm[:, wb[2]:] = 0
         wx0 = (wb[0] - PAD_PX) / NORM_PPX
         wx1 = (wb[2] - PAD_PX) / NORM_PPX
         wy_top = d_ft - (wb[1] - PAD_PX) / NORM_PPX
@@ -1074,7 +1184,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     # pixel (distance transform), NOT the centroid, which lands on a wall in
     # L-shaped rooms. Used by the viewer's walk-inside beacons. ---
     rooms = []
-    free = (m == 0).astype(np.uint8)
+    # rooms come from the SEALED mask (bridged wall gaps -> enclosed pockets);
+    # walls_poly above stays from the unsealed `m`, so stairs/open features are
+    # unaffected in the exported geometry.
+    free = (m_env == 0).astype(np.uint8)
     ndt = cv2.distanceTransform(free, cv2.DIST_L2, 3)
     ncomp, rlab, rstt, _rcent = cv2.connectedComponentsWithStats(free, 4)
     min_room_px = int(28 * NORM_PPX * NORM_PPX)          # >= ~28 sqft
@@ -1089,11 +1202,39 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         d = np.where(comp, ndt, 0)
         py_, px_ = np.unravel_index(int(d.argmax()), d.shape)
         rooms.append({"x": fx(px_), "y": fy(py_),
-                      "area_sqft": round(rarea / (NORM_PPX ** 2), 1)})
+                      "area_sqft": round(rarea / (NORM_PPX ** 2), 1),
+                      "_lab": int(i),
+                      "_bbox_ft": (fx(rx), fy(ry + rh), fx(rx + rw), fy(ry))})
     rooms.sort(key=lambda r: -r["area_sqft"])
     rooms = rooms[:16]
     for k, r in enumerate(rooms):
         r["id"] = f"r{k}"
+
+    # --- room labels: Indian plans name their rooms ("Bed Room", "C. Bath").
+    # Collect every room-name word with its position, then give each room the
+    # label token NEAREST its interior point and inside its own component (so a
+    # merged region doesn't pick up an unrelated label). Gives room types for
+    # staging + render prompts. Poorly-sealed plans stay best-effort. ---
+    lab_to_room = {r["_lab"]: r for r in rooms}
+    name_tokens = []                      # (feet_x, feet_y, component_label, type)
+    for w in page.get_text("words"):
+        rtype = furnish.classify_room_type((w[4] or "").strip())
+        if not rtype:
+            continue
+        rr = (fitz.Rect(w[:4]) * page.rotation_matrix).normalize()
+        cxp, cyp = tp((rr.x0 + rr.x1) / 2, (rr.y0 + rr.y1) / 2)
+        if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
+            name_tokens.append((fx(cxp), fy(cyp), int(rlab[cyp, cxp]), rtype))
+    for r in rooms:
+        best, best_d = None, 1e18
+        for tx, ty, lab, rtype in name_tokens:
+            if lab != r["_lab"]:
+                continue
+            dd = (tx - r["x"]) ** 2 + (ty - r["y"]) ** 2
+            if dd < best_d:
+                best_d, best = dd, rtype
+        if best:
+            r["type"] = best
 
     def ft_rect(r):
         return [round((r.x0 - x0) / ppf, 3), round(d_ft - (r.y1 - y0) / ppf, 3),
@@ -1251,6 +1392,38 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         warnings.append(f"{fallback_doors} door(s): doorway gap not found in the "
                         "wall mask - swing box used as cut (check these doors)")
 
+    # --- schedule-tag openings (D/D1/SD, W/W1/V): many Indian sheets mark
+    # openings with TEXT TAGS instead of symbols/layers. Additive-only: a tag
+    # adds an opening ONLY where none was detected nearby, so existing
+    # detection can never get worse. Sizes from the standard schedule. ---
+    import tag_openings as _tags
+    tag_toks = []
+    for wd in page.get_text("words"):
+        if _tags.classify_tag(wd[4]) is None:
+            continue
+        rr = (fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
+        txp, typ_ = tp((rr.x0 + rr.x1) / 2, (rr.y0 + rr.y1) / 2)
+        tfx, tfy = fx(txp), fy(typ_)
+        if _in_wing(tfx, tfy):
+            tag_toks.append((tfx, tfy, wd[4]))
+    if tag_toks:
+        segs_ft = [((ax - x0) / ppf, d_ft - (ay - y0) / ppf,
+                    (bx - x0) / ppf, d_ft - (by - y0) / ppf)
+                   for ax, ay, bx, by in struct]
+        centers = []
+        for o in openings:
+            fp = o.get("footprint")
+            if fp:
+                centers.append(((fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2))
+        added = _tags.detect_tag_openings(tag_toks, segs_ft, centers)
+        for rec in added:
+            rec["id"] = f"o{len(openings)}"
+            openings.append(rec)
+        if added:
+            kinds = sum(1 for r in added if r["type"] == "door")
+            warnings.append(f"{len(added)} opening(s) placed from schedule tags "
+                            f"({kinds} door, {len(added) - kinds} window/vent)")
+
     # --- columns (dominant-size boxes only, deduplicated by cluster) ---
     columns = []
     if col_rects:
@@ -1297,8 +1470,38 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
             continue
         furniture.append({"type": t, "x": round(fr[0], 3), "y": round(fr[1], 3),
                           "w": round(fr[2] - fr[0], 3), "d": round(fr[3] - fr[1], 3)})
-    if furniture:
-        warnings.append(f"{len(furniture)} furniture item(s) placed from layers")
+    n_detected = len(furniture)
+    if n_detected:
+        warnings.append(f"{n_detected} furniture item(s) placed from layers")
+
+    # --- auto-stage: a typed room with NO drawn furniture inside it gets a few
+    # sensible default pieces (bedroom->bed, kitchen->counter...). Conservative:
+    # only when the room is empty; nothing for parking/balcony/stairs. ---
+    def _has_furniture(bx0, by0, bx1, by1):
+        return any(bx0 <= f["x"] + f["w"] / 2 <= bx1 and by0 <= f["y"] + f["d"] / 2 <= by1
+                   for f in furniture)
+
+    n_staged = 0
+    for r in rooms:
+        rtype = r.get("type")
+        bb = r.get("_bbox_ft")
+        if not rtype or not bb:
+            continue
+        if not furnish.plausible_area(rtype, r.get("area_sqft")):
+            continue                              # mis-typed / merged region
+        if _has_furniture(*bb):
+            continue                              # room already has drawn furniture
+        for f in furnish.stage_room(rtype, *bb):
+            if _in_wing(f["x"] + f["w"] / 2, f["y"] + f["d"] / 2):
+                furniture.append(f)
+                n_staged += 1
+    if n_staged:
+        warnings.append(f"{n_staged} furniture item(s) auto-staged by room type")
+
+    # room dicts: expose `type`, drop internal helpers
+    for r in rooms:
+        r.pop("_lab", None)
+        r.pop("_bbox_ft", None)
 
     if wbox_ft is not None:
         out_w = float(wbox_ft[2] - wbox_ft[0])
