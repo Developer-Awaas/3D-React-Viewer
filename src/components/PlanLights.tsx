@@ -35,6 +35,10 @@ export default function PlanLights() {
       {/* cool sky above, warm ground bounce below */}
       <hemisphereLight args={['#dfeaff', '#8c7a5f', 0.5]} />
       <ambientLight intensity={0.12} />
+      {/* soft cool fill from the shadow side — lifts the dark faces so the
+          building reads 3D, NOT a shadow-caster (keeps the tuned sun's shadow
+          map the only one; no banding risk) */}
+      <directionalLight position={[-12, 9, -8]} intensity={0.35} color="#cfe0ff" />
       <directionalLight
         position={[14, 22, 9]}
         intensity={1.35}

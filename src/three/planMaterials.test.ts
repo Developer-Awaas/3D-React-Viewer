@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import * as THREE from 'three'
-import { boxUV } from './planMaterials'
+import { boxUV, DEFAULT_STYLE, STYLE_KEYS, STYLE_PALETTES } from './planMaterials'
 
 // boxUV is the maths that lets textures sit correctly on walls that ship
 // with NO texture coordinates: per face, project UVs from the dominant
@@ -59,5 +59,41 @@ describe('boxUV', () => {
     const g = boxUV(raw)
     expect(g.attributes.normal).toBeDefined()
     expect(g.attributes.uv.count).toBe(g.attributes.position.count)
+  })
+})
+
+// The 4 Visualize styles must each map to a COMPLETE 3D material recipe —
+// a missing field would silently render black/default surfaces.
+describe('STYLE_PALETTES', () => {
+  const HEX = /^#[0-9a-f]{6}$/i
+  const RGB = /^\d{1,3},\d{1,3},\d{1,3}$/
+  const RGBA = /^rgba\(\d{1,3},\d{1,3},\d{1,3},0?\.\d+\)$/
+
+  it('covers exactly the 4 photo-render styles, incl. the default', () => {
+    expect(STYLE_KEYS.sort()).toEqual(
+      ['luxury', 'modern', 'scandinavian', 'warm minimal'])
+    expect(STYLE_KEYS).toContain(DEFAULT_STYLE)
+  })
+
+  it.each(Object.entries(STYLE_PALETTES))('%s palette is complete and valid', (_k, p) => {
+    expect(p.plasterBase).toMatch(HEX)
+    expect(p.plasterTint).toMatch(HEX)
+    expect(p.plasterBlotch).toMatch(RGB)
+    expect(p.floorTones).toHaveLength(4)
+    for (const t of p.floorTones) expect(t).toMatch(HEX)
+    expect(p.grout).toMatch(HEX)
+    expect(p.vein).toMatch(RGBA)
+    expect(p.floorTint).toMatch(HEX)
+    expect(p.concreteBase).toMatch(HEX)
+    expect(p.concreteTint).toMatch(HEX)
+    expect(p.floorRoughness).toBeGreaterThan(0)
+    expect(p.floorRoughness).toBeLessThanOrEqual(1)
+    expect(p.floorMetalness).toBeGreaterThanOrEqual(0)
+    expect(p.floorMetalness).toBeLessThan(0.5) // floors are stone/wood, not chrome
+  })
+
+  it('styles are visually distinct (different floor tones)', () => {
+    const firstTones = Object.values(STYLE_PALETTES).map((p) => p.floorTones[0])
+    expect(new Set(firstTones).size).toBe(firstTones.length)
   })
 })

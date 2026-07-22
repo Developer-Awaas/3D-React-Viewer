@@ -370,3 +370,45 @@
   .dl-anim, .dl-zoom { animation: none; opacity: 1; }
   .dl-leaving .dl-hero, .dl-leaving .dl-nav { animation-duration: 0.01s; }
 }
+
+/* ---------- scrollable landing page (hero + story sections below) ---------- */
+.dl-page {
+  height: 100vh;
+  height: 100dvh;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: #000;
+  /* sections carry their own top padding (py-24), which clears the fixed
+     nav — so align anchors flush to the top and no hero sliver bleeds under */
+  scroll-padding-top: 0;
+  scroll-behavior: smooth;
+}
+.dl-page::-webkit-scrollbar { width: 9px; }
+.dl-page::-webkit-scrollbar-thumb { background: rgba(232,112,42,0.38); border-radius: 9999px; }
+.dl-page::-webkit-scrollbar-thumb:hover { background: rgba(232,112,42,0.65); }
+
+/* scroll cue pinned to the bottom of the hero */
+.dl-scrollcue {
+  position: absolute;
+  left: 50%;
+  bottom: 26px;
+  transform: translateX(-50%);
+  z-index: 20;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border-radius: 9999px;
+  border: 1px solid rgba(255,255,255,0.14);
+  background: rgba(0,0,0,0.4);
+  backdrop-filter: blur(8px);
+  color: rgba(255,255,255,0.7);
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  cursor: pointer;
+  transition: color 0.2s, border-color 0.2s;
+}
+.dl-scrollcue:hover { color: #fff; border-color: rgba(232,112,42,0.6); }
+.dl-scrollcue-arrow { display: inline-block; animation: dlBounce 1.8s ease-in-out infinite; }
+@keyframes dlBounce { 0%,100% { transform: translateY(0); } 50% { transform: translateY(4px); } }
+@media (prefers-reduced-motion: reduce) { .dl-scrollcue-arrow { animation: none; } }

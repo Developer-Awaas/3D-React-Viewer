@@ -87,7 +87,7 @@ def _add_poly_prism(meshes, geom, z0, z1, rgba, name=None):
     if z1 - z0 <= 0 or geom.is_empty:
         return
     polys = getattr(geom, "geoms", [geom])
-    M = np.array([[FT, 0, 0, 0], [0, 0, FT, 0], [0, FT, 0, FT * z0], [0, 0, 0, 1.0]])
+    M = np.array([[FT, 0, 0, 0], [0, 0, FT, FT * z0], [0, FT, 0, 0], [0, 0, 0, 1.0]])
     for k, pg in enumerate(polys):
         if pg.is_empty or pg.area <= 0:
             continue
@@ -183,8 +183,8 @@ def _add_furniture(meshes, f, i):
         B((x0, x1, y0, y1, 0.0, f.get("h", 2.0)), _hexrgba("#d85a30"), "body")
 
 
-def build_glb(scene, out_path):
-    """Build a .glb from a scene dict (the canonical scene.json)."""
+def _build_scene(scene):
+    """Scene dict -> (trimesh.Scene, meshes) shared by build_glb / build_glb_bytes."""
     import trimesh
     H = scene["meta"]["wall_height_ft"]
     meshes = []
@@ -225,14 +225,28 @@ def build_glb(scene, out_path):
     sc = trimesh.Scene()
     for name, m in meshes:
         sc.add_geometry(m, node_name=name, geom_name=name)
+    return sc, meshes
+
+
+def build_glb(scene, out_path):
+    """Build a .glb from a scene dict (the canonical scene.json)."""
+    sc, meshes = _build_scene(scene)
     # include_normals: without it trimesh writes POSITION-only primitives and
     # three.js-based viewers light them as NaN -> solid black (found 2026-07-14
     # when the window glass rendered black; our app also guards client-side,
     # but the DOWNLOADED .glb must stand on its own in any viewer)
     sc.export(out_path, include_normals=True)
     tris = sum(len(m.faces) for _, m in meshes)
-    print(f"wrote {out_path}: {len(meshes)} meshes, {tris} triangles")
+    import logging
+    logging.getLogger("drishti.glb").info(
+        "wrote %s: %d meshes, %d triangles", out_path, len(meshes), tris)
     return out_path
+
+
+def build_glb_bytes(scene):
+    """Build a .glb from a scene dict and return the bytes (no temp file)."""
+    sc, _meshes = _build_scene(scene)
+    return sc.export(file_type="glb", include_normals=True)
 
 
 def main(scene_path, out_path):

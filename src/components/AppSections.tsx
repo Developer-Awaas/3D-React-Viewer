@@ -1,5 +1,5 @@
-import { ReactNode, useRef } from 'react'
-import { motion, useInView, useScroll, useTransform } from 'framer-motion'
+import { ReactNode, useRef, useState } from 'react'
+import { AnimatePresence, motion, useInView, useScroll, useTransform } from 'framer-motion'
 
 /* Scrollable story below the Plan → 3D viewer. Drishti's own identity
  * (orange accent, glass surfaces, Playfair italics) with cinematic craft:
@@ -122,7 +122,13 @@ const FAQ = [
 
 /* ---------- the sections ---------- */
 
-export default function AppSections() {
+// onEnterApp: the landing page (LandingHero — FROZEN, never edit it) mounts
+// these sections as <AppSections onEnterApp={enter}/> so "back to the viewer"
+// opens the app. The ContactModal refactor dropped this prop and tsc failed
+// (TS2322) — the branch would not build. Optional: falls back to scrolling to
+// #drishti-viewer when mounted without it.
+export default function AppSections({ onEnterApp }: { onEnterApp?: () => void }) {
+  const [contactOpen, setContactOpen] = useState(false)
   return (
     <div className="relative bg-background">
       {/* 1 · engine story */}
@@ -217,17 +223,127 @@ export default function AppSections() {
               </FadeIn>
             ))}
           </div>
-          <div className="mt-16 flex items-center justify-between border-t border-white/5 pt-6 text-xs text-muted-foreground/60">
+          <div className="mt-16 flex flex-wrap items-center justify-between gap-3 border-t border-white/5 pt-6 text-xs text-muted-foreground/60">
             <span className="font-playfair italic">Drishti — every plan holds a building within</span>
-            <button
-              onClick={() => document.getElementById('drishti-viewer')?.scrollIntoView({ behavior: 'smooth' })}
-              className="rounded-full border border-white/10 px-4 py-2 text-foreground/80 hover:border-neon/50 hover:text-foreground"
-            >
-              ↑ back to the viewer
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setContactOpen(true)}
+                className="rounded-full border border-neon/40 bg-neon/10 px-4 py-2 text-foreground/90 hover:border-neon/70 hover:text-foreground"
+              >
+                Contact founders
+              </button>
+              <button
+                onClick={() => onEnterApp
+                  ? onEnterApp()
+                  : document.getElementById('drishti-viewer')?.scrollIntoView({ behavior: 'smooth' })}
+                className="rounded-full border border-white/10 px-4 py-2 text-foreground/80 hover:border-neon/50 hover:text-foreground"
+              >
+                ↑ back to the viewer
+              </button>
+            </div>
           </div>
         </div>
       </section>
+
+      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} />
     </div>
+  )
+}
+
+/* ---------- Contact founders modal (site theme: glass, orange accent) ----------
+ * Exported so the viewer sidebar (App.tsx) can open the SAME popup — the
+ * story/FAQ sections aren't reachable once you're inside the 3D app. */
+export function ContactModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+  const EMAIL = 'awaas.ai.dev@gmail.com'
+  // maker's-mark card: clicking "built by raj padhi" reveals a tiny contact
+  // popover (closed again whenever the modal itself closes)
+  const [makerOpen, setMakerOpen] = useState(false)
+  const close = () => { setMakerOpen(false); onClose() }
+  return (
+    <AnimatePresence>
+      {open && (
+        <motion.div
+          className="fixed inset-0 z-50 flex items-center justify-center p-6"
+          initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          onClick={close}
+          role="dialog" aria-modal="true" aria-label="Contact the founders"
+        >
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
+          <motion.div
+            className="relative w-full max-w-md overflow-hidden rounded-2xl border border-white/10 bg-[#0b1120]/95 p-8 shadow-2xl"
+            initial={{ scale: 0.94, y: 12, opacity: 0 }}
+            animate={{ scale: 1, y: 0, opacity: 1 }}
+            exit={{ scale: 0.94, y: 12, opacity: 0 }}
+            transition={{ duration: 0.28, ease: EASE }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-neon/20 blur-3xl" />
+            <button
+              onClick={close} aria-label="Close"
+              className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full border border-white/10 text-muted-foreground hover:border-neon/50 hover:text-foreground"
+            >
+              ✕
+            </button>
+            <p className="text-xs font-semibold uppercase tracking-[0.2em] text-neon">Get in touch</p>
+            <h3 className="mt-3 font-playfair text-2xl italic text-foreground">Contact the founders</h3>
+            <p className="mt-3 text-sm leading-relaxed text-muted-foreground">
+              Reach <span className="text-foreground">Amit</span> and <span className="text-foreground">Saswat</span> — questions,
+              a plan that won't parse, or partnership ideas, all welcome.
+            </p>
+            <a
+              href={`mailto:${EMAIL}`}
+              className="mt-6 flex items-center justify-center gap-2 rounded-xl border border-neon/40 bg-neon/10 px-5 py-3 text-sm font-medium text-foreground hover:border-neon/70 hover:bg-neon/20"
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />
+              </svg>
+              {EMAIL}
+            </a>
+            <p className="mt-4 text-center text-[11px] text-muted-foreground/60">Drishti — every plan holds a building within</p>
+            {/* maker's mark — small serif signature; click reveals contact card */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setMakerOpen((v) => !v) }}
+              aria-label="Built by Raj Padhi — contact"
+              className="font-playfair absolute bottom-1.5 right-2.5 select-none text-[9px] font-semibold italic tracking-wide text-white/35 transition-colors hover:text-neon/70"
+            >
+              built by raj padhi
+            </button>
+
+            {/* tiny contact popover for the maker's mark */}
+            <AnimatePresence>
+              {makerOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.2, ease: EASE }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-8 right-2.5 w-44 rounded-lg border border-white/10 bg-[#0b1120]/[0.98] p-1.5 shadow-2xl"
+                >
+                  <a
+                    href="mailto:raj85sp@gmail.com"
+                    className="flex items-center gap-2 rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />
+                    </svg>
+                    raj85sp@gmail.com
+                  </a>
+                  <a
+                    href="tel:+919437418279"
+                    className="flex items-center gap-2 rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+                    </svg>
+                    +91 94374 18279
+                  </a>
+                </motion.div>
+              )}
+            </AnimatePresence>
+          </motion.div>
+        </motion.div>
+      )}
+    </AnimatePresence>
   )
 }

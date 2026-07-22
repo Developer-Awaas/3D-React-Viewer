@@ -46,12 +46,18 @@ export default function TraceScene({
   const [tex, setTex] = useState<THREE.Texture | null>(null)
 
   // Load the uploaded image (a blob URL) as a texture whenever it changes.
+  // Cleanup cancels late loads and disposes the GPU texture on replace/unmount.
   useEffect(() => {
     if (!imageUrl) { setTex(null); return }
+    let cancelled = false
+    let loaded: THREE.Texture | null = null
     new THREE.TextureLoader().load(imageUrl, (t) => {
+      if (cancelled) { t.dispose(); return } // url changed while downloading
       t.colorSpace = THREE.SRGBColorSpace
+      loaded = t
       setTex(t)
     })
+    return () => { cancelled = true; loaded?.dispose() }
   }, [imageUrl])
 
   return (

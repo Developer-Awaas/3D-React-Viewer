@@ -1,7 +1,7 @@
-import { useLayoutEffect, useRef } from 'react'
+import { useEffect, useLayoutEffect, useRef } from 'react'
 import { useGLTF } from '@react-three/drei'
 import * as THREE from 'three'
-import { applyPlanMaterials } from '../three/planMaterials'
+import { applyPlanMaterials, DEFAULT_STYLE } from '../three/planMaterials'
 
 // Loads a .glb/.gltf model from a URL via drei's useGLTF (built on Three's
 // GLTFLoader). useGLTF "suspends" while downloading, so it must be wrapped in
@@ -14,6 +14,7 @@ export default function Model({
   targetSize = 1.9, // desired largest footprint dimension, in metres
   center = false,   // horizontally centre the model on `position` (plans)
   plan = false,     // backend-built plan: swap in PBR materials by mesh name
+  styleKey = DEFAULT_STYLE, // which style palette dresses the plan's materials
   onFramed,         // fires after scale+placement with the final box info
 }: {
   url: string
@@ -22,6 +23,7 @@ export default function Model({
   targetSize?: number
   center?: boolean
   plan?: boolean
+  styleKey?: string
   onFramed?: (info: {
     center: [number, number, number]
     size: [number, number, number]
@@ -31,6 +33,26 @@ export default function Model({
 }) {
   const { scene } = useGLTF(url)
   const ref = useRef<THREE.Group>(null!)
+
+  // GPU cleanup on unmount / url change ONLY (never during render): drop the
+  // loader cache entry for this url and dispose the scene's GPU resources —
+  // without this every loaded model (blob-url plans especially) leaks forever.
+  useEffect(() => () => {
+    useGLTF.clear(url)
+    scene.traverse((o) => {
+      const mesh = o as THREE.Mesh
+      if (!mesh.isMesh) return
+      mesh.geometry?.dispose()
+      const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+      for (const mat of mats) {
+        if (!mat) continue
+        for (const v of Object.values(mat)) {
+          if (v instanceof THREE.Texture) v.dispose()
+        }
+        mat.dispose()
+      }
+    })
+  }, [url, scene])
 
   // Keep the latest onFramed WITHOUT making it an effect dependency.
   // CRASH FIX: `position` is written inline in the parent (`position={[0,0,0]}`),
@@ -43,6 +65,15 @@ export default function Model({
   const onFramedRef = useRef(onFramed)
   onFramedRef.current = onFramed
   const [px, py, pz] = position
+
+  // Style changes must NOT re-run the big placement effect below (that would
+  // re-fire onFramed and yank the camera). The placement effect reads the
+  // style through this ref; a light effect re-dresses materials on change.
+  const styleRef = useRef(styleKey)
+  styleRef.current = styleKey
+  useEffect(() => {
+    if (plan) applyPlanMaterials(scene, styleKey)
+  }, [plan, scene, styleKey])
 
   useLayoutEffect(() => {
     // 1) measure the raw model
@@ -69,7 +100,7 @@ export default function Model({
     //    floor, glass windows — assigned by mesh name); other models just
     //    get shadow flags.
     if (plan) {
-      applyPlanMaterials(scene)
+      applyPlanMaterials(scene, styleRef.current)
     } else {
       scene.traverse((o) => {
         if ((o as THREE.Mesh).isMesh) {

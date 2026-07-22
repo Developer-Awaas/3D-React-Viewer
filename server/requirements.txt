@@ -1,25 +1,27 @@
 # Web server
-fastapi
-uvicorn[standard]
-python-multipart
-python-dotenv
+fastapi==0.139.2
+uvicorn[standard]==0.46.0
+python-multipart==0.0.26
+python-dotenv==1.2.2
 # Image handling
-pillow
-numpy
-scikit-image
-shapely
-opencv-python-headless
+pillow==12.2.0
+numpy==2.4.4
+scikit-image==0.26.0
+shapely==2.1.2
+opencv-python-headless==4.13.0.92
 # CubiCasa (floortrans) dependencies
 lmdb
 svgpathtools
 tensorboardX
 # Deep learning - on a CUDA machine install the matching torch build instead
-torch
+torch==2.13.0
 torchvision
 
 # geometry / GLB export
-trimesh
-mapbox-earcut   # triangulates polygon walls (trimesh.extrude_polygon)
+trimesh==4.12.2
+mapbox-earcut==2.0.0   # triangulates polygon walls (trimesh.extrude_polygon)
 
 # PDF -> image (accept PDF uploads)
-pymupdf
+pymupdf==1.28.0
+httpx==0.28.1
+openpyxl==3.1.5

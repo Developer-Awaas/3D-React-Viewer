@@ -32,8 +32,38 @@ router = APIRouter(prefix="/visualize", tags=["visualize"])
 RENDER_BACKEND = os.getenv("RENDER_BACKEND", "local").lower()
 
 # at most N heavy render jobs at once (default 1): SDXL and the video model each
-# want most of a 12 GB card, so extra requests QUEUE instead of racing into OOM
-_SLOTS = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_RENDER", "1")))
+# want most of a 12 GB card, so extra requests QUEUE instead of racing into OOM.
+# SHARED gate with main.py's parser/ML inference — one GPU, one queue (a render
+# and an ML parse used to run concurrently on separate semaphores -> CUDA OOM).
+import gpu_gate
+_SLOTS = gpu_gate.GPU_SLOTS
+
+# upload cap for render/animate inputs (screenshots + G-buffer maps). These
+# endpoints used plain image.read() with NO limit -> memory-DoS vector.
+MAX_RENDER_UPLOAD_MB = int(os.getenv("MAX_RENDER_UPLOAD_MB", "15"))
+
+
+async def _read_render_upload(upload, what="image", required=True):
+    """Chunked, size-capped read of a render input. Returns bytes or None
+    (optional inputs). 413 on oversize, 400 on empty required input."""
+    if upload is None:
+        return None
+    cap = MAX_RENDER_UPLOAD_MB * 1024 * 1024
+    chunks, size = [], 0
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(413, f"{what} too large (> {MAX_RENDER_UPLOAD_MB} MB)")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    if not raw:
+        if required:
+            raise HTTPException(400, f"empty {what}")
+        return None
+    return raw
 
 
 # --------------------------------------------------------------------------- #
@@ -135,37 +165,229 @@ def _require_local():
                                  "CPU host set RENDER_BACKEND=fal (hosted GPU).")
 
 
-def _load_sdxl():
-    if "sdxl" in _PIPES:
-        return _PIPES["sdxl"]
-    _require_local()
-    _evict("sdxl")
+# which ControlNet to load per conditioning type. depth locks the room's true
+# 3D volume/perspective (Drishti renders a real depth pass from the scene, so it
+# beats Canny edges); canny is the fallback when only a screenshot is available.
+_CONTROLNETS = {
+    "canny": ("CONTROLNET_MODEL", "diffusers/controlnet-canny-sdxl-1.0"),
+    "depth": ("DEPTH_CONTROLNET", "diffusers/controlnet-depth-sdxl-1.0"),
+    # segmentation = the moat: Drishti renders a perfect surface-class map from
+    # its named meshes and feeds it here. Community SDXL seg ControlNet; override
+    # via SEG_CONTROLNET if you use another.
+    # seg resolves via _seg_id(): SEG_CONTROLNET env wins; otherwise the default
+    # model joins AUTOMATICALLY once its weights are in the local HF cache (it is
+    # a 5GB fp32 .bin, so it is never pulled implicitly — download it once, e.g.
+    # by letting a render fetch it, and seg conditioning turns itself on).
+    "seg": ("SEG_CONTROLNET", ""),
+}
+
+_SEG_DEFAULT_ID = "SargeZT/sdxl-controlnet-seg"
+
+
+def _seg_id():
+    """The segmentation ControlNet to use: env override, else the default IF its
+    weights are already cached locally (auto-enable after a one-time download),
+    else empty (seg conditioning off)."""
+    sid = os.getenv("SEG_CONTROLNET")
+    if sid:
+        return sid
+    try:
+        from huggingface_hub import scan_cache_dir
+        if any(r.repo_id == _SEG_DEFAULT_ID for r in scan_cache_dir().repos):
+            return _SEG_DEFAULT_ID
+    except Exception:
+        pass
+    return ""
+
+
+def required_models(include_video=False):
+    """SINGLE SOURCE OF TRUTH for which weights this code loads. The downloader
+    (fetch_models.py) reads this too, so what you download and what the runtime
+    utilises can never drift. `variant` mirrors the from_pretrained() call — the
+    SDXL base is loaded fp16, so only fp16 files are needed; ControlNets load
+    their default file. Keep this in lockstep with _load_sdxl()/_load_svd()."""
+    models = [
+        {"name": "sdxl",
+         "id": os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
+         "variant": "fp16"},
+    ]
+    for ctype, (env, default) in _CONTROLNETS.items():
+        # fp16 only — the loader casts to fp16 anyway; pulling the fp32 copies too
+        # bloated the download ~5x (15 GB -> ~2.5 GB per ControlNet)
+        cid = _seg_id() if ctype == "seg" else os.getenv(env, default)
+        if not cid:                       # opt-in types (seg) skipped when unset
+            continue
+        models.append({"name": f"controlnet_{ctype}", "id": cid,
+                       "variant": None if ctype == "seg" else "fp16"})
+    if include_video:
+        models.append({"name": "svd",
+                       "id": os.getenv("SVD_MODEL",
+                                       "stabilityai/stable-video-diffusion-img2vid-xt"),
+                       "variant": "fp16"})
+    return models
+
+
+def models_status(include_video=False):
+    """For each required model, whether it is present in the local HF cache.
+    Lets /health confirm download == utilisation before the first render."""
+    req = required_models(include_video)
+    present = set()
+    try:
+        from huggingface_hub import scan_cache_dir
+        present = {r.repo_id for r in scan_cache_dir().repos}
+    except Exception:
+        pass
+    return [{**m, "cached": m["id"] in present} for m in req]
+
+
+def _prep_control(image, max_side=1024):
+    """PIL image -> RGB, downscaled to max_side (ControlNet input)."""
+    image = image.convert("RGB")
+    w, h = image.size
+    s = min(1.0, max_side / max(w, h))
+    if s < 1.0:
+        image = image.resize((int(w * s), int(h * s)))
+    return image
+
+
+def _one_controlnet(control):
     import torch
-    from diffusers import ControlNetModel, StableDiffusionXLControlNetPipeline
-    cn = ControlNetModel.from_pretrained(
-        os.getenv("CONTROLNET_MODEL", "diffusers/controlnet-canny-sdxl-1.0"),
-        torch_dtype=torch.float16)
+    from diffusers import ControlNetModel
+    if control == "seg":
+        cn_id = _seg_id()
+    else:
+        env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
+        cn_id = os.getenv(env, default)
+    try:                              # prefer the fp16 files (half the disk/VRAM)
+        return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16,
+                                               variant="fp16")
+    except Exception:                 # repo has no fp16 variant -> default files
+        return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16)
+
+
+def _wants_offload(controls):
+    """E2 speed fix: decide whether the pipeline needs CPU-offload.
+
+    Layman's version: CPU-offload keeps only the busy part of the AI on the
+    graphics card, shuttling the rest to normal RAM every step — it saves
+    video memory but costs 2-3x the time. A single-ControlNet fp16 SDXL stack
+    (~7 GB) FITS a 12 GB card whole, so shuttling is pure waste there. Multi-
+    ControlNet (depth+seg together) genuinely needs the headroom.
+
+    GPU_OFFLOAD env: auto (default: offload only for multi-ControlNet) |
+    always (old behaviour, safest) | never (max speed, OOM risk)."""
+    mode = os.getenv("GPU_OFFLOAD", "auto").lower()
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return len(tuple(controls)) > 1
+
+
+def _apply_fast_scheduler(pipe):
+    """E1 speed fix: swap the stock scheduler for DPM++ 2M Karras.
+
+    Layman's version: the scheduler is the ROUTE the AI takes from noise to
+    finished image. The stock route needs ~28 steps to look good; DPM++ 2M
+    Karras reaches the same quality in ~22 — about 25-30% less GPU time per
+    render, no quality loss. Industry-standard SDXL setting.
+
+    FAST_SCHEDULER=0 in .env reverts to the stock route (A/B testing).
+    Defensive: any failure leaves the pipeline unchanged — a missing scheduler
+    class must never break a render. Returns True when applied."""
+    if os.getenv("FAST_SCHEDULER", "1").lower() in ("0", "false", "no"):
+        return False
+    try:
+        from diffusers import DPMSolverMultistepScheduler
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+            pipe.scheduler.config, use_karras_sigmas=True)
+        return True
+    except Exception:
+        return False
+
+
+def _load_sdxl(controls=("canny",)):
+    """Load an SDXL+ControlNet pipeline for ONE or MANY control types. Passing
+    e.g. ('depth','seg') builds a multi-ControlNet (depth locks volume, seg locks
+    what each surface is)."""
+    controls = tuple(controls)
+    key = "sdxl_" + "_".join(controls)
+    if key in _PIPES:
+        return _PIPES[key]
+    _require_local()
+    _evict(key)                       # one pipeline on the 12 GB card at a time
+    import torch
+    from diffusers import StableDiffusionXLControlNetPipeline
+    cns = [_one_controlnet(c) for c in controls]
+    controlnet = cns[0] if len(cns) == 1 else cns   # list -> MultiControlNet
     pipe = StableDiffusionXLControlNetPipeline.from_pretrained(
         os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
-        controlnet=cn, torch_dtype=torch.float16, use_safetensors=True,
+        controlnet=controlnet, torch_dtype=torch.float16, use_safetensors=True,
         variant="fp16")
-    pipe.enable_model_cpu_offload()   # only the active submodule sits on GPU -> fits 12 GB
+    # E2: offload only when the stack doesn't fit whole (see _wants_offload);
+    # any failure to go fully-on-GPU falls back to the safe offload path
+    if _wants_offload(controls):
+        pipe.enable_model_cpu_offload()
+    else:
+        try:
+            pipe.to("cuda")
+        except Exception:
+            pipe.enable_model_cpu_offload()
     try:
         pipe.enable_vae_tiling()
     except Exception:
         pass
-    _PIPES["sdxl"] = pipe
+    _apply_fast_scheduler(pipe)       # E1: DPM++ 2M Karras (see helper above)
+    _PIPES[key] = pipe
     return pipe
 
 
-def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed):
+def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
+                  depth_bytes=None, seg_bytes=None):
     import torch
-    pipe = _load_sdxl()
-    control = _canny(image_bytes)
+    from PIL import Image
+    # Build the control stack from whatever maps the frontend rendered:
+    # depth (3D volume) + seg (surface classes) = the moat; else Canny fallback.
+    controls, images, scales = [], [], []
+    if depth_bytes:
+        controls.append("depth")
+        images.append(_prep_control(Image.open(io.BytesIO(depth_bytes))))
+        scales.append(float(cn_scale))
+    if seg_bytes and _seg_id():          # env override OR cached default
+        controls.append("seg")
+        images.append(_prep_control(Image.open(io.BytesIO(seg_bytes))))
+        scales.append(float(cn_scale) * 0.8)     # seg guides, depth leads
+    if not controls:
+        controls, images, scales = ["canny"], [_canny(image_bytes)], [float(cn_scale)]
+
+    try:
+        pipe = _load_sdxl(tuple(controls))
+    except Exception:
+        if "seg" in controls:                    # seg model missing -> drop it,
+            return _render_local(image_bytes, prompt, negative, steps, guidance,
+                                 cn_scale, seed, depth_bytes=depth_bytes)
+        raise
     gen = torch.Generator(device="cpu").manual_seed(int(seed))
-    out = pipe(prompt=prompt, negative_prompt=negative, image=control,
-               num_inference_steps=int(steps), guidance_scale=float(guidance),
-               controlnet_conditioning_scale=float(cn_scale), generator=gen)
+    img = images[0] if len(images) == 1 else images
+    scl = scales[0] if len(scales) == 1 else scales
+    try:
+        out = pipe(prompt=prompt, negative_prompt=negative, image=img,
+                   num_inference_steps=int(steps), guidance_scale=float(guidance),
+                   controlnet_conditioning_scale=scl, generator=gen)
+    except RuntimeError as e:
+        if "same device" not in str(e):
+            raise
+        # cpu/cuda split during a cold multi-model load — evict, rebuild the
+        # pipeline once and retry; if seg was in the stack, drop it too (the
+        # fp32 seg CN is the usual offender).
+        _evict("none")
+        if "seg" in controls:
+            return _render_local(image_bytes, prompt, negative, steps, guidance,
+                                 cn_scale, seed, depth_bytes=depth_bytes)
+        pipe = _load_sdxl(tuple(controls))
+        out = pipe(prompt=prompt, negative_prompt=negative, image=img,
+                   num_inference_steps=int(steps), guidance_scale=float(guidance),
+                   controlnet_conditioning_scale=scl, generator=gen)
     buf = io.BytesIO()
     out.images[0].save(buf, format="PNG")
     return buf.getvalue()
@@ -216,7 +438,8 @@ def _animate_local(image_bytes, motion, fps, seed, frames):
 # --------------------------------------------------------------------------- #
 # hosted (fal.ai) backend  — production, no local GPU. See README to fill in.
 # --------------------------------------------------------------------------- #
-def _render_fal(image_bytes, prompt, negative, steps, guidance, cn_scale, seed):
+def _render_fal(image_bytes, prompt, negative, steps, guidance, cn_scale, seed,
+                depth_bytes=None, seg_bytes=None):
     raise HTTPException(501, "RENDER_BACKEND=fal is not configured yet — add your "
                              "fal.ai call in visualize._render_fal (README_VISUALIZE.md).")
 
@@ -239,32 +462,60 @@ def _animate(*a):
 # --------------------------------------------------------------------------- #
 @router.get("/health")
 def vhealth():
-    """Is the Visualize feature ready, and on which backend?"""
+    """Is the Visualize feature ready, and on which backend? `models` reports,
+    for each weight the render code loads, whether it is downloaded yet — so you
+    can confirm download and utilisation are in sync before the first render."""
+    models = models_status()
     return {"backend": RENDER_BACKEND, "cuda": _cuda_ok(),
-            "warm": sorted(_PIPES.keys())}
+            "warm": sorted(_PIPES.keys()),
+            "models": models,
+            "models_ready": all(m["cached"] for m in models)}
 
 
 @router.post("/render")
 async def render_ep(
     image: UploadFile = File(...),
+    depth: UploadFile = File(None),
+    seg: UploadFile = File(None),
     room_type: str = Form("living room"),
     style: str = Form("scandinavian"),
     prompt: str = Form(""),
-    steps: int = Form(28),
+    # E1: 22 steps is the DPM++ 2M Karras sweet spot (was 28 on the stock
+    # scheduler — same quality, ~25-30% faster). RENDER_STEPS in .env overrides.
+    steps: int = Form(int(os.getenv("RENDER_STEPS", "22"))),
     guidance: float = Form(6.0),
     control_scale: float = Form(0.7),
     seed: int = Form(12345),
 ):
     """Eye-level screenshot of the 3D scene -> photorealistic furnished still.
-    The walls are locked by ControlNet (canny); `style`/`room_type` set the look."""
-    raw = await image.read()
-    if not raw:
-        raise HTTPException(400, "empty image")
+    Geometry is locked by ControlNet: `depth` (3D volume) + `seg` (surface
+    classes = the moat) rendered from the scene, else Canny edges of the
+    screenshot. `style`/`room_type` set the look."""
+    raw = await _read_render_upload(image, "image")
+    depth_bytes = await _read_render_upload(depth, "depth map", required=False)
+    seg_bytes = await _read_render_upload(seg, "seg map", required=False)
     full_prompt = prompt.strip() or _compose_prompt(room_type, style)
+    ctype = "+".join([c for c, b in (("depth", depth_bytes), ("seg", seg_bytes)) if b]) or "canny"
+
+    # cache lookup BEFORE the GPU semaphore: a repeat of the same view+style+seed
+    # returns instantly and never queues behind a live render
+    import render_cache
+    ckey = render_cache.make_key((depth_bytes or b"") + (seg_bytes or b"") or raw,
+                                 full_prompt, NEG_PROMPT,
+                                 steps, guidance, control_scale, seed, ctype)
+    hit = render_cache.get(ckey)
+    if hit is not None:
+        return JSONResponse({"image_base64": base64.b64encode(hit).decode(),
+                             "prompt": full_prompt, "conditioning": ctype,
+                             "cached": True})
+
     png = await _run_heavy(_render, raw, full_prompt, NEG_PROMPT, steps,
-                           guidance, control_scale, seed, what="render")
+                           guidance, control_scale, seed, depth_bytes, seg_bytes,
+                           what="render")
+    render_cache.put(ckey, png)
     return JSONResponse({"image_base64": base64.b64encode(png).decode(),
-                         "prompt": full_prompt})
+                         "prompt": full_prompt, "conditioning": ctype,
+                         "cached": False})
 
 
 @router.post("/animate")
@@ -275,10 +526,12 @@ async def animate_ep(
     frames: int = Form(int(os.getenv("SVD_FRAMES", "25"))),
     seed: int = Form(12345),
 ):
-    """Photoreal still -> a short (~3-4s) cinematic walkthrough .mp4."""
-    raw = await image.read()
-    if not raw:
-        raise HTTPException(400, "empty image")
+    """Photoreal still -> a short (~3-4s) cinematic walkthrough .mp4.
+    LICENSE GATE: SVD ships under Stability's community license (revenue cap /
+    commercial terms) — set DISABLE_SVD=1 to switch the feature off in .env."""
+    if os.getenv("DISABLE_SVD", "0").lower() in ("1", "true", "yes"):
+        raise HTTPException(403, "Animate is disabled on this server (license gate)")
+    raw = await _read_render_upload(image, "image")
     mp4 = await _run_heavy(_animate, raw, motion, fps, seed, frames, what="animate")
     return JSONResponse({"video_base64": base64.b64encode(mp4).decode(),
                          "mime": "video/mp4"})

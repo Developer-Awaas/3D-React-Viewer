@@ -114,8 +114,9 @@ def _flatten(e, depth=0):
     elif kind in ("ARC", "CIRCLE", "ELLIPSE", "SPLINE"):
         try:
             pts = [(p.x, p.y) for p in e.flattening(0.5)]
-            yield ("seg", layer, [(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
-                                  for i in range(len(pts) - 1)])
+            if len(pts) >= 2:      # degenerate curves flatten to 0-1 points
+                yield ("seg", layer, [(pts[i][0], pts[i][1], pts[i + 1][0], pts[i + 1][1])
+                                      for i in range(len(pts) - 1)])
         except Exception:
             pass
     elif kind in ("SOLID", "TRACE", "3DFACE"):
@@ -282,7 +283,7 @@ def to_layered_pdf(raw, filename=""):
     kept = 0
     for layer, segs in seg_items:
         b = _bbox([(layer, segs)])
-        if not _touches(b):
+        if b is None or not _touches(b):
             continue
         sh = page.new_shape()
         # a small axis-aligned closed box becomes a RECT item (columns and

@@ -71,3 +71,19 @@
 @media (prefers-reduced-motion: reduce){
   .hero-anim,.hero-zoom,.load-sweep,.load-pulse{ animation:none; opacity:1; }
 }
+
+/* story-section entrances: pure CSS transitions (compositor-safe on weak GPUs) */
+.sect-rise {
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity 0.5s cubic-bezier(0.16,1,0.3,1), transform 0.5s cubic-bezier(0.16,1,0.3,1);
+}
+.sect-card {
+  opacity: 0;
+  transform: translateY(24px) scale(0.97);
+  transition: opacity 0.6s cubic-bezier(0.16,1,0.3,1), transform 0.6s cubic-bezier(0.16,1,0.3,1);
+}
+.sect-on { opacity: 1; transform: none; }
+@media (prefers-reduced-motion: reduce) {
+  .sect-rise, .sect-card { transition: none; opacity: 1; transform: none; }
+}

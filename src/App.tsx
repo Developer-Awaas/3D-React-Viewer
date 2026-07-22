@@ -1,12 +1,17 @@
-import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useRef, useState } from 'react'
+import { InputHTMLAttributes, ReactNode, Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import * as THREE from 'three'
 import { Canvas } from '@react-three/fiber'
-import { OrbitControls, Environment, ContactShadows, Sky } from '@react-three/drei'
+import { OrbitControls, Environment, ContactShadows, Sky, useGLTF } from '@react-three/drei'
 import { AnimatePresence, motion, type Variants } from 'framer-motion'
 import Room from './components/Room'
 import Lights from './components/Lights'
 import PlanLights from './components/PlanLights'
 import Furniture from './components/Furniture'
 import Model from './components/Model'
+import { ContactModal } from './components/AppSections'
+import VisualizeButton from './components/VisualizeButton'
+import GBufferBridge from './components/GBufferBridge'
+import MeasureTool from './components/MeasureTool'
 import ErrorBoundary from './components/ErrorBoundary'
 import CameraMarker from './components/CameraMarker'
 import CameraRig, { View } from './components/CameraRig'
@@ -18,7 +23,7 @@ import { FLOOR_MATERIALS, FloorKey } from './materials'
 import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
-import { buildPlan, type BuiltPlan } from './api/scene'
+import { buildPlan, downloadAreaStatement, type BuiltPlan } from './api/scene'
 import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
 import LoadingScreen from './components/LoadingScreen'
 import LandingHero from './landing/LandingHero'
@@ -68,13 +73,50 @@ function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
     className="h-9 w-full rounded-md border border-input bg-surface/60 px-3 text-sm text-foreground
                placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
 }
+// Hip roof fitted to the building footprint: ridge along the LONG axis, sloped
+// trapezoid sides + triangular hip ends, plus a thin eave slab. Replaces the
+// old 4-sided cone, which ballooned into a huge pyramid on elongated plans.
+function HipRoof({ center, w, d }: { center: [number, number, number]; w: number; d: number }) {
+  const rise = Math.min(w, d) * 0.35
+  const geom = useMemo(() => {
+    const hw = w / 2, hd = d / 2
+    const alongX = w >= d
+    const r = (Math.max(w, d) - Math.min(w, d)) / 2       // ridge half-length
+    type V = [number, number, number]
+    const R1: V = alongX ? [-r, rise, 0] : [0, rise, -r]
+    const R2: V = alongX ? [r, rise, 0] : [0, rise, r]
+    const A: V = [-hw, 0, -hd], B: V = [hw, 0, -hd]
+    const C: V = [hw, 0, hd], D: V = [-hw, 0, hd]
+    const tris: V[] = alongX
+      ? [A, B, R2, A, R2, R1, C, D, R1, C, R1, R2, D, A, R1, B, C, R2]
+      : [A, D, R2, A, R2, R1, C, B, R1, C, R1, R2, B, A, R1, D, C, R2]
+    const g = new THREE.BufferGeometry()
+    g.setAttribute('position', new THREE.Float32BufferAttribute(tris.flat(), 3))
+    g.computeVertexNormals()
+    return g
+  }, [w, d, rise])
+  return (
+    <group position={center}>
+      <mesh position={[0, 0.04, 0]} castShadow>
+        <boxGeometry args={[w, 0.08, d]} />
+        <meshStandardMaterial color="#cfc9bf" roughness={0.95} />
+      </mesh>
+      <mesh position={[0, 0.08, 0]} geometry={geom} castShadow>
+        <meshStandardMaterial color="#d8d2c6" roughness={0.92} side={THREE.DoubleSide} />
+      </mesh>
+    </group>
+  )
+}
+
 function Upload({ onFile, accept, children }: { onFile: (f: File) => void; accept: string; children: ReactNode }) {
   return (
     <motion.label whileHover={{ scale: 1.02 }} whileTap={{ scale: 0.97 }} transition={{ duration: 0.15 }}
       className="inline-flex h-9 w-full cursor-pointer items-center justify-center gap-2 rounded-full
-                 bg-neon px-4 text-sm font-semibold text-white shadow-glow hover:brightness-105">
+                 bg-neon px-4 text-sm font-semibold text-white shadow-glow hover:brightness-105
+                 focus-within:ring-2 focus-within:ring-ring focus-within:ring-offset-2 focus-within:ring-offset-background">
       {children}
-      <input type="file" accept={accept} className="hidden"
+      {/* sr-only (not `hidden`) keeps the input focusable, so the upload is keyboard-reachable */}
+      <input type="file" accept={accept} className="sr-only"
         onChange={(e) => { const f = e.target.files?.[0]; if (f) onFile(f); e.currentTarget.value = '' }} />
     </motion.label>
   )
@@ -149,7 +191,15 @@ export default function App() {
   const [modelUrl, setModelUrl] = useState<string | null>(null)
   const [vStatus, setVStatus] = useState<'idle' | 'loading' | 'error'>('idle')
   const [urlText, setUrlText] = useState('')
-  const loadUrl = (u: string) => { setVStatus('loading'); setModelUrl(u) }
+  const loadUrl = (u: string) => {
+    // release the previous model's blob URL (and its GLTF cache entry) so
+    // repeated uploads don't leak memory
+    if (modelUrl && modelUrl !== u && modelUrl.startsWith('blob:')) {
+      useGLTF.clear(modelUrl)
+      URL.revokeObjectURL(modelUrl)
+    }
+    setVStatus('loading'); setModelUrl(u)
+  }
 
   // convert = auto-detect a draft, then trace-fix
   const [cSegs, setCSegs] = useState<Seg[]>([])
@@ -165,17 +215,31 @@ export default function App() {
   const [pLoading, setPLoading] = useState(false)
   const [pPlan, setPPlan] = useState<BuiltPlan | null>(null)
   const [pWidthFt, setPWidthFt] = useState<number>(0) // 0 = let the backend decide
+  // shared style: the Visualize panel's style choice ALSO re-dresses the
+  // walkable 3D's materials live (floors, walls, columns) — same palette
+  const [vizStyle, setVizStyle] = useState('scandinavian')
+  // founders popup, reachable from the sidebar in every app mode
+  const [contactOpen, setContactOpen] = useState(false)
   const [pStatus, setPStatus] = useState('Upload a plan (PDF, image, or CAD .dxf/.dwg) — the backend parses it and builds real 3D.')
 
   // bundled demo building: built by tools/make_sample_plan.py through the
   // REAL engine; loads straight from public/ with NO backend needed, so the
   // first-visit wow works even while the API is cold or down
+  // request sequencing: each build gets an id; a finished build whose id no
+  // longer matches lost the race — its state updates are dropped and its blob
+  // URL revoked, so a stale slow response can't overwrite a newer plan
+  const planReqId = useRef(0)
+
   const loadSample = async () => {
+    const id = ++planReqId.current // invalidate any in-flight build
     setPFile(null)
     setPLoading(true)
     setPStatus('Loading the sample building…')
     try {
       const m = await (await fetch('/sample.meta.json')).json()
+      // re-check AFTER the await: if the user uploaded a real plan while the
+      // sample was fetching, that newer request owns the UI — don't clobber it
+      if (id !== planReqId.current) return
       const old = pPlan
       setPPlan({ meta: m.meta, glbUrl: '/sample.glb', doors: m.doors,
                  windows: m.windows, rooms: m.rooms ?? [] })
@@ -184,18 +248,24 @@ export default function App() {
         `${m.meta.plan_depth_ft.toFixed(1)} ft — parsed by the same engine. ` +
         'Now try your own CAD PDF.')
     } catch {
-      setPStatus('Could not load the sample building.')
+      if (id === planReqId.current) setPStatus('Could not load the sample building.')
     } finally {
-      setPLoading(false)
+      if (id === planReqId.current) setPLoading(false)
     }
   }
 
-  const handlePlan = async (f: File, wing?: number) => {
+  const handlePlan = async (f: File, wing?: number, northDeg?: number) => {
+    const id = ++planReqId.current
     setPFile(f)
     setPLoading(true)
     setPStatus(wing === undefined ? 'Parsing plan + building 3D…' : `Building wing ${wing}…`)
     try {
-      const built = await buildPlan(f, pWidthFt || undefined, wing)
+      const built = await buildPlan(f, pWidthFt || undefined, wing,
+                                    northDeg ?? pNorthDeg)
+      if (id !== planReqId.current) { // a newer request won — drop this result
+        URL.revokeObjectURL(built.glbUrl)
+        return
+      }
       // swap in the new model FIRST, then release the old one's blob URL —
       // revoking before the rebuild finishes can break the model on screen
       const old = pPlan
@@ -205,10 +275,14 @@ export default function App() {
       setPStatus(`${m.plan_width_ft.toFixed(1)} × ${m.plan_depth_ft.toFixed(1)} ft · ` +
         `${built.doors} doors · ${built.windows} windows · scale: ${m.scale.source}`)
     } catch (e: any) {
+      if (id !== planReqId.current) return // stale failure — a newer request owns the UI
       setPPlan(null)
-      setPStatus('Error: ' + (e?.message || 'backend unreachable — is uvicorn running on :8000?'))
+      setPStatus('Error: ' + (e?.message ||
+        (import.meta.env.DEV
+          ? 'backend unreachable — is uvicorn running on :8000?'
+          : 'could not reach the server — please try again in a moment.')))
     } finally {
-      setPLoading(false)
+      if (id === planReqId.current) setPLoading(false)
     }
   }
 
@@ -217,6 +291,11 @@ export default function App() {
   // carries the model's scale/offset — needed to place room beacons.
   const lastFrame = useRef<FrameInfo | null>(null)
   const [frame, setFrame] = useState<FrameInfo | null>(null)
+  const [roofOn, setRoofOn] = useState(false)  // R toggles a roof slab over the plan
+  const [areaBusy, setAreaBusy] = useState(false)
+  const [currentRoomType, setCurrentRoomType] = useState<string | undefined>(undefined)
+  const [measureOn, setMeasureOn] = useState(false)   // M: click-to-measure
+  const [pNorthDeg, setPNorthDeg] = useState(0)       // Vastu compass: sheet-North
   const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
     setFrame(info)
@@ -234,6 +313,7 @@ export default function App() {
     const room = pPlan?.rooms?.[n]
     if (f && room) {
       setView(roomView(room, f, pPlan!.rooms.filter((_, i) => i !== n)))
+      setCurrentRoomType(room.type)   // so Visualize can auto-match the room
     }
   }, [pPlan])
 
@@ -278,13 +358,18 @@ export default function App() {
     a.download = 'plan.json'; a.click()
   }
 
-  // desktop keyboard shortcuts: T = top view, F = re-frame, 1-9 = enter room
+  // desktop keyboard shortcuts: T = top view, F = re-frame, R = roof, 1-9 = enter room
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      // don't hijack typing/select interaction (e.g. type-ahead "m" in the
+      // Visualize dropdowns used to toggle measure mode)
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return
       if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
       if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
+      if (e.key === 'r' || e.key === 'R') setRoofOn((v) => !v)
+      if (e.key === 'm' || e.key === 'M') setMeasureOn((v) => !v)
       if (/^[1-9]$/.test(e.key)) enterRoom(Number(e.key) - 1)
     }
     window.addEventListener('keydown', onKey)
@@ -372,9 +457,13 @@ export default function App() {
                 <>
                   <Status>1 · Upload a plan — it auto-detects a draft. 2 · Click along walls it missed. 3 · The 3D updates live.</Status>
                   <Field label="Building width (m)">
-                    <NumberInput value={cWidthM} min={1} step={0.5} onChange={(e) => setCWidthM(+e.target.value)} />
+                    <NumberInput value={cWidthM} min={1} step={0.5} onChange={(e) => {
+                      // guard: an emptied field parses to NaN — keep the last valid width
+                      const v = +e.target.value
+                      if (Number.isFinite(v) && v > 0) setCWidthM(v)
+                    }} />
                   </Field>
-                  <Upload onFile={handleConvert} accept=".jpg,.jpeg,.png,.pdf,.glb,.gltf">Upload plan</Upload>
+                  <Upload onFile={handleConvert} accept=".jpg,.jpeg,.png,.glb,.gltf">Upload plan</Upload>
                   {cUnder && (
                     <div className="flex flex-col gap-2">
                       <div className="grid grid-cols-3 gap-2">
@@ -447,11 +536,29 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
+
+          {/* contact stays reachable inside the app (story/FAQ live on the
+              landing page only) — opens the same founders popup */}
+          <button
+            onClick={() => setContactOpen(true)}
+            className="mt-4 w-full rounded-md border border-white/10 py-1.5 text-[11px]
+                       text-muted-foreground transition-colors hover:border-neon/50 hover:text-foreground"
+          >
+            ✉ Contact founders
+          </button>
         </div>
       </aside>
 
+      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} />
+
       {/* ─────────── 3D scene ─────────── */}
-      <Canvas shadows camera={{ position: PRESETS.default.position, fov: 50 }} className="!absolute inset-0">
+      <Canvas
+        shadows="soft"
+        dpr={[1, 2]}
+        gl={{ antialias: true, toneMappingExposure: 1.08, preserveDrawingBuffer: true }}
+        camera={{ position: PRESETS.default.position, fov: 50 }}
+        className="!absolute inset-0"
+      >
         {/* plan mode needs a building-sized sun; the room lights' shadow
             camera (~3.5 m) silently clipped shadows on 14 m plans */}
         {mode === 'plan' ? <PlanLights /> : <Lights />}
@@ -496,9 +603,19 @@ export default function App() {
               <Suspense fallback={null}>
                 <ErrorBoundary key={pPlan.glbUrl} fallback={null}
                   onError={() => setPStatus('⚠ The 3D model failed to render — try rebuilding, another wing, or a smaller plan.')}>
-                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center plan onFramed={framePlan} />
+                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center plan styleKey={vizStyle} onFramed={framePlan} />
                 </ErrorBoundary>
               </Suspense>
+            )}
+            {/* roof (press R): a HIP roof fitted to the building's footprint —
+                ridge along the long axis, 45°-style hip ends, slight eave
+                overhang. Off by default so the rooms stay visible. */}
+            {pPlan && frame && roofOn && (
+              <HipRoof
+                center={[frame.center[0], frame.position[1] + frame.size[1], frame.center[2]]}
+                w={frame.size[0] * 1.05}
+                d={frame.size[2] * 1.05}
+              />
             )}
             {/* walk-inside beacons: one per detected room — click to step in */}
             {pPlan && frame && pPlan.rooms.map((r, i) => (
@@ -506,6 +623,8 @@ export default function App() {
                 position={roomWorldPoint(r, frame, 4.6)}
                 onSelect={() => enterRoom(i)} />
             ))}
+            {/* M: click two points -> real distance in ft/m */}
+            <MeasureTool active={measureOn} modelScale={frame?.scale} />
           </>
         )}
 
@@ -531,6 +650,7 @@ export default function App() {
         )}
 
         <CameraRig view={view} />
+        <GBufferBridge />
         <OrbitControls makeDefault enableDamping target={[0, 1.5, 0]} />
       </Canvas>
 
@@ -541,6 +661,119 @@ export default function App() {
             upload a plan — watch it stand up
           </p>
         </div>
+      )}
+
+      {/* ── RERA area statement card (top-right) ── */}
+      {mode === 'plan' && pPlan?.areaStatement && (
+        <motion.div
+          initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.3 }}
+          style={{ background: 'rgba(15, 23, 42, 0.6)' }}
+          className="absolute right-5 top-5 z-20 w-56 rounded-2xl border border-white/10 p-4 text-xs
+                     text-white/80 shadow-2xl backdrop-blur-md"
+        >
+          <div className="mb-2 flex items-center justify-between">
+            <span className="font-semibold text-white">Area statement</span>
+            <span className="text-[10px] text-neon">RERA</span>
+          </div>
+          {([
+            ['Carpet', pPlan.areaStatement.carpet_area],
+            ['Built-up', pPlan.areaStatement.built_up_area],
+            ['Super built-up', pPlan.areaStatement.super_built_up_area],
+          ] as const).map(([label, pair]) => (
+            <div key={label} className="flex items-baseline justify-between py-0.5">
+              <span className="text-white/60">{label}</span>
+              <span className="font-medium text-white">
+                {pair.sqft.toLocaleString()} <span className="text-white/40">sqft</span>
+              </span>
+            </div>
+          ))}
+          <div className="mt-1 flex items-baseline justify-between border-t border-white/10 pt-1.5 text-white/60">
+            <span>Efficiency</span>
+            {/* NON-NEGOTIABLE: a failed room detection must never show as a
+                silent 0% — the Plan Doctor downgrades it to "needs review" */}
+            {pPlan.diagnosis?.efficiency_display === 'needs_review' || !(pPlan.areaStatement.efficiency_pct > 0)
+              ? <span className="text-amber-300">needs review</span>
+              : <span>{pPlan.areaStatement.efficiency_pct}%</span>}
+          </div>
+          {pPlan.diagnosis && (
+            <div className="py-0.5 text-white/60">
+              <div className="flex items-baseline justify-between">
+                <span>Plan check</span>
+                <span className={
+                  pPlan.diagnosis.grade === 'A' ? 'text-emerald-300'
+                    : pPlan.diagnosis.grade === 'B' ? 'text-emerald-200'
+                    : pPlan.diagnosis.grade === 'C' ? 'text-amber-300' : 'text-red-300'
+                }>
+                  {pPlan.diagnosis.grade} · {pPlan.diagnosis.score}/100
+                </span>
+              </div>
+              {pPlan.diagnosis.grade !== 'A' && (
+                <div className="text-[10px] leading-snug text-white/35">
+                  {pPlan.diagnosis.headline}
+                </div>
+              )}
+            </div>
+          )}
+          {pPlan.vastu?.score != null && (
+            <div className="flex items-baseline justify-between py-0.5 text-white/60">
+              <span>Vastu <span className="text-white/30">({pPlan.vastu.rooms_scored} rooms)</span></span>
+              <span className={pPlan.vastu.score >= 70 ? 'text-emerald-300' : pPlan.vastu.score >= 45 ? 'text-amber-300' : 'text-red-300'}>
+                {pPlan.vastu.score}/100
+              </span>
+            </div>
+          )}
+          {pPlan.vastu && pFile && (
+            <div className="flex items-center justify-between py-0.5 text-white/60">
+              <span>North on sheet</span>
+              <div className="flex gap-1">
+                {([['↑', 0], ['→', 90], ['↓', 180], ['←', 270]] as const).map(([arrow, deg]) => (
+                  <button
+                    key={deg}
+                    title={`North points ${arrow} (${deg}°)`}
+                    onClick={() => {
+                      if (deg === pNorthDeg) return
+                      setPNorthDeg(deg)
+                      handlePlan(pFile, undefined, deg)   // re-read with the new compass
+                    }}
+                    className={`h-6 w-6 rounded border text-xs leading-none
+                      ${pNorthDeg === deg
+                        ? 'border-neon/70 bg-neon/20 text-white'
+                        : 'border-white/15 text-white/50 hover:border-neon/40 hover:text-white'}`}
+                  >
+                    {arrow}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+          {pPlan.costInr != null && pPlan.costInr > 0 && (
+            <div className="py-0.5 text-white/60">
+              <div className="flex items-baseline justify-between">
+                <span>Walls &amp; finishes cost</span>
+                <span className="text-white">₹{Math.round(pPlan.costInr / 1000).toLocaleString()}k</span>
+              </div>
+              {/* honest scope: this is NOT total construction cost (~half) */}
+              <div className="text-[10px] leading-snug text-white/30">
+                masonry + plaster + paint + flooring only — excludes RCC structure,
+                doors/windows, electrical &amp; plumbing
+              </div>
+            </div>
+          )}
+          <button
+            disabled={areaBusy || !pFile}
+            onClick={async () => {
+              if (!pFile) return
+              setAreaBusy(true)
+              try { await downloadAreaStatement(pFile, pWidthFt || undefined, pPlan.areaStatement!.loading_factor) }
+              catch { /* surfaced by the button label reset */ }
+              finally { setAreaBusy(false) }
+            }}
+            className="mt-3 w-full rounded-lg border border-neon/40 bg-neon/10 py-2 text-xs font-medium
+                       text-white hover:border-neon/70 hover:bg-neon/20 disabled:opacity-50"
+          >
+            {areaBusy ? 'Preparing…' : '⬇ Download Excel'}
+          </button>
+        </motion.div>
       )}
 
       {/* ── meta HUD: the built plan's numbers, landing-style glass pill ── */}
@@ -562,11 +795,23 @@ export default function App() {
         </motion.div>
       )}
 
+      {/* ── Visualize (Beta): photoreal render of the current view (GPU backend) ── */}
+      {mode === 'plan' && pPlan && (
+        <VisualizeButton roomType={currentRoomType} rooms={pPlan.rooms} enterRoom={enterRoom}
+          style={vizStyle} onStyleChange={setVizStyle} />
+      )}
+
       {/* ── desktop controls hint ── */}
       <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">
         drag to orbit · scroll to zoom ·{' '}
         <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
         <span className="rounded border border-white/20 px-1">F</span> frame plan
+        {mode === 'plan' && pPlan && (
+          <>
+            {' '}· <span className={`rounded border px-1 ${roofOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>R</span> roof
+            {' '}· <span className={`rounded border px-1 ${measureOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>M</span> measure
+          </>
+        )}
         {mode === 'plan' && (pPlan?.rooms.length ?? 0) > 0 && (
           <> · <span className="rounded border border-white/20 px-1">1–{Math.min(9, pPlan!.rooms.length)}</span> step inside · click a beacon</>
         )}

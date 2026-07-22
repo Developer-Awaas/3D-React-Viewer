@@ -1,7 +1,15 @@
 // Talks to the Drishti perception backend (server/).
 // Dev default: http://localhost:8000.  Prod: set VITE_API_BASE to the deployed URL.
 // NOTE: not wired into the app yet - this is the building block for Step 3.
-const API_BASE = (import.meta as any).env?.VITE_API_BASE ?? 'http://localhost:8000'
+const API_BASE: string = (() => {
+  const base = (import.meta as any).env?.VITE_API_BASE
+  if (base) return base
+  // never silently point a production build at localhost — fail loud at init
+  if ((import.meta as any).env?.PROD) {
+    throw new Error('VITE_API_BASE is not set — configure it in your deployment environment')
+  }
+  return 'http://localhost:8000'
+})()
 
 export type Perception = {
   device: string

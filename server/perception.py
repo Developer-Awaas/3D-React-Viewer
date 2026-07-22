@@ -7,6 +7,7 @@ import io
 import os
 import sys
 import base64
+import threading
 import numpy as np
 from PIL import Image
 
@@ -28,6 +29,7 @@ _PALETTE = np.array([
 
 _MODEL = None
 _ROT = None
+_LOAD_LOCK = threading.Lock()   # lazy load_model() races (it os.chdir()s!)
 
 
 def _device():
@@ -57,44 +59,49 @@ def load_model():
     global _MODEL, _ROT
     if _MODEL is not None:
         return _MODEL
+    # double-checked lock: concurrent lazy loads raced through the process-
+    # global os.chdir() below (and loaded the model twice)
+    with _LOAD_LOCK:
+        if _MODEL is not None:
+            return _MODEL
 
-    repo = os.path.abspath(os.getenv("CUBICASA_REPO", "./CubiCasa5k"))
-    weights = os.path.abspath(os.getenv(
-        "CUBICASA_WEIGHTS", os.path.join(repo, "model_best_val_loss_var.pkl")))
-    if repo not in sys.path:
-        sys.path.insert(0, repo)
+        repo = os.path.abspath(os.getenv("CUBICASA_REPO", "./CubiCasa5k"))
+        weights = os.path.abspath(os.getenv(
+            "CUBICASA_WEIGHTS", os.path.join(repo, "model_best_val_loss_var.pkl")))
+        if repo not in sys.path:
+            sys.path.insert(0, repo)
 
-    from floortrans.models import get_model
-    from floortrans.loaders import RotateNTurns
+        from floortrans.models import get_model
+        from floortrans.loaders import RotateNTurns
 
-    _ROT = RotateNTurns()
+        _ROT = RotateNTurns()
 
-    # get_model() loads its pretrained backbone via a RELATIVE path
-    # ("floortrans/models/model_1427.pth"), so it must run with the repo as the
-    # working directory - otherwise it grabs the wrong copy. Restore cwd after.
-    prev_cwd = os.getcwd()
-    os.chdir(repo)
-    try:
-        model = get_model("hg_furukawa_original", 51)
-    finally:
-        os.chdir(prev_cwd)
+        # get_model() loads its pretrained backbone via a RELATIVE path
+        # ("floortrans/models/model_1427.pth"), so it must run with the repo as the
+        # working directory - otherwise it grabs the wrong copy. Restore cwd after.
+        prev_cwd = os.getcwd()
+        os.chdir(repo)
+        try:
+            model = get_model("hg_furukawa_original", 51)
+        finally:
+            os.chdir(prev_cwd)
 
-    model.conv4_ = torch.nn.Conv2d(256, N_CLASSES, bias=True, kernel_size=1)
-    model.upsample = torch.nn.ConvTranspose2d(N_CLASSES, N_CLASSES, kernel_size=4, stride=4)
+        model.conv4_ = torch.nn.Conv2d(256, N_CLASSES, bias=True, kernel_size=1)
+        model.upsample = torch.nn.ConvTranspose2d(N_CLASSES, N_CLASSES, kernel_size=4, stride=4)
 
-    ckpt = torch.load(weights, map_location="cpu", weights_only=False)
-    state = _extract_weights(ckpt) or ckpt
-    state = {(k[7:] if k.startswith("module.") else k): v for k, v in state.items()}
-    missing, unexpected = model.load_state_dict(state, strict=False)
-    matched = len(state) - len(unexpected)
-    print(f"Weights loaded. matched_keys={matched} "
-          f"missing={len(missing)} unexpected={len(unexpected)}")
-    if matched == 0:
-        raise RuntimeError("No weight tensors matched the model - wrong/corrupt checkpoint.")
+        ckpt = torch.load(weights, map_location="cpu", weights_only=False)
+        state = _extract_weights(ckpt) or ckpt
+        state = {(k[7:] if k.startswith("module.") else k): v for k, v in state.items()}
+        missing, unexpected = model.load_state_dict(state, strict=False)
+        matched = len(state) - len(unexpected)
+        print(f"Weights loaded. matched_keys={matched} "
+              f"missing={len(missing)} unexpected={len(unexpected)}")
+        if matched == 0:
+            raise RuntimeError("No weight tensors matched the model - wrong/corrupt checkpoint.")
 
-    model.eval().to(_device())
-    _MODEL = model
-    return _MODEL
+        model.eval().to(_device())
+        _MODEL = model
+        return _MODEL
 
 
 def _overlay_png(base_rgb, pred):
