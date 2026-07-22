@@ -32,8 +32,38 @@ router = APIRouter(prefix="/visualize", tags=["visualize"])
 RENDER_BACKEND = os.getenv("RENDER_BACKEND", "local").lower()
 
 # at most N heavy render jobs at once (default 1): SDXL and the video model each
-# want most of a 12 GB card, so extra requests QUEUE instead of racing into OOM
-_SLOTS = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_RENDER", "1")))
+# want most of a 12 GB card, so extra requests QUEUE instead of racing into OOM.
+# SHARED gate with main.py's parser/ML inference — one GPU, one queue (a render
+# and an ML parse used to run concurrently on separate semaphores -> CUDA OOM).
+import gpu_gate
+_SLOTS = gpu_gate.GPU_SLOTS
+
+# upload cap for render/animate inputs (screenshots + G-buffer maps). These
+# endpoints used plain image.read() with NO limit -> memory-DoS vector.
+MAX_RENDER_UPLOAD_MB = int(os.getenv("MAX_RENDER_UPLOAD_MB", "15"))
+
+
+async def _read_render_upload(upload, what="image", required=True):
+    """Chunked, size-capped read of a render input. Returns bytes or None
+    (optional inputs). 413 on oversize, 400 on empty required input."""
+    if upload is None:
+        return None
+    cap = MAX_RENDER_UPLOAD_MB * 1024 * 1024
+    chunks, size = [], 0
+    while True:
+        chunk = await upload.read(1024 * 1024)
+        if not chunk:
+            break
+        size += len(chunk)
+        if size > cap:
+            raise HTTPException(413, f"{what} too large (> {MAX_RENDER_UPLOAD_MB} MB)")
+        chunks.append(chunk)
+    raw = b"".join(chunks)
+    if not raw:
+        if required:
+            raise HTTPException(400, f"empty {what}")
+        return None
+    return raw
 
 
 # --------------------------------------------------------------------------- #
@@ -235,6 +265,47 @@ def _one_controlnet(control):
         return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16)
 
 
+def _wants_offload(controls):
+    """E2 speed fix: decide whether the pipeline needs CPU-offload.
+
+    Layman's version: CPU-offload keeps only the busy part of the AI on the
+    graphics card, shuttling the rest to normal RAM every step — it saves
+    video memory but costs 2-3x the time. A single-ControlNet fp16 SDXL stack
+    (~7 GB) FITS a 12 GB card whole, so shuttling is pure waste there. Multi-
+    ControlNet (depth+seg together) genuinely needs the headroom.
+
+    GPU_OFFLOAD env: auto (default: offload only for multi-ControlNet) |
+    always (old behaviour, safest) | never (max speed, OOM risk)."""
+    mode = os.getenv("GPU_OFFLOAD", "auto").lower()
+    if mode == "always":
+        return True
+    if mode == "never":
+        return False
+    return len(tuple(controls)) > 1
+
+
+def _apply_fast_scheduler(pipe):
+    """E1 speed fix: swap the stock scheduler for DPM++ 2M Karras.
+
+    Layman's version: the scheduler is the ROUTE the AI takes from noise to
+    finished image. The stock route needs ~28 steps to look good; DPM++ 2M
+    Karras reaches the same quality in ~22 — about 25-30% less GPU time per
+    render, no quality loss. Industry-standard SDXL setting.
+
+    FAST_SCHEDULER=0 in .env reverts to the stock route (A/B testing).
+    Defensive: any failure leaves the pipeline unchanged — a missing scheduler
+    class must never break a render. Returns True when applied."""
+    if os.getenv("FAST_SCHEDULER", "1").lower() in ("0", "false", "no"):
+        return False
+    try:
+        from diffusers import DPMSolverMultistepScheduler
+        pipe.scheduler = DPMSolverMultistepScheduler.from_config(
+            pipe.scheduler.config, use_karras_sigmas=True)
+        return True
+    except Exception:
+        return False
+
+
 def _load_sdxl(controls=("canny",)):
     """Load an SDXL+ControlNet pipeline for ONE or MANY control types. Passing
     e.g. ('depth','seg') builds a multi-ControlNet (depth locks volume, seg locks
@@ -253,11 +324,20 @@ def _load_sdxl(controls=("canny",)):
         os.getenv("SDXL_MODEL", "stabilityai/stable-diffusion-xl-base-1.0"),
         controlnet=controlnet, torch_dtype=torch.float16, use_safetensors=True,
         variant="fp16")
-    pipe.enable_model_cpu_offload()   # only the active submodule sits on GPU -> fits 12 GB
+    # E2: offload only when the stack doesn't fit whole (see _wants_offload);
+    # any failure to go fully-on-GPU falls back to the safe offload path
+    if _wants_offload(controls):
+        pipe.enable_model_cpu_offload()
+    else:
+        try:
+            pipe.to("cuda")
+        except Exception:
+            pipe.enable_model_cpu_offload()
     try:
         pipe.enable_vae_tiling()
     except Exception:
         pass
+    _apply_fast_scheduler(pipe)       # E1: DPM++ 2M Karras (see helper above)
     _PIPES[key] = pipe
     return pipe
 
@@ -400,7 +480,9 @@ async def render_ep(
     room_type: str = Form("living room"),
     style: str = Form("scandinavian"),
     prompt: str = Form(""),
-    steps: int = Form(28),
+    # E1: 22 steps is the DPM++ 2M Karras sweet spot (was 28 on the stock
+    # scheduler — same quality, ~25-30% faster). RENDER_STEPS in .env overrides.
+    steps: int = Form(int(os.getenv("RENDER_STEPS", "22"))),
     guidance: float = Form(6.0),
     control_scale: float = Form(0.7),
     seed: int = Form(12345),
@@ -409,11 +491,9 @@ async def render_ep(
     Geometry is locked by ControlNet: `depth` (3D volume) + `seg` (surface
     classes = the moat) rendered from the scene, else Canny edges of the
     screenshot. `style`/`room_type` set the look."""
-    raw = await image.read()
-    if not raw:
-        raise HTTPException(400, "empty image")
-    depth_bytes = await depth.read() if depth is not None else None
-    seg_bytes = await seg.read() if seg is not None else None
+    raw = await _read_render_upload(image, "image")
+    depth_bytes = await _read_render_upload(depth, "depth map", required=False)
+    seg_bytes = await _read_render_upload(seg, "seg map", required=False)
     full_prompt = prompt.strip() or _compose_prompt(room_type, style)
     ctype = "+".join([c for c, b in (("depth", depth_bytes), ("seg", seg_bytes)) if b]) or "canny"
 
@@ -446,10 +526,12 @@ async def animate_ep(
     frames: int = Form(int(os.getenv("SVD_FRAMES", "25"))),
     seed: int = Form(12345),
 ):
-    """Photoreal still -> a short (~3-4s) cinematic walkthrough .mp4."""
-    raw = await image.read()
-    if not raw:
-        raise HTTPException(400, "empty image")
+    """Photoreal still -> a short (~3-4s) cinematic walkthrough .mp4.
+    LICENSE GATE: SVD ships under Stability's community license (revenue cap /
+    commercial terms) — set DISABLE_SVD=1 to switch the feature off in .env."""
+    if os.getenv("DISABLE_SVD", "0").lower() in ("1", "true", "yes"):
+        raise HTTPException(403, "Animate is disabled on this server (license gate)")
+    raw = await _read_render_upload(image, "image")
     mp4 = await _run_heavy(_animate, raw, motion, fps, seed, frames, what="animate")
     return JSONResponse({"video_base64": base64.b64encode(mp4).decode(),
                          "mime": "video/mp4"})

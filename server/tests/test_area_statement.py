@@ -21,9 +21,36 @@ def test_carpet_is_sum_of_rooms():
     out = A.compute_area_statement(scene, loading_factor=1.30)
     assert out["carpet_area"]["sqft"] == 200.0            # 120 + 80
     assert out["built_up_area"]["sqft"] == 300.0          # gross footprint
-    assert out["super_built_up_area"]["sqft"] == 390.0    # 300 * 1.30
+    # market convention: super = CARPET x loading (200 * 1.30 = 260), floored
+    # at built-up (300). Old built_up * loading double-counted wall footprint.
+    assert out["super_built_up_area"]["sqft"] == 300.0    # max(260, 300)
     assert out["wall_and_circulation"]["sqft"] == 100.0   # 300 - 200
-    assert out["efficiency_pct"] == round(100 * 200 / 390, 1)
+    assert out["efficiency_pct"] == round(100 * 200 / 300, 1)
+
+
+def test_super_builtup_is_carpet_based():
+    # carpet 800, built-up 900, loading 1.30 -> super = 800*1.30 = 1040 (NOT
+    # 900*1.30 = 1170) and efficiency ~76.9% (not ~68%) — the buyer-facing fix
+    scene = {
+        "rooms": [{"id": "r0", "area_sqft": 800.0}],
+        "walls_poly": [{"outer": [[0, 0], [30, 0], [30, 30], [0, 30]]}],  # 900
+        "meta": {"scale": {"source": "dimension_text"}},
+    }
+    out = A.compute_area_statement(scene, loading_factor=1.30)
+    assert out["super_built_up_area"]["sqft"] == 1040.0
+    assert out["efficiency_pct"] == round(100 * 800 / 1040, 1)
+    assert any("carpet x loading" in n for n in out["notes"])
+
+
+def test_super_builtup_never_below_builtup():
+    # small loading on a wall-heavy plan: super floors at built-up
+    scene = {
+        "rooms": [{"id": "r0", "area_sqft": 100.0}],
+        "walls_poly": [{"outer": [[0, 0], [20, 0], [20, 10], [0, 10]]}],  # 200
+        "meta": {"scale": {"source": "dimension_text"}},
+    }
+    out = A.compute_area_statement(scene, loading_factor=1.05)
+    assert out["super_built_up_area"]["sqft"] == 200.0    # max(105, 200)
 
 
 def test_sqm_conversion():

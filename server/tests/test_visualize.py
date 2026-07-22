@@ -45,10 +45,17 @@ def test_models_status_shape():
         assert set(m) >= {"name", "id", "cached"}
 
 
-def test_render_without_gpu_returns_clean_503():
+def test_render_without_gpu_returns_clean_503(monkeypatch, tmp_path):
+    # simulate "no CUDA" explicitly: on the real GPU box this test used to
+    # fall through to an ACTUAL multi-minute SDXL render (and return 200).
+    # ALSO point the render cache at an empty dir: that first real render got
+    # CACHED on the GPU box, and a cache hit answers 200 before any GPU check.
+    import visualize
+    monkeypatch.setattr(visualize, "_cuda_ok", lambda: False)
+    monkeypatch.setenv("RENDER_CACHE_DIR", str(tmp_path))
     r = client.post("/visualize/render",
                     files={"image": ("view.png", _png(), "image/png")})
-    # no CUDA in CI -> a friendly 503 telling you to use a GPU or the fal backend
+    # no CUDA -> a friendly 503 telling you to use a GPU or the fal backend
     assert r.status_code == 503
     assert "GPU" in r.text or "fal" in r.text
 

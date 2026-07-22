@@ -116,21 +116,23 @@ def test_sample_glb_has_detailed_furniture(sample_scene, tmp_path):
     assert any(n.startswith("furn_commode_") for n in names)
 
 
-def test_sample_glb_roof_and_window_frames(sample_scene, tmp_path):
-    """Every built plan ships a 'roof' slab (viewer toggles it by name) and
-    windows carry a rectangular frame unit (sill/head/jambs), not a bare cut."""
+def test_sample_glb_roof_stays_frontend_side(sample_scene, tmp_path):
+    """DESIGN (since the hip-roof rework): the roof is built by the FRONTEND
+    (App.tsx HipRoof, toggled with R) and window frames by WindowWall.tsx —
+    the GLB itself must NOT ship a roof mesh, or the viewer would show two.
+    This replaces a stale test that expected 'roof'/'furn_wframe_*' meshes in
+    the GLB from the pre-rework design (it never passed at deb56aa).
+    The GLB must still carry the window OPENINGS the frontend builds frames
+    from."""
     import trimesh
     from scene_to_glb import build_glb
     out = tmp_path / "roof.glb"
     build_glb(sample_scene, str(out))
     names = set(trimesh.load(str(out)).geometry.keys())
-    assert "roof" in names
-    frames = [n for n in names if n.startswith("furn_wframe_")]
-    assert any("sill" in n for n in frames)
-    assert any("head" in n for n in frames)
-    assert any("jamb" in n for n in frames)
+    assert "roof" not in names
+    assert any(o["type"] == "window" for o in sample_scene["openings"])
     n_windows = sum(1 for n in names if n.startswith("glass_"))
-    assert n_windows == 6              # frames must not eat the glass panes
+    assert n_windows == 6              # windows still export their glass panes
 
 
 def test_walls_reach_full_height(sample_scene, tmp_path):

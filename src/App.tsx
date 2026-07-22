@@ -231,12 +231,15 @@ export default function App() {
   const planReqId = useRef(0)
 
   const loadSample = async () => {
-    planReqId.current++ // invalidate any in-flight build
+    const id = ++planReqId.current // invalidate any in-flight build
     setPFile(null)
     setPLoading(true)
     setPStatus('Loading the sample building…')
     try {
       const m = await (await fetch('/sample.meta.json')).json()
+      // re-check AFTER the await: if the user uploaded a real plan while the
+      // sample was fetching, that newer request owns the UI — don't clobber it
+      if (id !== planReqId.current) return
       const old = pPlan
       setPPlan({ meta: m.meta, glbUrl: '/sample.glb', doors: m.doors,
                  windows: m.windows, rooms: m.rooms ?? [] })
@@ -245,9 +248,9 @@ export default function App() {
         `${m.meta.plan_depth_ft.toFixed(1)} ft — parsed by the same engine. ` +
         'Now try your own CAD PDF.')
     } catch {
-      setPStatus('Could not load the sample building.')
+      if (id === planReqId.current) setPStatus('Could not load the sample building.')
     } finally {
-      setPLoading(false)
+      if (id === planReqId.current) setPLoading(false)
     }
   }
 
@@ -274,7 +277,10 @@ export default function App() {
     } catch (e: any) {
       if (id !== planReqId.current) return // stale failure — a newer request owns the UI
       setPPlan(null)
-      setPStatus('Error: ' + (e?.message || 'backend unreachable — is uvicorn running on :8000?'))
+      setPStatus('Error: ' + (e?.message ||
+        (import.meta.env.DEV
+          ? 'backend unreachable — is uvicorn running on :8000?'
+          : 'could not reach the server — please try again in a moment.')))
     } finally {
       if (id === planReqId.current) setPLoading(false)
     }
@@ -355,8 +361,11 @@ export default function App() {
   // desktop keyboard shortcuts: T = top view, F = re-frame, R = roof, 1-9 = enter room
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      const tag = (e.target as HTMLElement | null)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      const el = e.target as HTMLElement | null
+      const tag = el?.tagName
+      // don't hijack typing/select interaction (e.g. type-ahead "m" in the
+      // Visualize dropdowns used to toggle measure mode)
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el?.isContentEditable) return
       if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
       if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
       if (e.key === 'r' || e.key === 'R') setRoofOn((v) => !v)
@@ -679,8 +688,32 @@ export default function App() {
             </div>
           ))}
           <div className="mt-1 flex items-baseline justify-between border-t border-white/10 pt-1.5 text-white/60">
-            <span>Efficiency</span><span>{pPlan.areaStatement.efficiency_pct}%</span>
+            <span>Efficiency</span>
+            {/* NON-NEGOTIABLE: a failed room detection must never show as a
+                silent 0% — the Plan Doctor downgrades it to "needs review" */}
+            {pPlan.diagnosis?.efficiency_display === 'needs_review' || !(pPlan.areaStatement.efficiency_pct > 0)
+              ? <span className="text-amber-300">needs review</span>
+              : <span>{pPlan.areaStatement.efficiency_pct}%</span>}
           </div>
+          {pPlan.diagnosis && (
+            <div className="py-0.5 text-white/60">
+              <div className="flex items-baseline justify-between">
+                <span>Plan check</span>
+                <span className={
+                  pPlan.diagnosis.grade === 'A' ? 'text-emerald-300'
+                    : pPlan.diagnosis.grade === 'B' ? 'text-emerald-200'
+                    : pPlan.diagnosis.grade === 'C' ? 'text-amber-300' : 'text-red-300'
+                }>
+                  {pPlan.diagnosis.grade} · {pPlan.diagnosis.score}/100
+                </span>
+              </div>
+              {pPlan.diagnosis.grade !== 'A' && (
+                <div className="text-[10px] leading-snug text-white/35">
+                  {pPlan.diagnosis.headline}
+                </div>
+              )}
+            </div>
+          )}
           {pPlan.vastu?.score != null && (
             <div className="flex items-baseline justify-between py-0.5 text-white/60">
               <span>Vastu <span className="text-white/30">({pPlan.vastu.rooms_scored} rooms)</span></span>
@@ -714,9 +747,16 @@ export default function App() {
             </div>
           )}
           {pPlan.costInr != null && pPlan.costInr > 0 && (
-            <div className="flex items-baseline justify-between py-0.5 text-white/60">
-              <span>Est. cost <span className="text-white/30">(masonry+finish)</span></span>
-              <span className="text-white">₹{Math.round(pPlan.costInr / 1000).toLocaleString()}k</span>
+            <div className="py-0.5 text-white/60">
+              <div className="flex items-baseline justify-between">
+                <span>Walls &amp; finishes cost</span>
+                <span className="text-white">₹{Math.round(pPlan.costInr / 1000).toLocaleString()}k</span>
+              </div>
+              {/* honest scope: this is NOT total construction cost (~half) */}
+              <div className="text-[10px] leading-snug text-white/30">
+                masonry + plaster + paint + flooring only — excludes RCC structure,
+                doors/windows, electrical &amp; plumbing
+              </div>
             </div>
           )}
           <button

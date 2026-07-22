@@ -65,7 +65,12 @@ def test_render_endpoint_serves_cache_hit_without_gpu(tmp_path, monkeypatch):
     monkeypatch.setenv("RENDER_CACHE", "1")
     buf = io.BytesIO(); Image.new("RGB", (8, 8)).save(buf, "PNG"); img = buf.getvalue()
     prompt = visualize._compose_prompt("living room", "scandinavian")
-    key = render_cache.make_key(img, prompt, visualize.NEG_PROMPT, 28, 6.0, 0.7, 12345, "canny")
+    # prime with the ENDPOINT'S current default steps (22 since the E1 fast-
+    # scheduler change; was hardcoded 28 here and broke when the default moved)
+    import inspect
+    steps_default = inspect.signature(visualize.render_ep).parameters["steps"].default.default
+    key = render_cache.make_key(img, prompt, visualize.NEG_PROMPT,
+                                steps_default, 6.0, 0.7, 12345, "canny")
     render_cache.put(key, b"\x89PNG-cached")
     r = TestClient(main.app).post("/visualize/render",
                                   files={"image": ("v.png", img, "image/png")})

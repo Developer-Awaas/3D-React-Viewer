@@ -56,3 +56,29 @@ EXEMPT_CLIENTS = {"127.0.0.1", "::1", "testclient"}   # local dev + tests
 
 def is_heavy(path):
     return any(path.startswith(p) for p in HEAVY_PREFIXES)
+
+
+def trust_proxy():
+    """TRUST_PROXY=1 -> we are behind a reverse proxy / Cloudflare Tunnel and
+    the proxy's forwarded-IP headers are trustworthy. MUST be set in prod:
+    behind cloudflared every request reaches uvicorn from 127.0.0.1, which is
+    in EXEMPT_CLIENTS — without this flag rate limiting silently never fires."""
+    return os.getenv("TRUST_PROXY", "0").lower() in ("1", "true", "yes")
+
+
+def client_key(request):
+    """The real per-visitor key for rate limiting (and /review locality checks).
+
+    Direct deploys: the socket peer IP. With TRUST_PROXY=1: prefer
+    CF-Connecting-IP (set by Cloudflare itself — a visitor cannot forge it
+    through the tunnel), then the first hop of X-Forwarded-For. Falls back to
+    the socket IP when no forwarded header is present, so local dev calls
+    keep their localhost exemption even with the flag on."""
+    direct = request.client.host if request.client else "unknown"
+    if trust_proxy():
+        h = request.headers
+        fwd = (h.get("cf-connecting-ip")
+               or (h.get("x-forwarded-for") or "").split(",")[0].strip())
+        if fwd:
+            return fwd
+    return direct

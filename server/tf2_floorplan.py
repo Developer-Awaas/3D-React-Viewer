@@ -1,4 +1,9 @@
-"""TF2DeepFloorplan reader adapter — the COMMERCIAL-viable ML fallback.
+"""TF2DeepFloorplan reader adapter — the second ML reader in best-of.
+
+LICENSE NOTE: TF2DeepFloorplan is GPL-3.0 (copyleft). That is NOT automatically
+"commercial-safe" — using it in a paid/proprietary SaaS carries source-release
+obligations. Verify with a lawyer before charging money (same review as
+CubiCasa's CC BY-NC). Gate with DISABLE_TF2=1.
 
 Drop-in replacement for perception.py (CubiCasa): exposes the SAME
 `detections(image_bytes) -> (segments, opening_boxes, width_px, height_px)`
@@ -100,9 +105,23 @@ def _infer(image_bytes):
     return rgb, boundary, room
 
 
+# openings sitting within this fraction of the walls' extent from its edge are
+# treated as WINDOWS (external wall), the rest as DOORS (internal). Mirrors
+# scene_builder's own external-wall rule (edge_tol = 6%) — a GENERAL rule, not
+# a per-plan hack.
+EDGE_FRAC = float(os.getenv("TF2FP_EDGE_FRAC", "0.06"))
+
+
 def masks_to_detections(boundary, width_px, height_px):
     """PURE: boundary label map -> (wall segments, opening boxes) using Drishti's
-    shared vectorizer. Unit-tested with synthetic masks (no TF needed)."""
+    shared vectorizer. Unit-tested with synthetic masks (no TF needed).
+
+    DeepFloorplan's boundary head has ONE combined door/window class, so the
+    raw mask can't name the type. BUG FIX: this used to hand boxes_from_mask a
+    0/1 mask, whose value 1 = "window" — so tf2 could literally NEVER emit a
+    door, tripped plan_health's no_doors penalty (-100) on every plan, and
+    always lost best-of arbitration. We now type each opening by geometry:
+    on the building's outer edge -> window, interior -> door."""
     import numpy as np
 
     import openings
@@ -110,8 +129,24 @@ def masks_to_detections(boundary, width_px, height_px):
     wall_mask = (boundary == WALL_CLASS).astype(np.uint8)
     open_mask = (boundary == OPENING_CLASS).astype(np.uint8)
     segs = walls.vectorize_walls(wall_mask)
+    # value DOOR_IDX everywhere -> boxes come out typed "door"; we then flip
+    # edge-adjacent ones to "window" below.
     boxes = openings.boxes_from_mask(
-        open_mask, min_area=max(30, int(0.00015 * width_px * height_px)))
+        open_mask * openings.DOOR_IDX,
+        min_area=max(30, int(0.00015 * width_px * height_px)))
+
+    ys, xs = np.nonzero(wall_mask)
+    if len(xs):                              # walls' pixel extent, not the image's
+        minx, maxx = int(xs.min()), int(xs.max())
+        miny, maxy = int(ys.min()), int(ys.max())
+        tol = EDGE_FRAC * max(maxx - minx, maxy - miny, 1)
+        for b in boxes:
+            cx = (b["x0"] + b["x1"]) / 2.0
+            cy = (b["y0"] + b["y1"]) / 2.0
+            on_edge = (cx - minx <= tol or maxx - cx <= tol
+                       or cy - miny <= tol or maxy - cy <= tol)
+            if on_edge:
+                b["type"] = "window"
     return segs, boxes
 
 

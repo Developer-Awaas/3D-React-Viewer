@@ -122,7 +122,12 @@ const FAQ = [
 
 /* ---------- the sections ---------- */
 
-export default function AppSections() {
+// onEnterApp: the landing page (LandingHero — FROZEN, never edit it) mounts
+// these sections as <AppSections onEnterApp={enter}/> so "back to the viewer"
+// opens the app. The ContactModal refactor dropped this prop and tsc failed
+// (TS2322) — the branch would not build. Optional: falls back to scrolling to
+// #drishti-viewer when mounted without it.
+export default function AppSections({ onEnterApp }: { onEnterApp?: () => void }) {
   const [contactOpen, setContactOpen] = useState(false)
   return (
     <div className="relative bg-background">
@@ -228,7 +233,9 @@ export default function AppSections() {
                 Contact founders
               </button>
               <button
-                onClick={() => document.getElementById('drishti-viewer')?.scrollIntoView({ behavior: 'smooth' })}
+                onClick={() => onEnterApp
+                  ? onEnterApp()
+                  : document.getElementById('drishti-viewer')?.scrollIntoView({ behavior: 'smooth' })}
                 className="rounded-full border border-white/10 px-4 py-2 text-foreground/80 hover:border-neon/50 hover:text-foreground"
               >
                 ↑ back to the viewer

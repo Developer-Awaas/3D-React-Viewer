@@ -6,15 +6,17 @@ Dev: runs locally (uvicorn). Prod: same app deploys to any GPU host - only
 """
 import asyncio
 import functools
+import html
 import io
 import math
 import os
+import secrets
 import time
 from contextlib import asynccontextmanager
 
 import anyio.to_thread
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Query, UploadFile, HTTPException
+from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
@@ -25,7 +27,12 @@ import boq
 import cad_vector
 import db
 import pipeline
+import plan_doctor
 import plan_health
+
+# strong refs for fire-and-forget LLM-doctor tasks (a bare create_task can be
+# garbage-collected mid-flight)
+_LLM_TASKS = set()
 import vastu
 import openings
 import pdf_vector
@@ -60,12 +67,25 @@ except Exception as _e:          # torch/CubiCasa not installed
 # readers on the hard cases and keep the highest-scoring scene: a bounded
 # best-of ensemble that extracts value from every model without merging
 # conflicting geometry. A healthy vector read still short-circuits everything.
+# LICENSE GATES (flip in .env, no redeploy of code needed):
+#   DISABLE_CUBICASA=1 — CubiCasa weights are CC BY-NC (non-commercial). Fine
+#     for an internal demo; MUST be off in any paid/commercial product.
+#   DISABLE_TF2=1      — TF2DeepFloorplan is GPL-3.0 (copyleft) — lawyer-check
+#     before charging money.
+def _env_on(name):
+    return os.getenv(name, "0").lower() in ("1", "true", "yes")
+
+
 _READERS = {}
-if perception is not None:
+if perception is not None and not _env_on("DISABLE_CUBICASA"):
     _READERS["cubicasa"] = perception
+elif perception is not None:
+    log.info("cubicasa reader disabled by DISABLE_CUBICASA (license gate)")
 try:
     import tf2_floorplan
-    if os.getenv("TF2FP_MODEL"):          # only usable once weights are pointed at
+    if _env_on("DISABLE_TF2"):
+        log.info("tf2 reader disabled by DISABLE_TF2 (license gate)")
+    elif os.getenv("TF2FP_MODEL"):        # only usable once weights are pointed at
         _READERS["tf2"] = tf2_floorplan
 except Exception as _e:
     log.warning("TF2DeepFloorplan not available: %s", _e)
@@ -126,7 +146,10 @@ _limiter = _rl.Limiter()
 
 @app.middleware("http")
 async def _rate_limit_mw(request, call_next):
-    client = (request.client.host if request.client else "unknown")
+    # real visitor IP: behind Cloudflare Tunnel everyone arrives as 127.0.0.1
+    # (which is exempt!) — with TRUST_PROXY=1 client_key() reads the visitor's
+    # IP from CF-Connecting-IP / X-Forwarded-For instead.
+    client = _rl.client_key(request)
     if _rl.is_heavy(request.url.path) and client not in _rl.EXEMPT_CLIENTS:
         if not _limiter.allow(client):
             log.warning("rate limited %s on %s", client, request.url.path)
@@ -200,11 +223,34 @@ def test_page():
     return TEST_PAGE
 
 
+def _review_authorized(request: Request):
+    """Gate for the internal /review dashboard. REVIEW_TOKEN set -> require it
+    (?token=... or Authorization: Bearer ...), compared timing-safely. Not
+    set -> allow ONLY local/dev clients, so a public tunnel can never expose
+    customer parse data by accident."""
+    expected = os.getenv("REVIEW_TOKEN", "")
+    if expected:
+        supplied = request.query_params.get("token", "")
+        if not supplied:
+            auth = request.headers.get("authorization", "")
+            supplied = auth[7:] if auth.lower().startswith("bearer ") else ""
+        return secrets.compare_digest(supplied, expected)
+    return _rl.client_key(request) in _rl.EXEMPT_CLIENTS
+
+
 @app.get("/review", response_class=HTMLResponse)
-async def review_dashboard(limit: int = Query(200, gt=0, le=1000)):
+async def review_dashboard(request: Request, limit: int = Query(200, gt=0, le=1000)):
     """Team review dashboard (Stage 6 of the pipeline): every logged parse,
     worst-first, with a needs-review queue. Server-side Supabase fetch — the
-    service key never reaches the browser."""
+    service key never reaches the browser. Auth: REVIEW_TOKEN (see
+    _review_authorized) — this page lists customer plan data and must never
+    be public."""
+    if not _review_authorized(request):
+        return HTMLResponse(
+            "<html><body style='font-family:system-ui;background:#0f172a;"
+            "color:#e2e8f0;padding:40px'><h2>401 — review is private</h2>"
+            "<p>Open /review?token=&lt;REVIEW_TOKEN&gt; (set in server/.env).</p>"
+            "</body></html>", status_code=401)
     if not db.enabled():
         return ("<html><body style='font-family:system-ui;background:#0f172a;"
                 "color:#e2e8f0;padding:40px'><h2>Review dashboard</h2>"
@@ -239,10 +285,11 @@ async def review_dashboard(limit: int = Query(200, gt=0, le=1000)):
         bad = needs_review(x)
         env = (f"{(x.get('plan_width_ft') or 0):.0f}×{(x.get('plan_depth_ft') or 0):.0f}"
                if x.get("ok") else "—")
+        # filename/error are user-controlled -> escape (stored-XSS guard)
         return (f"<tr class='{'bad' if bad else ''}'>"
                 f"<td>{(x.get('created_at') or '')[:16].replace('T', ' ')}</td>"
-                f"<td>{(x.get('filename') or '')[:38]}</td>"
-                f"<td>{'✓' if x.get('ok') else '✗ ' + str(x.get('error') or '')[:40]}</td>"
+                f"<td>{html.escape((x.get('filename') or '')[:38])}</td>"
+                f"<td>{'✓' if x.get('ok') else '✗ ' + html.escape(str(x.get('error') or '')[:40])}</td>"
                 f"<td>{env}</td><td>{x.get('doors') or 0}</td>"
                 f"<td>{x.get('rooms') or 0}</td><td>{x.get('scale_source') or ''}</td>"
                 f"<td>{x.get('duration_ms') or ''}</td></tr>")
@@ -264,9 +311,11 @@ tr.bad td:first-child{{border-left:3px solid #ef4444}}
 
 MAX_UPLOAD_MB = 25
 
-# at most N model inferences at once (default 1): extra requests QUEUE for a
-# moment instead of racing each other into GPU/CPU out-of-memory
-_INFER_SLOTS = asyncio.Semaphore(int(os.getenv("MAX_CONCURRENT_INFER", "1")))
+# at most N heavy model jobs at once (default 1): extra requests QUEUE for a
+# moment instead of racing each other into GPU/CPU out-of-memory. SHARED with
+# visualize.py so a render and a parse can never double-book the one GPU.
+import gpu_gate
+_INFER_SLOTS = gpu_gate.GPU_SLOTS
 
 
 def _is_gpu_oom(e):
@@ -550,7 +599,9 @@ async def scene(image: UploadFile = File(...),
     # stores (input file -> labels) training pairs. Zero-cost when off.
     corpus_bytes = None
     if db.store_uploads_enabled():
-        corpus_bytes = await image.read()
+        # capped, chunked read: the plain image.read() here buffered an
+        # UNBOUNDED body into RAM before any size check ran (memory-DoS)
+        corpus_bytes = await _read_capped(image)
         from starlette.datastructures import UploadFile as _SU
         image = _SU(file=io.BytesIO(corpus_bytes), filename=fname,
                     headers=getattr(image, "headers", None))
@@ -588,6 +639,19 @@ async def scene(image: UploadFile = File(...),
         s["analysis"] = pipeline.analyze(s, loading_factor)
     except Exception as e:
         log.warning("pipeline analyze skipped: %s: %s", type(e).__name__, e)
+    # Plan Doctor: rules diagnosis on EVERY parse (layman explanation + grade),
+    # appended to docs/LEARNINGS.md (the auto-learn loop); optional LLM second
+    # opinion runs in PARALLEL and never blocks or overrides the rules
+    try:
+        s["diagnosis"] = plan_doctor.diagnose(s)
+        plan_doctor.record(s["diagnosis"], filename=fname)
+        if plan_doctor.llm_enabled():
+            _t = asyncio.create_task(plan_doctor.llm_second_opinion(
+                s["diagnosis"], s.get("meta", {}), filename=fname))
+            _LLM_TASKS.add(_t)
+            _t.add_done_callback(_LLM_TASKS.discard)
+    except Exception as e:
+        log.warning("plan doctor skipped: %s: %s", type(e).__name__, e)
     # one triageable summary line per parse (the prod debugging lifeline)
     _m = s.get("meta", {})
     log.info("parse ok file=%s reader=%s %.1fx%.1fft doors=%d rooms=%d scale=%s %dms",

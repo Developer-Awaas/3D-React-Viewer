@@ -67,7 +67,11 @@ def compute_area_statement(scene, loading_factor=1.30):
     # built-up can't be less than carpet; if geometry is odd, clamp up
     built_up = max(built_up, carpet)
     loading_factor = float(loading_factor) if loading_factor else 1.30
-    super_built = built_up * loading_factor
+    # Indian market convention: the developer's loading factor is applied to
+    # CARPET (super = carpet x loading; loading already covers walls + common
+    # areas). The previous built_up * loading double-counted the wall footprint,
+    # inflating super area and understating efficiency. Never below built-up.
+    super_built = max(carpet * loading_factor, built_up)
     wall_loss = max(0.0, built_up - carpet)
 
     notes = []
@@ -84,6 +88,8 @@ def compute_area_statement(scene, loading_factor=1.30):
                  "under-count vs the strict RERA definition).")
     notes.append("Balconies / open-to-sky / service shafts are not separated out "
                  "automatically — adjust manually if present.")
+    notes.append("Super built-up = carpet x loading factor (market convention; "
+                 "loading covers walls + common-area share), floored at built-up.")
 
     return {
         "carpet_area": _pair(carpet),

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { renderImage, animateImage } from '../api/visualize'
 import { captureGBuffer } from '../three/gbuffer'
 import RenderLoading from './RenderLoading'
@@ -70,6 +70,17 @@ export default function VisualizeButton({
   // style grid: same geometry, all 4 styles at once (fixed seed → fair compare)
   const [grid, setGrid] = useState<{ style: string; img?: string; err?: string }[] | null>(null)
 
+  // one Cancel button for whatever GPU job is running: every request carries
+  // this controller's signal (plus a hard timeout inside api/visualize.ts, so
+  // a stalled backend can never hang the panel forever)
+  const abortRef = useRef<AbortController | null>(null)
+  const startJob = () => {
+    const ac = new AbortController()
+    abortRef.current = ac
+    return ac.signal
+  }
+  const cancelJob = () => abortRef.current?.abort()
+
   const doRender = async () => {
     setErr(null); setVid(null)
     // depth pass from the 3D scene locks geometry best; fall back to a plain
@@ -81,9 +92,10 @@ export default function VisualizeButton({
       return
     }
     setBusy('render')
+    const signal = startJob()
     try {
       const { imageDataUrl } = await renderImage(shot, {
-        roomType: room, style, depthDataUrl: gb?.depth, segDataUrl: gb?.seg,
+        roomType: room, style, depthDataUrl: gb?.depth, segDataUrl: gb?.seg, signal,
       })
       setImg(imageDataUrl)
     } catch (e: any) {
@@ -103,7 +115,9 @@ export default function VisualizeButton({
     const take = rooms.slice(0, 9)
     setPack(take.map((r, i) => ({ label: r.type ? `${r.type} ${i + 1}` : `room ${i + 1}` })))
     setBusy('render')
+    const signal = startJob()
     for (let i = 0; i < take.length; i++) {
+      if (signal.aborted) break                            // Cancel stops the tour
       enterRoom(i)
       await new Promise((res) => setTimeout(res, 1400))   // camera glide + settle
       const gb = captureGBuffer()
@@ -115,7 +129,7 @@ export default function VisualizeButton({
       try {
         const { imageDataUrl } = await renderImage(shot, {
           roomType: (take[i].type && TYPE_TO_ROOM[take[i].type!]) || 'living room',
-          style, seed: 12345, depthDataUrl: gb?.depth, segDataUrl: gb?.seg,
+          style, seed: 12345, depthDataUrl: gb?.depth, segDataUrl: gb?.seg, signal,
         })
         setPack((p) => p && p.map((t, j) => (j === i ? { ...t, img: imageDataUrl } : t)))
       } catch (e: any) {
@@ -161,6 +175,7 @@ export default function VisualizeButton({
       }
       rec.stop()
       await done
+      stream.getTracks().forEach((t) => t.stop())   // free the capture pipeline
       const url = URL.createObjectURL(new Blob(chunks, { type: mime }))
       const a = document.createElement('a')
       a.href = url
@@ -185,13 +200,14 @@ export default function VisualizeButton({
       return
     }
     setBusy('render')
+    const signal = startJob()
     setGrid(STYLES.map((s) => ({ style: s })))
     // fire all 4; the backend semaphore runs them one at a time, each tile fills
     // in as it finishes
     await Promise.all(STYLES.map(async (s, i) => {
       try {
         const { imageDataUrl } = await renderImage(shot, {
-          style: s, roomType: room, seed: GRID_SEED, depthDataUrl: gb?.depth,
+          style: s, roomType: room, seed: GRID_SEED, depthDataUrl: gb?.depth, signal,
         })
         setGrid((g) => g && g.map((t, j) => (j === i ? { ...t, img: imageDataUrl } : t)))
       } catch (e: any) {
@@ -204,8 +220,9 @@ export default function VisualizeButton({
   const doAnimate = async () => {
     if (!img) return
     setErr(null); setBusy('animate')
+    const signal = startJob()
     try {
-      setVid(await animateImage(img))
+      setVid(await animateImage(img, 12345, signal))
     } catch (e: any) {
       setErr(e?.message || 'animate failed')
     } finally {
@@ -267,6 +284,15 @@ export default function VisualizeButton({
           <Button className="w-full" disabled={busy !== 'idle'} onClick={doRender}>
             {busy === 'render' && !grid && !pack ? `Rendering… ${elapsed}s` : img ? 'Re-render' : 'Render photoreal view'}
           </Button>
+          {busy !== 'idle' && (
+            <button
+              onClick={cancelJob}
+              className="w-full rounded-md border border-red-400/40 bg-red-500/10 py-2 text-xs
+                         text-red-300 hover:border-red-400/70 hover:bg-red-500/20"
+            >
+              ✕ Cancel {busy === 'animate' ? 'animation' : 'render'}
+            </button>
+          )}
           {busy === 'render' && !grid && !pack && (
             <p className="text-[10px] leading-relaxed text-muted-foreground/70">
               First render loads the AI model into the GPU — it can take a minute.

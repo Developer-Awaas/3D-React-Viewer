@@ -38,6 +38,15 @@ export type VastuSummary = {
   verdicts: { room: string; type: string; zone: string; verdict: string; advice?: string }[]
 }
 
+// Plan Doctor verdict: the rules-based self-check that runs on every parse
+export type Diagnosis = {
+  grade: 'A' | 'B' | 'C' | 'D' | 'F'
+  score: number
+  headline: string
+  issues: { level: 'ok' | 'warn' | 'fail'; tag: string; message: string }[]
+  efficiency_display: string   // "72.4%" or "needs_review" — NEVER a silent 0%
+}
+
 export type BuiltPlan = {
   meta: SceneMeta
   glbUrl: string
@@ -47,6 +56,7 @@ export type BuiltPlan = {
   areaStatement?: AreaStatement
   vastu?: VastuSummary
   costInr?: number          // BOQ total incl. labour (budgeting estimate)
+  diagnosis?: Diagnosis
 }
 
 async function post(path: string, file: File, q: URLSearchParams, signal?: AbortSignal): Promise<Response> {
@@ -98,6 +108,7 @@ export async function buildPlan(
     areaStatement: scene.area_statement as AreaStatement | undefined,
     vastu: scene.vastu as VastuSummary | undefined,
     costInr: scene.boq?.cost_inr?.total_with_labour as number | undefined,
+    diagnosis: scene.diagnosis as Diagnosis | undefined,
   }
 }
 

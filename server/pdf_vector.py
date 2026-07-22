@@ -575,6 +575,68 @@ def _room_dim_scale(page, drawings, warnings):
     return ppf
 
 
+def _overall_dims(page, drawings, ppf):
+    """GENERAL rule (no per-plan logic): collect VERIFIED overall-dimension
+    candidates — a ft-in text token hugging a parallel drawn line whose length
+    matches the stated feet at the chosen scale (within 6%). Returns
+    (horizontal_vals_ft, vertical_vals_ft).
+
+    Why: the drawn linework extent includes chhajja/balcony PROJECTIONS, so
+    plan_width/depth read bigger than the architect's own overall dimension
+    (anchor case: neelachala FIRST FLOOR measures 39.98 x 66.9 ft of linework
+    but is dimensioned 38'3" x 64'2" — the user-confirmed plot). When such a
+    verified dimension exists and the extent only exceeds it a little, the
+    architect's number is the truth worth reporting."""
+    import re
+    import fitz
+    if not ppf:
+        return [], []
+    mat = page.rotation_matrix
+    FTIN = re.compile(r"^(\d+)['’]-?(\d+)?[\"”]?$")
+    toks = []
+    for w in page.get_text("words"):
+        m = FTIN.match(w[4].strip())
+        if not m:
+            continue
+        val = int(m.group(1)) + int(m.group(2) or 0) / 12.0
+        if 12 <= val <= 400:                  # building-sized only
+            r = (fitz.Rect(w[:4]) * mat).normalize()
+            toks.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, val))
+    if not toks:
+        return [], []
+    hs, vs = [], []
+    for d in drawings:
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            dx, dy = b.x - a.x, b.y - a.y
+            L = math.hypot(dx, dy)
+            if L < 30 or L > BORDER_MAXLEN_PT:
+                continue
+            for cx, cy, val in toks:
+                if abs(L / val - ppf) > 0.06 * ppf:
+                    continue                  # line length must MATCH the text
+                t = ((cx - a.x) * dx + (cy - a.y) * dy) / (L * L)
+                if not (0.15 < t < 0.85):
+                    continue                  # text sits mid-line
+                perp = math.hypot(cx - (a.x + t * dx), cy - (a.y + t * dy))
+                if perp > 9:
+                    continue                  # and hugs it
+                (hs if abs(dx) >= abs(dy) else vs).append(val)
+    return hs, vs
+
+
+def _snap_envelope(dim_ft, candidates):
+    """Largest verified overall dimension that the drawn extent only exceeds
+    by projections (<= 12%) and never undercuts (> 2%). None = keep extent."""
+    best = None
+    for v in candidates:
+        if 0.88 * dim_ft <= v <= 1.02 * dim_ft:
+            best = v if best is None else max(best, v)
+    return best
+
+
 def _scale_ppf(col_rects, bbox_w_pt, width_ft):
     """Points-per-foot. Priority: dominant column box (=1 ft) > PPF env > width_ft."""
     if col_rects:
@@ -1615,6 +1677,27 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             f["y"] = round(f["y"] - sy, 3)
     else:
         out_w, out_d = w_ft, d_ft
+
+    # --- envelope truth: prefer the architect's VERIFIED overall dimension
+    # over the raw linework extent. The extent includes chhajja/balcony
+    # projections, inflating the reported plot by a few % (and RERA areas by
+    # ~2x that, since area scales with the square). GENERAL rule, corpus-
+    # gated: only a ft-in text hugging a line of matching drawn length counts,
+    # and only when the extent exceeds it by <= 12% (projection-sized). ---
+    env_src = "linework_extent"
+    try:
+        _hs, _vs = _overall_dims(page, drawings, ppf)
+        _sw, _sd = _snap_envelope(out_w, _hs), _snap_envelope(out_d, _vs)
+        if _sw or _sd:
+            drawn = (out_w, out_d)
+            out_w, out_d = (_sw or out_w), (_sd or out_d)
+            env_src = "overall_dimension_text"
+            warnings.append(
+                f"envelope from on-sheet overall dimension: {out_w:.2f} x "
+                f"{out_d:.2f} ft (drawn extent {drawn[0]:.2f} x {drawn[1]:.2f} "
+                f"ft includes projections)")
+    except Exception:
+        pass
     return {
         "meta": {
             "source": f"vector_pdf_{mode}",
@@ -1622,7 +1705,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "wall_height_ft": WALL_HEIGHT_FT,
             "plan_width_ft": round(out_w, 3),
             "plan_depth_ft": round(out_d, 3),
-            "scale": {"source": scale_src, "pt_per_ft": round(ppf, 3)},
+            "scale": {"source": scale_src, "pt_per_ft": round(ppf, 3),
+                      "envelope": env_src},
             "wing": {"count": wing_count, "index": w_idx,
                      "bbox_ft": [round(v, 3) for v in wbox_ft] if wbox_ft else None},
             "warnings": warnings,

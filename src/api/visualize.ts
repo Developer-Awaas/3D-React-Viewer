@@ -17,6 +17,26 @@ export type RenderOpts = {
   seed?: number
   depthDataUrl?: string   // depth map rendered from the 3D scene -> depth ControlNet
   segDataUrl?: string     // segmentation map (surface classes) -> seg ControlNet (moat)
+  signal?: AbortSignal    // caller's Cancel button (combined with the timeout)
+}
+
+// SDXL ~1-2 min, SVD a bit more on a 12 GB card; generous ceilings so a
+// STALLED backend can never hang the UI forever (there was NO timeout before).
+const RENDER_TIMEOUT_MS = 300_000
+const ANIMATE_TIMEOUT_MS = 420_000
+
+/** Timeout + optional user-cancel, combined into one AbortSignal. */
+function guardSignal(timeoutMs: number, user?: AbortSignal): AbortSignal {
+  return user ? AbortSignal.any([user, AbortSignal.timeout(timeoutMs)])
+              : AbortSignal.timeout(timeoutMs)
+}
+
+function abortError(e: unknown, what: string): Error {
+  if (e instanceof DOMException && e.name === 'TimeoutError')
+    return new Error(`${what} timed out — the GPU box may be busy or offline. Try again.`)
+  if (e instanceof DOMException && e.name === 'AbortError')
+    return new Error(`${what} cancelled`)
+  return e instanceof Error ? e : new Error(String(e))
 }
 
 /** data:image/png;base64,... -> a Blob we can POST as multipart form-data. */
@@ -42,7 +62,15 @@ export async function renderImage(
   if (opts.style) form.append('style', opts.style)
   if (opts.prompt) form.append('prompt', opts.prompt)
   if (opts.seed != null) form.append('seed', String(opts.seed))
-  const res = await fetch(`${API_BASE}/visualize/render`, { method: 'POST', body: form })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/visualize/render`, {
+      method: 'POST', body: form,
+      signal: guardSignal(RENDER_TIMEOUT_MS, opts.signal),
+    })
+  } catch (e) {
+    throw abortError(e, 'render')
+  }
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(`render failed (${res.status}): ${detail.slice(0, 200)}`)
@@ -52,11 +80,21 @@ export async function renderImage(
 }
 
 /** Photoreal still (PNG data URL) -> short walkthrough .mp4 (data URL). */
-export async function animateImage(pngDataUrl: string, seed = 12345): Promise<string> {
+export async function animateImage(
+  pngDataUrl: string, seed = 12345, signal?: AbortSignal,
+): Promise<string> {
   const form = new FormData()
   form.append('image', dataUrlToBlob(pngDataUrl), 'still.png')
   form.append('seed', String(seed))
-  const res = await fetch(`${API_BASE}/visualize/animate`, { method: 'POST', body: form })
+  let res: Response
+  try {
+    res = await fetch(`${API_BASE}/visualize/animate`, {
+      method: 'POST', body: form,
+      signal: guardSignal(ANIMATE_TIMEOUT_MS, signal),
+    })
+  } catch (e) {
+    throw abortError(e, 'animate')
+  }
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(`animate failed (${res.status}): ${detail.slice(0, 200)}`)

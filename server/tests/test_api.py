@@ -86,6 +86,9 @@ def test_vector_only_deploy_photo_gets_beta_503(client, monkeypatch):
     beta message, and the API must keep serving (v1 scope lock)."""
     import main
     monkeypatch.setattr(main, "perception", None)
+    # ALSO empty the reader registry: on a GPU box with real weights the photo
+    # would parse fine and return 200 — this test simulates NO ML readers
+    monkeypatch.setattr(main, "_ACTIVE_READERS", {})
     r = client.post("/scene", files={"image": ("p.png", _tiny_png(), "image/png")})
     assert r.status_code == 503
     assert "beta" in r.text.lower()
@@ -109,20 +112,27 @@ def test_upload_rejects_garbage_image_bytes(client):
 
 def test_inference_timeout_returns_504(client, monkeypatch):
     import time
+    import main
     import perception
     monkeypatch.setenv("INFER_TIMEOUT_S", "0.2")
     monkeypatch.setattr(perception, "detections", lambda raw: time.sleep(2))
+    # deterministic on GPU boxes too: only the patched reader may answer
+    monkeypatch.setattr(main, "_ACTIVE_READERS", {"cubicasa": perception})
     r = client.post("/scene", files={"image": ("p.png", _tiny_png(), "image/png")})
     assert r.status_code == 504
     assert "timed out" in r.text
 
 
 def test_gpu_oom_returns_503(client, monkeypatch):
+    import main
     import perception
 
     def boom(raw):
         raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
     monkeypatch.setattr(perception, "detections", boom)
+    # pin the registry to cubicasa only: with tf2 ALSO registered (GPU box),
+    # best-of would swallow the OOM and answer from the other reader
+    monkeypatch.setattr(main, "_ACTIVE_READERS", {"cubicasa": perception})
     r = client.post("/scene", files={"image": ("p.png", _tiny_png(), "image/png")})
     assert r.status_code == 503
     assert "memory" in r.text
