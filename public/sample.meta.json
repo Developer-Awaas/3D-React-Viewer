@@ -15,8 +15,8 @@
    "bbox_ft": null
   },
   "warnings": [
-   "17 furniture item(s) from CAD layers",
-   "scale from dominant column box = 12 in (provisional)"
+   "scale from dominant column box = 12 in (provisional)",
+   "16 furniture item(s) placed from layers"
   ]
  },
  "doors": 6,
@@ -24,29 +24,35 @@
  "windows": 6,
  "rooms": [
   {
-   "x": 9.352,
-   "y": 7.764,
-   "area_sqft": 381.7,
+   "x": 23.792,
+   "y": 21.772,
+   "area_sqft": 276.5,
    "id": "r0"
   },
   {
-   "x": 30.216,
-   "y": 21.772,
-   "area_sqft": 274.7,
+   "x": 9.352,
+   "y": 7.764,
+   "area_sqft": 230.9,
    "id": "r1"
   },
   {
    "x": 10.216,
    "y": 21.772,
-   "area_sqft": 200.9,
+   "area_sqft": 201.8,
    "id": "r2"
   },
   {
-   "x": 34.165,
-   "y": 9.218,
-   "area_sqft": 158.6,
+   "x": 34.185,
+   "y": 9.356,
+   "area_sqft": 157.8,
    "id": "r3"
+  },
+  {
+   "x": 22.79,
+   "y": 9.768,
+   "area_sqft": 148.7,
+   "id": "r4"
   }
  ],
- "furniture": 17
+ "furniture": 16
 }

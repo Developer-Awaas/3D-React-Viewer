@@ -144,8 +144,30 @@ _CONTROLNETS = {
     # segmentation = the moat: Drishti renders a perfect surface-class map from
     # its named meshes and feeds it here. Community SDXL seg ControlNet; override
     # via SEG_CONTROLNET if you use another.
-    "seg": ("SEG_CONTROLNET", "SargeZT/sdxl-controlnet-seg"),
+    # seg resolves via _seg_id(): SEG_CONTROLNET env wins; otherwise the default
+    # model joins AUTOMATICALLY once its weights are in the local HF cache (it is
+    # a 5GB fp32 .bin, so it is never pulled implicitly — download it once, e.g.
+    # by letting a render fetch it, and seg conditioning turns itself on).
+    "seg": ("SEG_CONTROLNET", ""),
 }
+
+_SEG_DEFAULT_ID = "SargeZT/sdxl-controlnet-seg"
+
+
+def _seg_id():
+    """The segmentation ControlNet to use: env override, else the default IF its
+    weights are already cached locally (auto-enable after a one-time download),
+    else empty (seg conditioning off)."""
+    sid = os.getenv("SEG_CONTROLNET")
+    if sid:
+        return sid
+    try:
+        from huggingface_hub import scan_cache_dir
+        if any(r.repo_id == _SEG_DEFAULT_ID for r in scan_cache_dir().repos):
+            return _SEG_DEFAULT_ID
+    except Exception:
+        pass
+    return ""
 
 
 def required_models(include_video=False):
@@ -162,8 +184,11 @@ def required_models(include_video=False):
     for ctype, (env, default) in _CONTROLNETS.items():
         # fp16 only — the loader casts to fp16 anyway; pulling the fp32 copies too
         # bloated the download ~5x (15 GB -> ~2.5 GB per ControlNet)
-        models.append({"name": f"controlnet_{ctype}",
-                       "id": os.getenv(env, default), "variant": "fp16"})
+        cid = _seg_id() if ctype == "seg" else os.getenv(env, default)
+        if not cid:                       # opt-in types (seg) skipped when unset
+            continue
+        models.append({"name": f"controlnet_{ctype}", "id": cid,
+                       "variant": None if ctype == "seg" else "fp16"})
     if include_video:
         models.append({"name": "svd",
                        "id": os.getenv("SVD_MODEL",
@@ -198,8 +223,11 @@ def _prep_control(image, max_side=1024):
 def _one_controlnet(control):
     import torch
     from diffusers import ControlNetModel
-    env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
-    cn_id = os.getenv(env, default)
+    if control == "seg":
+        cn_id = _seg_id()
+    else:
+        env, default = _CONTROLNETS.get(control, _CONTROLNETS["canny"])
+        cn_id = os.getenv(env, default)
     try:                              # prefer the fp16 files (half the disk/VRAM)
         return ControlNetModel.from_pretrained(cn_id, torch_dtype=torch.float16,
                                                variant="fp16")
@@ -245,7 +273,7 @@ def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed
         controls.append("depth")
         images.append(_prep_control(Image.open(io.BytesIO(depth_bytes))))
         scales.append(float(cn_scale))
-    if seg_bytes:
+    if seg_bytes and _seg_id():          # env override OR cached default
         controls.append("seg")
         images.append(_prep_control(Image.open(io.BytesIO(seg_bytes))))
         scales.append(float(cn_scale) * 0.8)     # seg guides, depth leads
@@ -262,9 +290,24 @@ def _render_local(image_bytes, prompt, negative, steps, guidance, cn_scale, seed
     gen = torch.Generator(device="cpu").manual_seed(int(seed))
     img = images[0] if len(images) == 1 else images
     scl = scales[0] if len(scales) == 1 else scales
-    out = pipe(prompt=prompt, negative_prompt=negative, image=img,
-               num_inference_steps=int(steps), guidance_scale=float(guidance),
-               controlnet_conditioning_scale=scl, generator=gen)
+    try:
+        out = pipe(prompt=prompt, negative_prompt=negative, image=img,
+                   num_inference_steps=int(steps), guidance_scale=float(guidance),
+                   controlnet_conditioning_scale=scl, generator=gen)
+    except RuntimeError as e:
+        if "same device" not in str(e):
+            raise
+        # cpu/cuda split during a cold multi-model load — evict, rebuild the
+        # pipeline once and retry; if seg was in the stack, drop it too (the
+        # fp32 seg CN is the usual offender).
+        _evict("none")
+        if "seg" in controls:
+            return _render_local(image_bytes, prompt, negative, steps, guidance,
+                                 cn_scale, seed, depth_bytes=depth_bytes)
+        pipe = _load_sdxl(tuple(controls))
+        out = pipe(prompt=prompt, negative_prompt=negative, image=img,
+                   num_inference_steps=int(steps), guidance_scale=float(guidance),
+                   controlnet_conditioning_scale=scl, generator=gen)
     buf = io.BytesIO()
     out.images[0].save(buf, format="PNG")
     return buf.getvalue()

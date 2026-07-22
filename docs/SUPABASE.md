@@ -50,3 +50,19 @@ same settings produces the same hash, so you can dedupe.
 - Logging is fire-and-forget: a Supabase outage or a bad key can **never** slow
   down or fail a parse — errors are logged to the server console and swallowed.
 - To turn logging off, blank out `SUPABASE_URL`/`SUPABASE_KEY` and restart.
+
+## ML data pipeline (optional but recommended)
+To also archive every uploaded plan FILE (the training input for the future
+custom model), do two extra things:
+1. In Supabase: **Storage -> New bucket** named `plans` (private).
+2. In `server/.env` add: `STORE_UPLOADS=1`
+From then on each parse stores the plan file + its labels. Build the
+training-ready dataset anytime with:
+```
+python corpus_export.py          # -> corpus/ with (input, labels) pairs + manifest
+```
+Re-running schema.sql after updates is safe (`create table if not exists`); for
+an existing table add the new column once:
+```
+alter table public.parses add column if not exists file_path text;
+```

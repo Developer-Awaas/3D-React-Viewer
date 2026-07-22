@@ -243,16 +243,22 @@ export default function AppSections() {
   )
 }
 
-/* ---------- Contact founders modal (site theme: glass, orange accent) ---------- */
-function ContactModal({ open, onClose }: { open: boolean; onClose: () => void }) {
+/* ---------- Contact founders modal (site theme: glass, orange accent) ----------
+ * Exported so the viewer sidebar (App.tsx) can open the SAME popup — the
+ * story/FAQ sections aren't reachable once you're inside the 3D app. */
+export function ContactModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   const EMAIL = 'awaas.ai.dev@gmail.com'
+  // maker's-mark card: clicking "built by raj padhi" reveals a tiny contact
+  // popover (closed again whenever the modal itself closes)
+  const [makerOpen, setMakerOpen] = useState(false)
+  const close = () => { setMakerOpen(false); onClose() }
   return (
     <AnimatePresence>
       {open && (
         <motion.div
           className="fixed inset-0 z-50 flex items-center justify-center p-6"
           initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-          onClick={onClose}
+          onClick={close}
           role="dialog" aria-modal="true" aria-label="Contact the founders"
         >
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
@@ -266,7 +272,7 @@ function ContactModal({ open, onClose }: { open: boolean; onClose: () => void })
           >
             <div aria-hidden className="pointer-events-none absolute -right-16 -top-16 h-40 w-40 rounded-full bg-neon/20 blur-3xl" />
             <button
-              onClick={onClose} aria-label="Close"
+              onClick={close} aria-label="Close"
               className="absolute right-4 top-4 grid h-8 w-8 place-items-center rounded-full border border-white/10 text-muted-foreground hover:border-neon/50 hover:text-foreground"
             >
               ✕
@@ -287,6 +293,47 @@ function ContactModal({ open, onClose }: { open: boolean; onClose: () => void })
               {EMAIL}
             </a>
             <p className="mt-4 text-center text-[11px] text-muted-foreground/60">Drishti — every plan holds a building within</p>
+            {/* maker's mark — small serif signature; click reveals contact card */}
+            <button
+              onClick={(e) => { e.stopPropagation(); setMakerOpen((v) => !v) }}
+              aria-label="Built by Raj Padhi — contact"
+              className="font-playfair absolute bottom-1.5 right-2.5 select-none text-[9px] font-semibold italic tracking-wide text-white/35 transition-colors hover:text-neon/70"
+            >
+              built by raj padhi
+            </button>
+
+            {/* tiny contact popover for the maker's mark */}
+            <AnimatePresence>
+              {makerOpen && (
+                <motion.div
+                  initial={{ opacity: 0, y: 6, scale: 0.96 }}
+                  animate={{ opacity: 1, y: 0, scale: 1 }}
+                  exit={{ opacity: 0, y: 6, scale: 0.96 }}
+                  transition={{ duration: 0.2, ease: EASE }}
+                  onClick={(e) => e.stopPropagation()}
+                  className="absolute bottom-8 right-2.5 w-44 rounded-lg border border-white/10 bg-[#0b1120]/[0.98] p-1.5 shadow-2xl"
+                >
+                  <a
+                    href="mailto:raj85sp@gmail.com"
+                    className="flex items-center gap-2 rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="2" y="4" width="20" height="16" rx="2" /><path d="m22 7-10 6L2 7" />
+                    </svg>
+                    raj85sp@gmail.com
+                  </a>
+                  <a
+                    href="tel:+919437418279"
+                    className="flex items-center gap-2 rounded-md px-2 py-1 text-[10px] text-muted-foreground hover:bg-white/5 hover:text-foreground"
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.127.96.361 1.903.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.907.339 1.85.573 2.81.7A2 2 0 0 1 22 16.92z" />
+                    </svg>
+                    +91 94374 18279
+                  </a>
+                </motion.div>
+              )}
+            </AnimatePresence>
           </motion.div>
         </motion.div>
       )}

@@ -49,40 +49,48 @@ export function segClass(name: string): SegClass {
 export function captureGBuffer(): GBuffer | null {
   if (!source) return null
   const { gl, scene, camera } = source
+  // Crash-safe: EVERY temporary change (override material, background, per-mesh
+  // swaps) is undone in `finally`, so an error mid-pass can never leave the
+  // live scene looking like a depth/segmentation map.
+  const prevOverride = scene.overrideMaterial
+  const prevBg = scene.background
+  const swapped: Array<[THREE.Mesh, THREE.Material | THREE.Material[]]> = []
   try {
     // 1) beauty
     gl.render(scene, camera)
     const beauty = gl.domElement.toDataURL('image/png')
 
     // 2) depth — via an override material on a black background
-    const prevOverride = scene.overrideMaterial
-    const prevBg = scene.background
     scene.background = new THREE.Color(0x000000)
     scene.overrideMaterial = depthMaterial()
     gl.render(scene, camera)
     const depth = gl.domElement.toDataURL('image/png')
     scene.overrideMaterial = prevOverride
 
-    // 3) segmentation — flat-colour each mesh by its class (per-mesh swap, since
-    //    an override material can't give different colours per mesh)
-    const swapped: Array<[THREE.Mesh, THREE.Material | THREE.Material[]]> = []
+    // 3) segmentation — flat-colour each PLAN mesh by its class. Only meshes
+    //    with standard materials are swapped: the Sky dome, shader effects and
+    //    helper lines keep their own materials (swapping them breaks rendering).
     scene.traverse((o) => {
       const mesh = o as THREE.Mesh
-      if (!mesh.isMesh) return
+      if (!mesh.isMesh || mesh.userData.measure) return
+      const mat = mesh.material as THREE.Material
+      if (Array.isArray(mesh.material)) return
+      if (!(mat instanceof THREE.MeshStandardMaterial)
+          && !(mat instanceof THREE.MeshBasicMaterial)) return
       swapped.push([mesh, mesh.material])
       mesh.material = segMaterial(segClass(mesh.name))
     })
     gl.render(scene, camera)
     const seg = gl.domElement.toDataURL('image/png')
-    for (const [mesh, mat] of swapped) mesh.material = mat
-
-    // 4) restore + repaint the beauty frame the user sees
-    scene.background = prevBg
-    gl.render(scene, camera)
 
     return { beauty, depth, seg }
   } catch {
-    return null // tainted/lost context
+    return null // tainted/lost context — finally still restores the scene
+  } finally {
+    scene.overrideMaterial = prevOverride
+    scene.background = prevBg
+    for (const [mesh, mat] of swapped) mesh.material = mat
+    try { gl.render(scene, camera) } catch { /* repaint best-effort */ }
   }
 }
 

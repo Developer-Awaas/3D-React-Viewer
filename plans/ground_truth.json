@@ -315,6 +315,34 @@
    ],
    "parser_status_2026_07_19": "CAD path: GEOMETRY-mode walls (186 spans), wing0 36.8x49.6 ft 9 wall polys + 16 cols, wing1 36.8x51.7 ft 15 polys + 17 cols; stair filter dropped 76 tread strips",
    "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
+  },
+  "plan_roomdim_342.pdf (tests/fixtures)": {
+   "source": "internet CAD PDF, no column layer, no on-line dims \u2014 scale from room-dimension text (9'0\"X12'0\")",
+   "type": "vector-cad-flattened",
+   "expected": {
+    "envelope_ft": "20.3 x 65.3 (self-scaled)",
+    "doors_min": 7,
+    "rooms_min": 4,
+    "room_types": [
+     "living",
+     "bedroom",
+     "kitchen"
+    ],
+    "scale_source": "room_dim_text"
+   },
+   "pinned_by": "tests/test_room_dim_scale.py + tests/test_gap_openings.py",
+   "fixed": "2026-07-21"
+  },
+  "plan_unnamed_layers_343.pdf (tests/fixtures)": {
+   "source": "internet CAD PDF \u2014 real walls on unnamed layer '6'; named wall layers are decoys",
+   "type": "vector-cad-unnamed-layers",
+   "expected": {
+    "envelope_ft": "38.0 x 37.9 (sheet says 38')",
+    "rooms_min": 2,
+    "reader": "vector_geometry_retry"
+   },
+   "pinned_by": "tests/test_cascade.py::test_geometry_retry_rescues_unnamed_layer_walls",
+   "fixed": "2026-07-22"
   }
  },
  "_data_policy": "plans/ = raw drawings (gitignored, confidential). ground_truth.json + INDEX.txt = the LABELS, small text, tracked in git so every change is versioned and reversible - nothing gets messed up. batch_eval reads labels, never writes them; parser outputs go to out/ (gitignored). Later: human-corrected scene.json snapshots join this file as training pairs (Phase-2 flywheel).",

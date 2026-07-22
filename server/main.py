@@ -32,6 +32,16 @@ import pdf_vector
 import scene_builder
 import scene_to_glb
 
+import logging
+logging.basicConfig(
+    level=os.getenv("LOG_LEVEL", "INFO"),
+    format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+    datefmt="%H:%M:%S")
+log = logging.getLogger("drishti")
+
+# .env must load BEFORE the ML reader registry below reads TF2FP_MODEL etc.
+load_dotenv()
+
 # The photo/scan (raster) path needs torch + the CubiCasa repo. On slim
 # vector-only deploys those are absent ON PURPOSE (v1 scope: CAD PDFs are the
 # product; photos are beta) - the API must still boot and serve /scene.
@@ -45,34 +55,49 @@ except Exception as _e:          # torch/CubiCasa not installed
 # Pluggable ML reader for the cascade: CubiCasa (perception) by default, or
 # TF2DeepFloorplan when ML_READER=tf2 (the commercial-viable model). Both expose
 # detections(image_bytes) -> (segs, boxes, w, h), so the cascade is unchanged.
-_ML_READER_NAME = os.getenv("ML_READER", "cubicasa").lower()
+# ML reader REGISTRY — every installed model, by name. The cascade can run one
+# (ML_READER=cubicasa|tf2) or, with ML_READER=best (default), run ALL available
+# readers on the hard cases and keep the highest-scoring scene: a bounded
+# best-of ensemble that extracts value from every model without merging
+# conflicting geometry. A healthy vector read still short-circuits everything.
+_READERS = {}
+if perception is not None:
+    _READERS["cubicasa"] = perception
+try:
+    import tf2_floorplan
+    if os.getenv("TF2FP_MODEL"):          # only usable once weights are pointed at
+        _READERS["tf2"] = tf2_floorplan
+except Exception as _e:
+    log.warning("TF2DeepFloorplan not available: %s", _e)
+
+_ML_READER_NAME = os.getenv("ML_READER", "best").lower()
 if _ML_READER_NAME in ("tf2", "tf2deepfloorplan", "deepfloorplan"):
-    try:
-        import tf2_floorplan as ml_reader
-    except Exception as _e:
-        ml_reader = None
-        print(f"[ml] TF2DeepFloorplan not available: {_e}")
-else:
-    ml_reader = perception
+    _ACTIVE_READERS = {k: v for k, v in _READERS.items() if k == "tf2"}
+elif _ML_READER_NAME in ("cubicasa", "perception"):
+    _ACTIVE_READERS = {k: v for k, v in _READERS.items() if k == "cubicasa"}
+else:                                     # 'best' -> all installed models
+    _ACTIVE_READERS = dict(_READERS)
+ml_reader = next(iter(_ACTIVE_READERS.values()), None)   # legacy single handle
+log.info("ML readers active: %s (mode=%s)",
+         list(_ACTIVE_READERS) or "none", _ML_READER_NAME)
 
 BETA_MSG = ("This looks like a photo or scanned plan - that engine is in beta "
             "and not enabled on this server. Upload a CAD-exported PDF "
             "(vector) for full-quality 3D.")
 
-load_dotenv()
 
 
 @asynccontextmanager
 async def lifespan(app):
     # warm the model once when the server boots (the slow part happens here, not per request)
     if perception is None:
-        print("perception disabled (vector-only deploy):", _PERCEPTION_ERR)
+        log.info("perception disabled (vector-only deploy): %s", _PERCEPTION_ERR)
     else:
         try:
             perception.load_model()
-            print("CubiCasa model loaded and ready.")
+            log.info("CubiCasa model loaded and ready")
         except Exception as e:
-            print("WARNING: model failed to load at startup:", e)
+            log.warning("model failed to load at startup: %s", e)
     yield
 
 
@@ -93,6 +118,22 @@ def parse_origins(value, default="http://localhost:5173"):
 origins = parse_origins(os.getenv("ALLOWED_ORIGINS"))
 app.add_middleware(CORSMiddleware, allow_origins=origins, allow_methods=["*"], allow_headers=["*"])
 
+# per-client rate limit on the heavy endpoints (parser/GPU) — public-deploy
+# protection. Local dev + tests are exempt; RATE_LIMIT_PER_MIN=0 disables.
+import rate_limit as _rl
+_limiter = _rl.Limiter()
+
+
+@app.middleware("http")
+async def _rate_limit_mw(request, call_next):
+    client = (request.client.host if request.client else "unknown")
+    if _rl.is_heavy(request.url.path) and client not in _rl.EXEMPT_CLIENTS:
+        if not _limiter.allow(client):
+            log.warning("rate limited %s on %s", client, request.url.path)
+            return JSONResponse({"detail": "Too many requests — please slow down."},
+                                status_code=429)
+    return await call_next(request)
+
 # Visualize (Beta): SDXL + ControlNet photoreal render / SVD walkthrough. Safe
 # to mount on any host — torch/diffusers are imported lazily inside the calls,
 # and every endpoint returns a clean 503 when no CUDA GPU is present, so a slim
@@ -101,7 +142,7 @@ try:
     import visualize
     app.include_router(visualize.router)
 except Exception as _ve:          # never let an optional feature block boot
-    print(f"[visualize] not mounted: {type(_ve).__name__}: {_ve}")
+    log.warning("visualize not mounted: %s: %s", type(_ve).__name__, _ve)
 
 
 @app.get("/health")
@@ -157,6 +198,68 @@ function card(t,src){return '<div class="card"><h3>'+t+'</h3><img src="'+src+'">
 def test_page():
     """A simple visual page to SEE the detection (plan + rooms + icons), like Colab."""
     return TEST_PAGE
+
+
+@app.get("/review", response_class=HTMLResponse)
+async def review_dashboard(limit: int = Query(200, gt=0, le=1000)):
+    """Team review dashboard (Stage 6 of the pipeline): every logged parse,
+    worst-first, with a needs-review queue. Server-side Supabase fetch — the
+    service key never reaches the browser."""
+    if not db.enabled():
+        return ("<html><body style='font-family:system-ui;background:#0f172a;"
+                "color:#e2e8f0;padding:40px'><h2>Review dashboard</h2>"
+                "<p>Parse logging isn't configured yet — set SUPABASE_URL / "
+                "SUPABASE_KEY (see docs/SUPABASE.md) and restart.</p></body></html>")
+    import httpx
+    url = os.environ["SUPABASE_URL"].rstrip("/")
+    key = os.environ["SUPABASE_KEY"]
+    table = os.environ.get("SUPABASE_TABLE", "parses")
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as c:
+            r = await c.get(f"{url}/rest/v1/{table}",
+                            params={"select": "created_at,filename,ok,error,source,"
+                                              "plan_width_ft,plan_depth_ft,doors,"
+                                              "windows,rooms,scale_source,duration_ms",
+                                    "order": "created_at.desc", "limit": str(limit)},
+                            headers={"apikey": key, "Authorization": f"Bearer {key}"})
+            r.raise_for_status()
+            rows = r.json()
+    except Exception as e:
+        return HTMLResponse(f"<html><body style='font-family:system-ui'>"
+                            f"Supabase fetch failed: {type(e).__name__}</body></html>",
+                            status_code=502)
+
+    def needs_review(x):
+        return (not x.get("ok") or (x.get("rooms") or 0) == 0
+                or (x.get("doors") or 0) == 0
+                or min(x.get("plan_width_ft") or 0, x.get("plan_depth_ft") or 0) < 12)
+
+    flagged = [x for x in rows if needs_review(x)]
+    def tr(x):
+        bad = needs_review(x)
+        env = (f"{(x.get('plan_width_ft') or 0):.0f}×{(x.get('plan_depth_ft') or 0):.0f}"
+               if x.get("ok") else "—")
+        return (f"<tr class='{'bad' if bad else ''}'>"
+                f"<td>{(x.get('created_at') or '')[:16].replace('T', ' ')}</td>"
+                f"<td>{(x.get('filename') or '')[:38]}</td>"
+                f"<td>{'✓' if x.get('ok') else '✗ ' + str(x.get('error') or '')[:40]}</td>"
+                f"<td>{env}</td><td>{x.get('doors') or 0}</td>"
+                f"<td>{x.get('rooms') or 0}</td><td>{x.get('scale_source') or ''}</td>"
+                f"<td>{x.get('duration_ms') or ''}</td></tr>")
+    body = "".join(tr(x) for x in flagged) + "".join(tr(x) for x in rows if not needs_review(x))
+    return f"""<!doctype html><html><head><meta charset='utf-8'>
+<title>Drishti — review</title><style>
+body{{font-family:system-ui;background:#0f172a;color:#e2e8f0;margin:24px}}
+h1{{font-size:20px}} .pill{{color:#fb923c;font-size:13px}}
+table{{border-collapse:collapse;width:100%;font-size:13px;margin-top:14px}}
+th,td{{padding:6px 10px;text-align:left;border-bottom:1px solid #1e293b}}
+th{{color:#94a3b8;font-weight:600}} tr.bad{{background:#7f1d1d22}}
+tr.bad td:first-child{{border-left:3px solid #ef4444}}
+</style></head><body>
+<h1>Drishti — parse review <span class='pill'>{len(flagged)} of {len(rows)} need attention</span></h1>
+<table><tr><th>when</th><th>plan</th><th>ok</th><th>envelope ft</th><th>doors</th>
+<th>rooms</th><th>scale</th><th>ms</th></tr>{body}</table>
+</body></html>"""
 
 
 MAX_UPLOAD_MB = 25
@@ -349,7 +452,21 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
             vec_err = None
         if plan_health.is_healthy(vscene):
             return vscene
-        if ml_reader is not None:        # ML reader available -> try to do better
+        # retry 1 (cheap, no GPU): geometry-only vector parse — rescues sheets
+        # whose real walls sit on unnamed layers while a named 'wall' layer
+        # carries decoys. Keep whichever scene scores better.
+        try:
+            gscene = await _run_heavy(
+                functools.partial(pdf_vector.parse, raw, width_ft,
+                                  pdf_vector.wing_arg(wing), force_geometry=True),
+                what="geometry retry")
+            gscene.setdefault("meta", {})["reader"] = "vector_geometry_retry"
+            vscene = plan_health.better_scene(vscene, gscene)
+            if plan_health.is_healthy(vscene):
+                return vscene
+        except Exception as e:
+            log.info("geometry retry didn't help: %s: %s", type(e).__name__, e)
+        if _ACTIVE_READERS:              # ML reader(s) available -> try to do better
             try:
                 png = await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
                 ml_scene = await _ml_scene_from_png(png, width_ft)
@@ -357,35 +474,56 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
                 if best is not None:
                     return best
             except Exception as e:
-                print(f"[cascade] ML fallback skipped: {type(e).__name__}: {e}")
+                log.warning("cascade: ML fallback skipped: %s: %s", type(e).__name__, e)
         if vscene is not None:
             return vscene               # flagged but it's the best we have
         raise HTTPException(422, f"vector PDF parse failed: {vec_err}")
     if is_pdf:                           # flat PDF -> raster path
         raw = await _run_heavy(_pdf_first_page_png, raw, what="PDF render")
-    if ml_reader is None:                # vector-only deploy: photos are beta
+    if not _ACTIVE_READERS:              # vector-only deploy: photos are beta
         raise HTTPException(503, BETA_MSG)
     return await _ml_scene_from_png(raw, width_ft)
 
 
-async def _ml_scene_from_png(png_bytes, width_ft):
-    """Run the selected ML reader (CubiCasa or TF2DeepFloorplan, per ML_READER)
-    on a rasterized plan and build a scene. Model-agnostic: the cascade doesn't
-    care which model produced it. Raises HTTPException(503) if the model is
-    unavailable/broken so the caller can fall back."""
-    if ml_reader is None:
-        raise HTTPException(503, BETA_MSG)
-    try:
-        segs, boxes, w, h = await _run_heavy(ml_reader.detections, png_bytes,
-                                             what="detection")
-    except HTTPException:
-        raise
-    except Exception as e:               # model/env broken -> guidance, not a 500
-        raise HTTPException(503, f"{BETA_MSG} ({type(e).__name__})")
+async def _one_ml_scene(reader, name, png_bytes, width_ft):
+    """One model -> one scene (raises on failure; caller decides what to do)."""
+    segs, boxes, w, h = await _run_heavy(reader.detections, png_bytes,
+                                         what=f"detection ({name})")
     segs, ops = openings.attach_openings(segs, boxes, openings.default_tol(w))
     scene = scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
-    scene.setdefault("meta", {})["reader"] = "ml_fallback"
+    scene.setdefault("meta", {})["reader"] = f"ml:{name}"
     return scene
+
+
+async def _ml_scene_from_png(png_bytes, width_ft):
+    """Best-of arbitration across every ACTIVE ML reader: each model reads the
+    plan independently, each candidate scene is scored (plan_health), and the
+    highest-scoring one wins. Scores of all contenders are recorded on the
+    winner (meta.reader_scores) so you can see which model earned it — and a
+    photo read by two models is strictly better than by one. Raises 503 only
+    when no reader is available/succeeds."""
+    if not _ACTIVE_READERS:
+        raise HTTPException(503, BETA_MSG)
+    candidates, scores, last_err = [], {}, None
+    for name, reader in _ACTIVE_READERS.items():
+        try:
+            scene = await _one_ml_scene(reader, name, png_bytes, width_ft)
+            score = plan_health.score_scene(scene)
+            scores[name] = score
+            candidates.append((score, len(candidates), scene))
+        except Exception as e:            # one broken model never blocks the rest
+            last_err = e
+            log.warning("reader %s failed: %s: %s", name, type(e).__name__, e)
+    if not candidates:
+        if isinstance(last_err, HTTPException):
+            raise last_err
+        raise HTTPException(503, f"{BETA_MSG} ({type(last_err).__name__})")
+    candidates.sort(key=lambda c: (-c[0], c[1]))       # best score, stable order
+    best = candidates[0][2]
+    if len(scores) > 1:
+        best["meta"]["reader_scores"] = scores          # transparency: who won
+        log.info("ml best-of: %s won %s", best["meta"]["reader"], scores)
+    return best
 
 
 def _check_width_ft(width_ft):
@@ -408,6 +546,14 @@ async def scene(image: UploadFile = File(...),
     north_deg: compass North on the sheet, degrees clockwise from up (default 0)."""
     _check_width_ft(width_ft)
     fname = getattr(image, "filename", None)
+    # ML data pipeline: when STORE_UPLOADS=1, keep the raw upload so the corpus
+    # stores (input file -> labels) training pairs. Zero-cost when off.
+    corpus_bytes = None
+    if db.store_uploads_enabled():
+        corpus_bytes = await image.read()
+        from starlette.datastructures import UploadFile as _SU
+        image = _SU(file=io.BytesIO(corpus_bytes), filename=fname,
+                    headers=getattr(image, "headers", None))
     t0 = time.perf_counter()
     try:
         s = await _scene_from_upload(image, width_ft, wing)
@@ -425,26 +571,36 @@ async def scene(image: UploadFile = File(...),
     try:
         s["area_statement"] = area_statement.compute_area_statement(s, loading_factor)
     except Exception as e:
-        print(f"[area] skipped: {type(e).__name__}: {e}")
+        log.warning("area statement skipped: %s: %s", type(e).__name__, e)
     # Vastu report (pure geometry; guidance only) — never breaks the scene
     try:
         s["vastu"] = vastu.analyze(s, north_deg)
     except Exception as e:
-        print(f"[vastu] skipped: {type(e).__name__}: {e}")
+        log.warning("vastu skipped: %s: %s", type(e).__name__, e)
     # rough BOQ + cost estimate (pure geometry) — never breaks the scene
     try:
         s["boq"] = boq.compute_boq(s)
     except Exception as e:
-        print(f"[boq] skipped: {type(e).__name__}: {e}")
+        log.warning("boq skipped: %s: %s", type(e).__name__, e)
     # streamlined analysis block: scored + reviewable value extraction, the one
     # object a dashboard/reviewer reads (also logged to Supabase below)
     try:
         s["analysis"] = pipeline.analyze(s, loading_factor)
     except Exception as e:
-        print(f"[pipeline] analyze skipped: {type(e).__name__}: {e}")
-    # fire-and-forget corpus log (no-op unless SUPABASE_URL/KEY are set)
+        log.warning("pipeline analyze skipped: %s: %s", type(e).__name__, e)
+    # one triageable summary line per parse (the prod debugging lifeline)
+    _m = s.get("meta", {})
+    log.info("parse ok file=%s reader=%s %.1fx%.1fft doors=%d rooms=%d scale=%s %dms",
+             fname, _m.get("reader"), _m.get("plan_width_ft", 0),
+             _m.get("plan_depth_ft", 0),
+             sum(1 for o in s.get("openings", []) if o.get("type") == "door"),
+             len(s.get("rooms", [])), _m.get("scale", {}).get("source"),
+             int((time.perf_counter() - t0) * 1000))
+    # fire-and-forget corpus log (no-op unless SUPABASE_URL/KEY are set);
+    # with STORE_UPLOADS=1 the raw plan file is archived too (training pairs)
     db.log_parse(s, filename=fname, width_ft=width_ft,
-                 duration_ms=int((time.perf_counter() - t0) * 1000), ok=True)
+                 duration_ms=int((time.perf_counter() - t0) * 1000), ok=True,
+                 upload_bytes=corpus_bytes)
     return JSONResponse(s)
 
 

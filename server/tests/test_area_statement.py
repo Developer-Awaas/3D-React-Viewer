@@ -49,9 +49,43 @@ def test_builtup_never_below_carpet():
 
 
 def test_no_rooms_notes_and_zero_carpet():
+    # no rooms AND no wall-interior holes -> genuinely 0, with the old note
     scene = {"rooms": [], "walls_poly": [{"outer": [[0, 0], [10, 0], [10, 10], [0, 10]]}],
              "meta": {}}
     out = A.compute_area_statement(scene)
     assert out["carpet_area"]["sqft"] == 0.0
+    assert out["carpet_source"] == "none"
     assert any("No rooms" in n for n in out["notes"])
     assert out["disclaimer"]
+
+
+def test_no_rooms_falls_back_to_wall_interior():
+    # 20x15 outer ring with a 16x11 interior hole: carpet should come from the
+    # hole (176 sqft) instead of showing a misleading 0.
+    scene = {
+        "rooms": [],
+        "walls_poly": [{
+            "outer": [[0, 0], [20, 0], [20, 15], [0, 15]],                 # 300
+            "holes": [[[2, 2], [18, 2], [18, 13], [2, 13]]],               # 176
+        }],
+        "meta": {},
+    }
+    out = A.compute_area_statement(scene, loading_factor=1.30)
+    assert out["carpet_area"]["sqft"] == 176.0
+    assert out["carpet_source"] == "wall_interior"
+    assert out["built_up_area"]["sqft"] == 300.0
+    assert out["efficiency_pct"] > 0
+    assert any("estimated from the enclosed area" in n for n in out["notes"])
+
+
+def test_rooms_present_ignores_fallback():
+    # detected rooms win — the fallback must never override real room areas
+    scene = {
+        "rooms": [{"id": "r0", "area_sqft": 90.0}],
+        "walls_poly": [{"outer": [[0, 0], [20, 0], [20, 15], [0, 15]],
+                        "holes": [[[2, 2], [18, 2], [18, 13], [2, 13]]]}],
+        "meta": {},
+    }
+    out = A.compute_area_statement(scene)
+    assert out["carpet_area"]["sqft"] == 90.0
+    assert out["carpet_source"] == "rooms"

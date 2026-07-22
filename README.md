@@ -1,48 +1,63 @@
-# Drishti 3D
+# Drishti — every plan holds a building within
 
-An in-browser **2D floor plan → 3D model** converter, built with React, react-three-fiber and OpenCV.js.
-Upload a plan, auto-detect a wall draft, fix it by tracing, and view the result in 3D — all client-side.
+**CAD floor-plan → walkable 3D building → photoreal renders + India-first
+property intelligence (RERA areas, Vastu, cost), in the browser.**
 
-> New here or handing off? Read **[`docs/HANDOFF.md`](docs/HANDOFF.md)** for the full context
-> (goal, architecture, what works, what's next).
+Upload an architect's plan (CAD-exported PDF, DXF/DWG, or photo*). The backend
+reads the drawing like an architect — walls, doors, windows, rooms, furniture —
+and returns a 3D building you can orbit and walk inside, plus an area
+statement, Vastu report and cost estimate. A GPU box can then repaint any view
+photoreal with SDXL + ControlNet, geometry-locked to the real plan.
 
-## Features
-- **Demo** — a furnished 3D room (materials, glass windows, furniture, dual toilets) with smooth GSAP camera moves.
-- **Convert** — upload a plan (JPG/PNG/PDF) → OpenCV.js detects walls in a **web worker** (no UI freeze)
-  → **click to trace/fix** missing walls → live 3D → export `plan.json`.
-- **Viewer** — load any `.glb` / `.gltf` (URL or file) with HDR lighting.
-- Premium UI: Tailwind (shadcn-style glass sidebar), Framer Motion, Inter typography, neon-cyan accent.
+## How it reads a plan (the pipeline)
+`INGEST → READ (vector-first cascade, ML fallback) → ANALYZE (scored) →
+GENERATE (3D / reports / photoreal) → LOG (corpus) → REVIEW → IMPROVE`
 
-## Run
+- **Vector engine** (`server/pdf_vector.py`) — exact, no ML: layer parsing,
+  brick-hatch wall recovery, geometric door detection, schedule-tag openings
+  (D1/W/V), room-dimension + dimension-text scale voting, envelope sealing,
+  room typing from labels, furniture staging.
+- **ML fallback** — when the vector read fails health checks (or input is a
+  photo/scan): CubiCasa (demo) or TF2DeepFloorplan (`ML_READER=tf2`,
+  commercial-viable). Same interface, cascade picks the better scene.
+- **Analysis** — every parse returns `analysis` (0-100 quality score,
+  needs_review), `area_statement` (RERA carpet/built-up/super + Excel export),
+  `vastu` (9-zone verdicts, `?north_deg=`), `boq` (₹ estimate).
+- **Visualize (beta)** — SDXL + multi-ControlNet (depth + segmentation rendered
+  from the scene's own G-buffer) on a local GPU (`RENDER_BACKEND=local`).
+
+## Run it
 ```bash
-npm install
-npm run dev        # http://localhost:5173
-npm run build      # production build
+# frontend
+npm install && npm run dev            # http://localhost:5173
+
+# backend (Windows helper: run_backend_gpu.bat does all of this)
+cd server && python -m venv venv && venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --port 8000
 ```
-First detection downloads OpenCV.js (~8 MB) once; needs internet.
+Optional extras: `setup_visualize.bat` (SDXL render stack + models),
+`setup_tf2fp.bat` (TF2DeepFloorplan reader), `docs/SUPABASE.md` (parse logging
++ ML data corpus), `python server/fetch_models.py` (pre-download weights).
 
-## Tech stack
-React 18 · TypeScript 5 · Vite · react-three-fiber · @react-three/drei · three · Tailwind CSS ·
-GSAP · Framer Motion · OpenCV.js (web worker) · pdf.js · glTF/GLB output.
-
-## Project layout
-```
-src/            React app (App.tsx + components, cv/ detection, ui/)
-public/         detect.worker.js (OpenCV), sample plan.png, prebuilt .glb models
-pipeline/       Parametric data→3D builder (builder.py) + plan SCHEMA + ML scaffold (ml/)
-tools/          auto_plan.py — offline OpenCV wall detector
-docs/           HANDOFF, CONTEXT, GUIDE, CONVERTER, REQUIREMENTS, DESIGN_RULES, GITHUB
+## Tests
+```bash
+cd server && pytest                   # engine + API (golden corpus pins)
+npm test                              # frontend math (vitest)
+python server/batch_eval.py plans     # corpus scorecard (generalization)
 ```
 
-## How conversion works
-1. **Detect** — plan image → wall segments (OpenCV: threshold → Hough → cluster/merge → metres).
-2. **Trace-fix** — click along walls the detector missed (auto-draft + human cleanup, like Coohom).
-3. **Build** — segments are extruded to 3D (glTF). Offline, `pipeline/builder.py` builds full rooms from a JSON schema.
+## Key docs
+`docs/PIPELINE.md` (architecture) · `docs/GENERATIVE_IDEATION.md` (roadmap) ·
+`docs/DEPLOY.md` + `render.yaml`/`vercel.json` (hosting) · `docs/TF2_SETUP.md` ·
+`docs/SUPABASE.md`
 
-## Status & limits
-Clean line plans convert well automatically; complex/rotated/furnished CAD plans come out rough and
-rely on the trace-fix step. Reliable fully-automatic conversion of messy plans needs a trained ML
-model (scaffold in `pipeline/ml/`) — a separate, longer effort. See `docs/HANDOFF.md` §9–10.
+## Tech
+React 18 · TypeScript · Vite · three.js / react-three-fiber · Tailwind ·
+FastAPI · PyMuPDF · OpenCV · trimesh · diffusers (SDXL + ControlNet) ·
+Supabase (logging/corpus)
 
-## License / data
-Prototype for AWAAS. Use sample/synthetic plans only — no real proprietary plans committed.
+*Photo/scan reading uses CubiCasa5k — **CC BY-NC (non-commercial)**: demo only.
+Ship TF2DeepFloorplan for paid use. SDXL/ControlNet are OpenRAIL.
+
+— Amit & Saswat · awaas.ai.dev@gmail.com

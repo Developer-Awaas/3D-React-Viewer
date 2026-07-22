@@ -64,3 +64,23 @@ def test_enabled_with_env(monkeypatch):
     monkeypatch.setenv("SUPABASE_URL", "https://demo.supabase.co")
     monkeypatch.setenv("SUPABASE_KEY", "service-key")
     assert db.enabled() is True
+
+
+def test_store_uploads_gating(monkeypatch):
+    monkeypatch.setenv("SUPABASE_URL", "https://demo.supabase.co")
+    monkeypatch.setenv("SUPABASE_KEY", "service-key")
+    monkeypatch.delenv("STORE_UPLOADS", raising=False)
+    assert db.store_uploads_enabled() is False          # off by default
+    monkeypatch.setenv("STORE_UPLOADS", "1")
+    assert db.store_uploads_enabled() is True
+    monkeypatch.delenv("SUPABASE_KEY", raising=False)
+    assert db.store_uploads_enabled() is False          # needs supabase too
+
+
+def test_upload_path_deterministic_and_extension_aware():
+    assert db.upload_path("abc123", "plan.pdf") == "abc123.pdf"
+    assert db.upload_path("abc123", "plan.PDF") == "abc123.pdf"
+    assert db.upload_path("abc123", None) == "abc123.bin"
+    assert db.upload_path(None, "x.dwg") == "nohash.dwg"
+    # same hash + name -> same path (re-uploads overwrite, don't pile up)
+    assert db.upload_path("h", "a.pdf") == db.upload_path("h", "a.pdf")

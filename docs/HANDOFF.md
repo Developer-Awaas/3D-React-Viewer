@@ -1,145 +1,71 @@
-# DRISHTI 3D — HANDOFF & CONTEXT (read me first)
+# DRISHTI — Master Context Prompt (paste/attach this at the start of a new chat)
 
-> Paste this whole file into a new chat/LLM to continue the project with full context.
-> It covers: what this is, the goal, what's built, what's broken, the plan, and the next steps.
+You are joining an in-progress build. Read this whole file, then read project memory, then continue the work — do not restart, redesign, or re-scaffold anything that already exists.
 
----
+## What this project is
 
-## 1. What this project is
-**Drishti 3D** is an in-browser tool that turns **2D floor plans into 3D models**, built for
-AWAAS (real-estate). It started as a 1-week intern sandbox (a standalone React-Three-Fiber
-room viewer) and grew into a prototype of the real product: *upload a floor plan → get a 3D model.*
+**Drishti** — a web app that turns a CAD floor-plan PDF into a walkable 3D building, for the Indian proptech market. Founders: **Saswat** and **Amit** (contact: awaas.ai.dev@gmail.com).
 
-Repo: https://github.com/shubhransupadhi/3D-React-Viewer
-Local path: `OneDrive/Desktop/3D React Viewer`
+- GitHub: `github.com/shubhransupadhi/3D-React-Viewer`
+- Local folder on Saswat's Windows machine: **`D:\3D React Viewer`** (connect this folder via the device bridge; it is the source of truth)
+- Frontend: React + TypeScript + Vite + react-three-fiber, dark glass theme, orange "neon" accent, Playfair italic headlines
+- Backend: FastAPI in `server/`, PyMuPDF vector parsing, PyTorch/TF ML models, run locally on Saswat's machine (NVIDIA 12 GB GPU)
 
-## 2. The goal & constraints
-- **Goal:** an **in-house, free** 2D→3D converter. If the prototype works, it becomes AWAAS's product.
-- **Timeline:** ~1–2 weeks for a working prototype.
-- **Constraint:** in-house only (no paid API as the core), no ML training from scratch (too long).
-- **Real plans** are complex Indian residential CAD plans (e.g. "THE ZENITH": 2 flats, bedrooms,
-  toilets, balconies, furniture, rotated, thin single-line walls).
+## Standing rules (never break these)
 
-## 3. Current status
-**Works:**
-- React + Vite + TypeScript app with three modes (Demo · Convert · Viewer).
-- **Demo** — a furnished 3D room (walls, windows, glass, queen bed, cupboard, dual toilets with
-  WC/basin/shower/glass partitions/doors), built parametrically, accurate to a real bedroom plan.
-- **Convert** — upload a plan image/PDF → **auto-detect walls in-browser (OpenCV.js in a web worker,
-  no UI freeze)** → **click to trace/fix** missing walls → live 3D. Export `plan.json`.
-- **Viewer** — load any `.glb`/`.gltf` (URL or upload), HDR-lit.
-- Premium UI: Tailwind + shadcn-style glass sidebar, GSAP camera tweens, Framer Motion pills, Inter font.
-- A **parametric pipeline** (`pipeline/builder.py`) that turns a plan JSON schema into a 3D GLB.
-- An **offline Python detector** (`tools/auto_plan.py`) that is stronger than the in-browser one.
+1. **Write all code directly into `D:\3D React Viewer`** via the device bridge (stage → edit in workspace → `device_commit_files` back). Never leave deliverables only in the cloud workspace.
+2. **Unit-test every unit BEFORE production.** Test each input case individually. Backend: `pytest` in `server/tests/` (~194 passing + 5 skipped). Frontend: `vitest` (16 tests). Run `npm run build` before delivering frontend changes.
+3. **Explain every new command/concept in layman's terms.**
+4. **DON'T touch the landing page.**
+5. **Web app only — no mobile work.** Goals: beautiful output + accurate output, keep the existing theme.
+6. Generalization rule: never per-plan hacks — only general rules, validated against the corpus in the plans folder (`batch_eval.py`). If a change regresses any plan, STOP and report back.
+7. Claude cannot push to GitHub and never handles tokens/passwords — Saswat pushes himself.
 
-**Does NOT work well (known, expected):**
-- **Auto-detection on complex/real plans is rough.** On a clean line plan it's good; on a dense,
-  rotated, furnished CAD plan it returns fragmented walls + furniture/text noise. This is the
-  ceiling of pixel-based detection — not a bug. The mitigation is the **trace-fix** step.
+## Architecture (already built — do not rebuild)
 
-## 4. Architecture & stack
-- **Vite + React 18 + TypeScript 5**
-- **react-three-fiber + @react-three/drei + three** (3D)
-- **Tailwind CSS** (shadcn-style dark theme), **GSAP** (camera), **Framer Motion** (UI)
-- **OpenCV.js** (CDN, in a Web Worker) for wall detection; **pdf.js** for PDF→image
-- **Python** side (offline, not in the app): `tools/auto_plan.py`, `pipeline/`
+Pipeline: **INGEST → READ → ANALYZE → GENERATE → LOG → REVIEW → IMPROVE**
 
-3D output format everywhere is **glTF/GLB** (web standard, portable to Blender/Unity/Unreal).
+**READ (server/pdf_vector.py — the parsing engine):** vector-first with layered generalization: named wall layers → brick-hatch recovery → schedule-tag openings (`tag_openings.py`: D/D1/W1 etc.) → room-dimension text scale voting → envelope sealing (`DRISHTI_SEAL_FT=4`, seals a dedicated `m_env` mask only; walls stay unsealed to protect stairs) → `force_geometry` retry for unnamed layers → OCR room labels (pytesseract fallback). Health scoring in `plan_health.py` (`score_scene`, `better_scene`) guarantees "never worse".
 
-## 5. File map (the important ones)
-```
-src/
-  App.tsx                       Main app: glass sidebar, 3 modes, GSAP camera, Framer Motion
-  index.css                     Inter font + Tailwind + dark theme variables
-  cameraPresets.ts              CameraPreset interface + PRESETS map (per material + default)
-  materials.ts                  Floor finishes (marble/wood/tile)
-  scene.ts                      Demo camera markers + OVERVIEW view
-  constants.ts                  Demo room dimensions
-  components/
-    Room.tsx, Lights.tsx, Furniture.tsx, WindowWall.tsx   Demo room geometry
-    Model.tsx                   GLTF loader + auto-fit
-    ErrorBoundary.tsx           Catches model-load failures
-    CameraMarker.tsx            Glowing clickable camera markers (demo)
-    CameraRig.tsx               *** GSAP camera tween (0.8s power3.out) ***
-    TraceScene.tsx              Convert/trace 3D: underlay + walls + click-to-add
-    ui/Button.tsx               Reusable shadcn-style button
-  cv/
-    loadOpenCV.ts               Lazy-load OpenCV.js (main-thread fallback)
-    detectWalls.ts              Main-thread detector (Seg type lives here)
-    detectWorker.ts             *** Worker wrapper — detection off the main thread ***
-    rasterizePdf.ts             PDF/image -> canvas
-  trace/useTrace.ts             (legacy standalone trace hook — Convert now inlines this logic)
-public/
-  detect.worker.js              *** Classic web worker: OpenCV.js wall detection ***
-  plan.png                      Clean SAMPLE plan (works well with auto-detect)
-  *.glb                         Pre-built models (bedroom_toilet.glb is the hand-built bedroom+toilets)
-pipeline/                       *** DURABLE: data -> 3D ***
-  builder.py                    Parametric GLB builder (rooms/toilets from JSON)
-  sample_plan.json              The bedroom+toilets expressed as DATA
-  SCHEMA.md                     The plan JSON contract (what a model would output)
-  ml/                           ML training scaffold (run on Colab GPU, NOT here)
-tools/auto_plan.py              Offline OpenCV detector (cleaner than in-browser)
-docs/                           CONTEXT, GUIDE, CONVERTER, REQUIREMENTS, DESIGN_RULES, GITHUB, this file
-```
+**ML fallback (server/main.py cascade):** vector parse → geometry retry → ML best-of. Reader registry: `cubicasa` (`perception.py`, PyTorch, **CC BY-NC = demo only**) + `tf2` (`tf2_floorplan.py`, TFLite at `TF2DeepFloorplan\weights\model.tflite`, GPL). `ML_READER=best` runs all, highest health score wins; `meta.reader_scores` records the contest. Boot line to verify: `ML readers active: ['cubicasa', 'tf2'] (mode=best)`. Note: `load_dotenv()` must stay ABOVE the reader registry in main.py.
 
-## 6. The three app modes
-- **Demo:** scripted furnished room; material buttons swap the floor AND glide the camera (GSAP+PRESETS).
-- **Convert:** the product. `handleConvert` → `detectWallsWorker` (worker) → segments + underlay →
-  `TraceScene` renders them and lets the user click to add walls. Undo / New wall / Clear / Export.
-- **Viewer:** `Model.tsx` loads any GLB with HDR env + contact shadows.
+**GENERATE (server/visualize.py):** SDXL + multi-ControlNet (canny + depth + seg). Seg model `SargeZT/sdxl-controlnet-seg` (5 GB) auto-enables when cached (`_seg_id()`). G-buffer conditioning maps come from the live three.js scene (`src/three/gbuffer.ts` — beauty/depth/seg passes, crash-safe finally-restore). Disk render cache (`render_cache.py`). Device-mismatch auto-retry built in. **SVD** (`stable-video-diffusion-img2vid-xt`, 4.51 GB) powers Animate; canvas MediaRecorder records walkthrough `.webm` with no model.
 
-## 7. The conversion pipeline (product core)
-Two halves:
-1. **Image → wall segments** (DETECT). In-browser: `public/detect.worker.js` (threshold dark pixels →
-   HoughLinesP → cluster parallel edges + gap-aware merge → metres). Offline & better:
-   `tools/auto_plan.py` (adds connected-component cleanup to drop text/furniture).
-2. **Segments/JSON → 3D** (BUILD). In-app: `TraceScene` extrudes walls live. Offline/full:
-   `pipeline/builder.py` from `SCHEMA.md` JSON (rooms, walls, openings, furniture).
-A trained ML model would replace half #1 by OUTPUTTING the SCHEMA.md JSON, feeding straight into half #2.
+**ANALYZE (proptech):** `area_statement.py` (RERA carpet/built-up/super + `/area-statement.xlsx`), `vastu.py` (9-zone, compass north via UI arrows → `north_deg`), `boq.py` (₹ cost estimate). All shown in the insights card.
 
-## 8. Design rules learned (apply when interpreting plans) — see docs/DESIGN_RULES.md
-- A **curved arc = a door**; put a door (default closed) in the arc's opening.
-- **Bed = queen** (1.53 × 2.03 m), standard across bedrooms.
-- **Toilet:** WC + basin both on the **shared centre wall** (WC back, basin beside it toward the
-  glass), WC faces the door; exactly **ONE glass partition** between WC and shower; WASH area is
-  empty floor (no invented washing machine); attached-room walls **align with the bedroom walls**;
-  the whole bedroom+toilet footprint should be a clean **rectangle**.
+**LOG/REVIEW:** parse summary logging, Supabase fire-and-forget (`db.py`, needs keys in `.env`), `/review` dashboard, `corpus_export.py`, `rate_limit.py`.
 
-## 9. Known limitations & WHY
-- **Auto-detect fails on complex/rotated/furnished plans** — pixel detection can't tell a wall from
-  furniture/text; rotation breaks the H/V assumption. Fix = ML model OR clean input OR human tracing.
-- The user's **DWG is a PDF-converted file** (CADSoftTools), so it has NO semantic layers/blocks —
-  it's not better than the image. A *native* DXF would be (walls/furniture as named objects).
-- OpenCV.js first load is ~8MB (~10–20s once, then cached).
-- The hand-built bedroom/toilet GLBs are **parametric scripts** (Python in tools/outputs), not yet
-  wired into the app's Convert flow — they're reference outputs + the basis for `pipeline/builder.py`.
+**Frontend:** `src/App.tsx` (R = roof, M = measure tool, compass), `src/three/planMaterials.ts` (procedural canvas textures + boxUV), `src/components/VisualizeButton.tsx` (style grid, Listing Pack, walkthrough recorder), `RenderLoading.tsx` (cinematic overlay). `public/sample.glb` was regenerated via `tools/make_sample_plan.py` — don't revert it.
 
-## 10. THE PLAN — what to do next (prioritized)
-Build the **auto-draft + human-trace** product (this is how Coohom works too):
-1. **Click-to-delete a wall** in Convert (currently only Undo) — completes the fix workflow. *High value, low effort.*
-2. **Snapping while tracing** — snap to grid + Shift for ortho (straight H/V) walls. *High value.*
-3. **Auto-deskew before detection** — rotate tilted plans straight first → better detection on real plans.
-4. **Port `tools/auto_plan.py` cleanups into `public/detect.worker.js`** (connected-component blob
-   removal, parallel-edge merge) so the in-browser draft is less noisy.
-5. **Per-room floors + colors** (flood-fill rooms) and **OCR room labels** (Tesseract.js) to color by type.
-6. **Doors & windows** detection/placement.
-7. Wall **thickness/height controls** + better materials/lighting on converted models.
-Longer term (separate, months): a **trained segmentation model** (U-Net on CubiCasa5K) emitting the
-SCHEMA.md JSON — the only path to reliable fully-automatic conversion. Scaffold is in `pipeline/ml/`.
+## Current status
 
-## 11. Run / build / deploy
-```
-npm install        # needs: three, r3f, drei, tailwind, gsap, framer-motion, pdfjs-dist
-npm run dev        # http://localhost:5173
-npm run build      # production build (tsc + vite)
-```
-OpenCV.js loads from https://docs.opencv.org/4.x/opencv.js at runtime (needs internet first time).
-Git/GitHub: see docs/GITHUB.md. Push with: `git add . && git commit -m "..." && git push`.
+- Corpus: **7/7 plans readable** (20x45, 342, 343, FLOOR PLAN, BRICK WORK, both Neelachala).
+- First photoreal SDXL render SUCCEEDED on Saswat's GPU.
+- Licensing: CubiCasa CC BY-NC (demo only, not paid product), TF2DFP GPL-3.0 (SaaS likely OK, verify with lawyer), SVD Stability Community License (revenue cap).
 
-## 12. Strategic decisions on record
-- **Build vs buy:** in-house chosen (product ambition). A paid API (GetFloorPlan/CubiCasa ~$20–35/plan)
-  is the fast/robust alternative if in-house stalls — view its GLB in the Viewer mode.
-- **CV vs ML:** rule-based CV is the 1–2 week deliverable (clean plans + human trace-fix). ML is the
-  only path to hands-off conversion of messy plans but is a multi-week project (data + GPU).
-- **Honest scope:** clean plans convert automatically; complex plans need the trace-fix step. That's
-  shippable and matches how the big tools actually operate.
+## ✅ Recently shipped (2026-07-22 session — do NOT redo)
+
+- **Style-integrated 3D**: the 4 Visualize styles now restyle the walkable model itself. `STYLE_PALETTES` + per-style material cache in `planMaterials.ts` (uvBoxed guard; `managed` WeakSet so shared materials never get disposed), `styleKey` prop on `Model` (style changes run in a SEPARATE effect — they must not re-fire onFramed/camera), `vizStyle` lifted in App, VisualizeButton style select controlled. Palette tests in `planMaterials.test.ts` (22 vitest total).
+- **RERA carpet fallback**: when no rooms are detected, carpet = enclosed area inside the wall rings (walls_poly "holes"); `carpet_source` field + explanatory note. 3 new tests in `test_area_statement.py`.
+- **Sidebar "Contact founders" button** in all app modes → shared `ContactModal` (now exported from AppSections.tsx). F2 closed.
+- **Maker's mark**: tiny clickable "built by raj padhi" (Playfair italic, 9px, white/35) in the contact popup corner → slim popover with raj85sp@gmail.com + tel:+919437418279. Saswat's personal signature — keep it.
+- `docs/RENDER-QA.md` (F3 tuning guide) and `docs/ACTIVATIONS.md` (F6 checklist). SVD 4.51 GB download COMPLETED on Saswat's machine; first Animate generated frames.
+- Task board 49/51 complete. Only open: **F7 GO LIVE** (user executes docs/DEPLOY-GPU.md) and **C.1 LoRA fine-tune** (parked for v2).
+
+## Pending (user-side, don't redo)
+
+- **git push** (~50 commits sitting only on Saswat's disk — top priority).
+- Supabase project creation → keys in `server/.env` (unlocks /review dashboard + corpus archival); tesseract Windows install (OCR room labels on scans); verify seg ControlNet auto-enabled after its 5 GB download (crisper renders); go-live per `docs/DEPLOY-GPU.md` (Cloudflare Tunnel + Vercel).
+- v2 ideas parked: LoRA fine-tune on own corpus; baking AI renders onto 3D geometry; per-frame diffusion walkthrough video.
+- Licensing before charging money: CubiCasa reader is CC BY-NC (demo only) — disable/replace it in any paid product.
+
+## How to run (Saswat's machine, two PowerShells)
+
+- Backend: `cd "D:\3D React Viewer\server"` → `.\venv\Scripts\activate` → `uvicorn main:app --port 8000`
+- Frontend: `cd "D:\3D React Viewer"` → `npm run dev` (Vite, port 5173)
+
+## First moves in the new chat
+
+1. Read project memory (all files) and this file.
+2. Connect/verify the `D:\3D React Viewer` folder via the device bridge.
+3. Continue the in-flight style task above. Test → build → deliver to disk. No questions that memory already answers.

@@ -237,7 +237,9 @@ def build_glb(scene, out_path):
     # but the DOWNLOADED .glb must stand on its own in any viewer)
     sc.export(out_path, include_normals=True)
     tris = sum(len(m.faces) for _, m in meshes)
-    print(f"wrote {out_path}: {len(meshes)} meshes, {tris} triangles")
+    import logging
+    logging.getLogger("drishti.glb").info(
+        "wrote %s: %d meshes, %d triangles", out_path, len(meshes), tris)
     return out_path
 
 

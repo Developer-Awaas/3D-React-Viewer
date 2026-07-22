@@ -64,10 +64,13 @@ async function post(path: string, file: File, q: URLSearchParams, signal?: Abort
 const BUILD_TIMEOUT_MS = 180_000
 
 /** Parse a plan and build its 3D model on the backend. */
-export async function buildPlan(file: File, widthFt?: number, wing?: number): Promise<BuiltPlan> {
+export async function buildPlan(
+  file: File, widthFt?: number, wing?: number, northDeg?: number,
+): Promise<BuiltPlan> {
   const q = new URLSearchParams()
   if (widthFt && widthFt > 0) q.set('width_ft', String(widthFt))
   if (wing !== undefined) q.set('wing', String(wing))
+  if (northDeg) q.set('north_deg', String(northDeg))  // Vastu compass (0 = top of sheet)
   // both uploads in parallel, sharing one timeout signal — no more unbounded
   // sequential hangs when the backend stalls
   const signal = AbortSignal.timeout(BUILD_TIMEOUT_MS)

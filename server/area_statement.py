@@ -48,6 +48,15 @@ def compute_area_statement(scene, loading_factor=1.30):
     meta = scene.get("meta", {}) or {}
 
     carpet = sum(float(r.get("area_sqft", 0) or 0) for r in rooms)
+    carpet_source = "rooms"
+    if carpet <= 0:
+        # GENERAL fallback (any plan, no per-plan logic): when room detection
+        # found nothing, the enclosed free space inside the wall rings — the
+        # wall polygons' interior "holes" — IS the usable floor area. Slight
+        # over-count vs true carpet (includes circulation), noted below.
+        carpet = sum(polygon_area(h)
+                     for wp in walls_poly for h in (wp.get("holes") or []))
+        carpet_source = "wall_interior" if carpet > 0 else "none"
 
     # built-up = gross footprint = area inside the outer wall outline(s)
     built_up = sum(polygon_area(wp.get("outer") or []) for wp in walls_poly)
@@ -62,7 +71,11 @@ def compute_area_statement(scene, loading_factor=1.30):
     wall_loss = max(0.0, built_up - carpet)
 
     notes = []
-    if not rooms:
+    if carpet_source == "wall_interior":
+        notes.append("No individual rooms detected — carpet estimated from the "
+                     "enclosed area inside the walls (includes internal "
+                     "circulation; slight over-count).")
+    elif carpet_source == "none":
         notes.append("No rooms detected — carpet area is 0; needs a sealed plan.")
     if meta.get("scale", {}).get("source") == "assumed_width":
         notes.append("Scale came from a width override, not on-sheet dimensions — "
@@ -78,6 +91,7 @@ def compute_area_statement(scene, loading_factor=1.30):
         "super_built_up_area": _pair(super_built),
         "wall_and_circulation": _pair(wall_loss),
         "loading_factor": round(loading_factor, 3),
+        "carpet_source": carpet_source,
         "efficiency_pct": round(100 * carpet / super_built, 1) if super_built else 0.0,
         "carpet_vs_builtup_pct": round(100 * carpet / built_up, 1) if built_up else 0.0,
         "rooms": [{"id": r.get("id"), **_pair(float(r.get("area_sqft", 0) or 0))}

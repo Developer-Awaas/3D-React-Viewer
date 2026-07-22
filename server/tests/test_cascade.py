@@ -34,3 +34,22 @@ def test_reader_field_present():
                                       files={"image": ("342.pdf", f.read(), "application/pdf")})
     assert r.status_code == 200
     assert r.json()["meta"].get("reader") in ("vector", "ml_fallback")
+
+
+def test_geometry_retry_rescues_unnamed_layer_walls():
+    """343-class sheets: real walls on an unnamed layer ('6'), the named wall
+    layer holds decoys -> layers mode yields a tiny envelope. The cascade's
+    geometry retry must rescue it (38 ft envelope, rooms found)."""
+    fx = os.path.join(os.path.dirname(__file__), "fixtures",
+                      "plan_unnamed_layers_343.pdf")
+    if not os.path.exists(fx):
+        return
+    with open(fx, "rb") as f:
+        r = TestClient(main.app).post("/scene",
+                                      files={"image": ("343.pdf", f.read(),
+                                                       "application/pdf")})
+    assert r.status_code == 200
+    j = r.json()
+    assert j["meta"]["reader"] == "vector_geometry_retry"
+    assert j["meta"]["plan_width_ft"] > 30          # real envelope, not the decoy
+    assert len(j["rooms"]) >= 2

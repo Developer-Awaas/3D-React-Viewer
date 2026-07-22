@@ -856,12 +856,16 @@ def _door_scale_sanity(openings, warnings):
             f"check the column size or provide width_ft")
 
 
-def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
+def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
     wing: "largest" or an int index - which building wing to build when the
     sheet holds several separate blocks (sorted largest first).
     ppf_hint: EXACT pt-per-ft when known (CAD DXF/DWG route: real units) -
-    overrides dimension-text and column-box scale guessing."""
+    overrides dimension-text and column-box scale guessing.
+    force_geometry: ignore wall/window LAYERS and detect walls from raw
+    parallel-line geometry over ALL drawings — the retry for sheets whose real
+    walls live on unnamed layers ('0', '6') while a named wall layer carries
+    only fragments/decoys (the layers-mode result comes out unhealthy)."""
     import cv2
     import fitz
     import numpy as np
@@ -874,6 +878,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     win_segs, skipped_w = _filter_text_layers(drawings, _is_window_layer, warnings)
     skipped |= skipped_w
     struct = wall_segs + win_segs
+    if force_geometry:
+        struct = []          # ignore named wall layers -> geometry branch runs
+        warnings.append("force_geometry: named wall layers ignored - detecting "
+                        "walls from raw linework across all layers")
     col_rects = _column_rects(drawings)
 
     # scale from live dimension text beats every other signal
@@ -1074,6 +1082,31 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
     # nothing; with it, scene_to_glb's z-band cut (0..DOOR_HEAD_FT) leaves a
     # proper header/lintel above the door, as built on site. ---
     door_hits = []                     # (strip_bbox_px or None, cluster_rect)
+
+    # endpoint-first rescue for DENSE sheets: when both the raster gap-finder
+    # and the vector-endpoint fallback miss, look up the nearest true doorway
+    # GAP in the wall lines (the unit-tested gap_openings detector, computed
+    # once, in mask px) and snap the door onto it. Each gap is used once.
+    _gap_state = {"gaps": None, "used": []}
+
+    def _nearest_wall_gap(ccx_px, ccy_px):
+        if _gap_state["gaps"] is None:
+            seg_px_ = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
+            _gap_state["gaps"] = gap_openings(
+                seg_px_, DOOR_MIN_FT * NORM_PPX, DOOR_MAX_FT * NORM_PPX,
+                min_flank=0.8 * NORM_PPX, face_tol=0.35 * NORM_PPX,
+                group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX)
+        best, bd = None, (4.0 * NORM_PPX) ** 2      # within 4 ft of the swing
+        for g in _gap_state["gaps"]:
+            if id(g) in _gap_state["used"]:
+                continue
+            dd = (g["cx"] - ccx_px) ** 2 + (g["cy"] - ccy_px) ** 2
+            if dd < bd:
+                bd, best = dd, g
+        if best is not None:
+            _gap_state["used"].append(id(best))
+        return best
+
     for cl in door_clusters:
         wd = max(cl.width, cl.height) / ppf
         if not (DOOR_MIN_FT <= wd <= DOOR_MAX_FT):
@@ -1106,6 +1139,22 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
                 mm[sy0:sy1, sx0:sx1] = 255
             m[max(0, sy0 - 5):sy1 + 5, max(0, sx0 - 5):sx1 + 5] = 255  # seal slits
             door_hits.append(((sx0, sy0, sx1, sy1), cl))
+            continue
+        # endpoint-first rescue: nearest true wall gap to the swing box
+        g = _nearest_wall_gap(*tp((cl.x0 + cl.x1) / 2, (cl.y0 + cl.y1) / 2))
+        if g:
+            th = int(0.9 * NORM_PPX)
+            if g["orient"] == "h":
+                gx0, gx1 = int(g["cx"] - g["w"] / 2), int(g["cx"] + g["w"] / 2)
+                gy0, gy1 = int(g["cy"] - th / 2), int(g["cy"] + th / 2)
+            else:
+                gy0, gy1 = int(g["cy"] - g["w"] / 2), int(g["cy"] + g["w"] / 2)
+                gx0, gx1 = int(g["cx"] - th / 2), int(g["cx"] + th / 2)
+            gx0, gy0 = max(0, gx0), max(0, gy0)
+            for mm in (m, m_snap):      # fill: wall continuous, header cut works
+                mm[gy0:gy1, gx0:gx1] = 255
+            m[max(0, gy0 - 5):gy1 + 5, max(0, gx0 - 5):gx1 + 5] = 255
+            door_hits.append(((gx0, gy0, gx1, gy1), cl))
         else:
             door_hits.append((None, cl))
 
@@ -1225,6 +1274,41 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None):
         cxp, cyp = tp((rr.x0 + rr.x1) / 2, (rr.y0 + rr.y1) / 2)
         if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
             name_tokens.append((fx(cxp), fy(cyp), int(rlab[cyp, cxp]), rtype))
+    # OCR fallback: many CAD exports OUTLINE their text (letters become line
+    # art, invisible to get_text). When live text yielded no labels but rooms
+    # exist, render the page and OCR it — pixmap pixels are already in rotated
+    # page space, matching tp()'s coordinate frame. Optional dependency:
+    # skipped silently when tesseract/pytesseract are absent.
+    if not name_tokens and rooms:
+        try:
+            import pytesseract
+            from PIL import Image as _Img
+            _dpi = 150
+            _zoom = _dpi / 72.0
+            pix = page.get_pixmap(dpi=_dpi)
+            img = _Img.frombytes("RGB", (pix.width, pix.height), pix.samples)
+            data = pytesseract.image_to_data(img,
+                                             output_type=pytesseract.Output.DICT)
+            n_ocr = 0
+            for i, txt in enumerate(data["text"]):
+                t = (txt or "").strip()
+                if len(t) < 3 or int(data["conf"][i]) < 40:
+                    continue
+                rtype = furnish.classify_room_type(t)
+                if not rtype:
+                    continue
+                cx_pt = (data["left"][i] + data["width"][i] / 2) / _zoom
+                cy_pt = (data["top"][i] + data["height"][i] / 2) / _zoom
+                cxp, cyp = tp(cx_pt, cy_pt)
+                if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
+                    name_tokens.append((fx(cxp), fy(cyp),
+                                        int(rlab[cyp, cxp]), rtype))
+                    n_ocr += 1
+            if n_ocr:
+                warnings.append(f"room labels recovered by OCR: {n_ocr} "
+                                f"(outlined text on this sheet)")
+        except Exception:
+            pass                          # OCR unavailable/failed -> untyped rooms
     for r in rooms:
         best, best_d = None, 1e18
         for tx, ty, lab, rtype in name_tokens:

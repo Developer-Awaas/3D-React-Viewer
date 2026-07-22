@@ -21,6 +21,7 @@ create table if not exists public.parses (
   wing_count        int,
   duration_ms       int,
   warnings          jsonb,
+  file_path         text,                 -- Supabase Storage path of the uploaded plan (STORE_UPLOADS=1)
   scene             jsonb                 -- the full canonical scene (walls, openings, rooms, meta)
 );
 

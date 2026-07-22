@@ -8,8 +8,10 @@ import Lights from './components/Lights'
 import PlanLights from './components/PlanLights'
 import Furniture from './components/Furniture'
 import Model from './components/Model'
+import { ContactModal } from './components/AppSections'
 import VisualizeButton from './components/VisualizeButton'
 import GBufferBridge from './components/GBufferBridge'
+import MeasureTool from './components/MeasureTool'
 import ErrorBoundary from './components/ErrorBoundary'
 import CameraMarker from './components/CameraMarker'
 import CameraRig, { View } from './components/CameraRig'
@@ -97,10 +99,10 @@ function HipRoof({ center, w, d }: { center: [number, number, number]; w: number
     <group position={center}>
       <mesh position={[0, 0.04, 0]} castShadow>
         <boxGeometry args={[w, 0.08, d]} />
-        <meshStandardMaterial color="#6b5545" roughness={0.9} />
+        <meshStandardMaterial color="#cfc9bf" roughness={0.95} />
       </mesh>
       <mesh position={[0, 0.08, 0]} geometry={geom} castShadow>
-        <meshStandardMaterial color="#7d3b2e" roughness={0.85} side={THREE.DoubleSide} />
+        <meshStandardMaterial color="#d8d2c6" roughness={0.92} side={THREE.DoubleSide} />
       </mesh>
     </group>
   )
@@ -213,6 +215,11 @@ export default function App() {
   const [pLoading, setPLoading] = useState(false)
   const [pPlan, setPPlan] = useState<BuiltPlan | null>(null)
   const [pWidthFt, setPWidthFt] = useState<number>(0) // 0 = let the backend decide
+  // shared style: the Visualize panel's style choice ALSO re-dresses the
+  // walkable 3D's materials live (floors, walls, columns) — same palette
+  const [vizStyle, setVizStyle] = useState('scandinavian')
+  // founders popup, reachable from the sidebar in every app mode
+  const [contactOpen, setContactOpen] = useState(false)
   const [pStatus, setPStatus] = useState('Upload a plan (PDF, image, or CAD .dxf/.dwg) — the backend parses it and builds real 3D.')
 
   // bundled demo building: built by tools/make_sample_plan.py through the
@@ -244,13 +251,14 @@ export default function App() {
     }
   }
 
-  const handlePlan = async (f: File, wing?: number) => {
+  const handlePlan = async (f: File, wing?: number, northDeg?: number) => {
     const id = ++planReqId.current
     setPFile(f)
     setPLoading(true)
     setPStatus(wing === undefined ? 'Parsing plan + building 3D…' : `Building wing ${wing}…`)
     try {
-      const built = await buildPlan(f, pWidthFt || undefined, wing)
+      const built = await buildPlan(f, pWidthFt || undefined, wing,
+                                    northDeg ?? pNorthDeg)
       if (id !== planReqId.current) { // a newer request won — drop this result
         URL.revokeObjectURL(built.glbUrl)
         return
@@ -280,6 +288,8 @@ export default function App() {
   const [roofOn, setRoofOn] = useState(false)  // R toggles a roof slab over the plan
   const [areaBusy, setAreaBusy] = useState(false)
   const [currentRoomType, setCurrentRoomType] = useState<string | undefined>(undefined)
+  const [measureOn, setMeasureOn] = useState(false)   // M: click-to-measure
+  const [pNorthDeg, setPNorthDeg] = useState(0)       // Vastu compass: sheet-North
   const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
     setFrame(info)
@@ -350,6 +360,7 @@ export default function App() {
       if (e.key === 't' || e.key === 'T') setView({ ...TOP_VIEW })
       if ((e.key === 'f' || e.key === 'F') && lastFrame.current) framePlan(lastFrame.current)
       if (e.key === 'r' || e.key === 'R') setRoofOn((v) => !v)
+      if (e.key === 'm' || e.key === 'M') setMeasureOn((v) => !v)
       if (/^[1-9]$/.test(e.key)) enterRoom(Number(e.key) - 1)
     }
     window.addEventListener('keydown', onKey)
@@ -516,8 +527,20 @@ export default function App() {
               )}
             </motion.div>
           </AnimatePresence>
+
+          {/* contact stays reachable inside the app (story/FAQ live on the
+              landing page only) — opens the same founders popup */}
+          <button
+            onClick={() => setContactOpen(true)}
+            className="mt-4 w-full rounded-md border border-white/10 py-1.5 text-[11px]
+                       text-muted-foreground transition-colors hover:border-neon/50 hover:text-foreground"
+          >
+            ✉ Contact founders
+          </button>
         </div>
       </aside>
+
+      <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} />
 
       {/* ─────────── 3D scene ─────────── */}
       <Canvas
@@ -571,7 +594,7 @@ export default function App() {
               <Suspense fallback={null}>
                 <ErrorBoundary key={pPlan.glbUrl} fallback={null}
                   onError={() => setPStatus('⚠ The 3D model failed to render — try rebuilding, another wing, or a smaller plan.')}>
-                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center plan onFramed={framePlan} />
+                  <Model key={pPlan.glbUrl} url={pPlan.glbUrl} targetSize={14} position={[0, 0, 0]} center plan styleKey={vizStyle} onFramed={framePlan} />
                 </ErrorBoundary>
               </Suspense>
             )}
@@ -591,6 +614,8 @@ export default function App() {
                 position={roomWorldPoint(r, frame, 4.6)}
                 onSelect={() => enterRoom(i)} />
             ))}
+            {/* M: click two points -> real distance in ft/m */}
+            <MeasureTool active={measureOn} modelScale={frame?.scale} />
           </>
         )}
 
@@ -664,6 +689,30 @@ export default function App() {
               </span>
             </div>
           )}
+          {pPlan.vastu && pFile && (
+            <div className="flex items-center justify-between py-0.5 text-white/60">
+              <span>North on sheet</span>
+              <div className="flex gap-1">
+                {([['↑', 0], ['→', 90], ['↓', 180], ['←', 270]] as const).map(([arrow, deg]) => (
+                  <button
+                    key={deg}
+                    title={`North points ${arrow} (${deg}°)`}
+                    onClick={() => {
+                      if (deg === pNorthDeg) return
+                      setPNorthDeg(deg)
+                      handlePlan(pFile, undefined, deg)   // re-read with the new compass
+                    }}
+                    className={`h-6 w-6 rounded border text-xs leading-none
+                      ${pNorthDeg === deg
+                        ? 'border-neon/70 bg-neon/20 text-white'
+                        : 'border-white/15 text-white/50 hover:border-neon/40 hover:text-white'}`}
+                  >
+                    {arrow}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
           {pPlan.costInr != null && pPlan.costInr > 0 && (
             <div className="flex items-baseline justify-between py-0.5 text-white/60">
               <span>Est. cost <span className="text-white/30">(masonry+finish)</span></span>
@@ -707,7 +756,10 @@ export default function App() {
       )}
 
       {/* ── Visualize (Beta): photoreal render of the current view (GPU backend) ── */}
-      {mode === 'plan' && pPlan && <VisualizeButton roomType={currentRoomType} />}
+      {mode === 'plan' && pPlan && (
+        <VisualizeButton roomType={currentRoomType} rooms={pPlan.rooms} enterRoom={enterRoom}
+          style={vizStyle} onStyleChange={setVizStyle} />
+      )}
 
       {/* ── desktop controls hint ── */}
       <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">
@@ -715,7 +767,10 @@ export default function App() {
         <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
         <span className="rounded border border-white/20 px-1">F</span> frame plan
         {mode === 'plan' && pPlan && (
-          <> · <span className={`rounded border px-1 ${roofOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>R</span> roof</>
+          <>
+            {' '}· <span className={`rounded border px-1 ${roofOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>R</span> roof
+            {' '}· <span className={`rounded border px-1 ${measureOn ? 'border-neon/60 text-neon' : 'border-white/20'}`}>M</span> measure
+          </>
         )}
         {mode === 'plan' && (pPlan?.rooms.length ?? 0) > 0 && (
           <> · <span className="rounded border border-white/20 px-1">1–{Math.min(9, pPlan!.rooms.length)}</span> step inside · click a beacon</>
