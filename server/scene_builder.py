@@ -45,11 +45,25 @@ def _snap_corners(walls, tol=CORNER_TOL_FT):
             w[k] = round(w[k], 3)
 
 
+# G4: nominal footprints (ft) for fixtures placed from CubiCasa icons — the
+# drawn symbol size is unreliable, so we stamp a real-world size at the icon
+# centroid. (w, d) in feet.
+_FURN_SIZE_FT = {
+    "commode": (1.5, 2.2),
+    "basin": (1.3, 1.0),
+    "bathtub": (2.5, 5.0),
+    "cupboard": (2.0, 2.0),
+}
+
+
 def scene_from_segments(segments, width_px, height_px, width_ft=DEFAULT_WIDTH_FT,
-                        openings=None):
+                        openings=None, rooms_px=None, furniture_px=None):
     """segments: [[x1,y1,x2,y2], ...] wall centre-lines in PIXELS (origin top-left, y down).
     openings: optional [{"type": "door"|"window", "seg": <segment index>,
     "along": [a, b] px}, ...] from openings.attach_openings().
+    rooms_px: optional typed room regions in PIXELS (E5, from
+    perception.rooms_from_pred): [{"type","cx","cy","area_px"}, ...]. Converted
+    to feet rooms so the ML path ships typed, furnishable, Vastu-scorable rooms.
     Returns a canonical scene.json dict (feet, origin bottom-left, z up)."""
     ft_per_px = (width_ft / width_px) if width_px else 1.0
 
@@ -121,6 +135,37 @@ def scene_from_segments(segments, width_px, height_px, width_ft=DEFAULT_WIDTH_FT
                         round(min(WINDOW_HEAD_FT, H), 3)]
         out_openings.append(rec)
 
+    # E5: typed rooms from the ML room-type map (px -> ft, same Y-flip as walls)
+    rooms = []
+    for i, r in enumerate(rooms_px or []):
+        cx, cy = float(r.get("cx", 0)), float(r.get("cy", 0))
+        area_px = float(r.get("area_px", 0) or 0)
+        rooms.append({
+            "id": f"r{i}",
+            "type": r.get("type"),
+            "x": fx(cx),
+            "y": fy(cy),
+            "area_sqft": round(area_px * ft_per_px * ft_per_px, 1),
+        })
+    rooms.sort(key=lambda r: -r["area_sqft"])
+
+    # G4: fixture furniture from CubiCasa icons — a nominal real-world footprint
+    # centred on each icon (px -> ft, same Y-flip as walls/rooms).
+    furniture = []
+    for f in (furniture_px or []):
+        w_ft, d_ft = _FURN_SIZE_FT.get(f.get("type"), (1.5, 1.5))
+        cx, cy = float(f.get("cx", 0)), float(f.get("cy", 0))
+        cx_ft, cy_ft = cx * ft_per_px, (height_px - cy) * ft_per_px
+        furniture.append({
+            "type": f["type"],
+            "x": round(cx_ft - w_ft / 2, 3),
+            "y": round(cy_ft - d_ft / 2, 3),
+            "w": w_ft, "d": d_ft, "staged": True,
+        })
+
+    warnings = ["scale is a placeholder (assumed width) until Step 4"]
+    if not rooms:
+        warnings.append("rooms/furniture not yet extracted")
     return {
         "meta": {
             "source": "cubicasa detection",
@@ -129,11 +174,10 @@ def scene_from_segments(segments, width_px, height_px, width_ft=DEFAULT_WIDTH_FT
             "plan_width_ft": round(width_ft, 3),
             "plan_depth_ft": round(height_px * ft_per_px, 3),
             "scale": {"source": "assumed_width", "assumed_width_ft": width_ft, "ft_per_px": ft_per_px},
-            "warnings": ["scale is a placeholder (assumed width) until Step 4",
-                         "rooms/furniture not yet extracted"],
+            "warnings": warnings,
         },
         "wall_types": {"external": {"thickness_ft": EXT_THICKNESS_FT},
                        "internal": {"thickness_ft": INT_THICKNESS_FT}},
-        "rooms": [], "walls": walls, "openings": out_openings,
-        "columns": [], "ducts": [], "furniture": [],
+        "rooms": rooms, "walls": walls, "openings": out_openings,
+        "columns": [], "ducts": [], "furniture": furniture,
     }

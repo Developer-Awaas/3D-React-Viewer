@@ -281,12 +281,14 @@ export function applyPlanMaterials(root: THREE.Object3D, style: string = DEFAULT
     }
     if (name.includes('floor')) mesh.material = m.floor
     else if (name.includes('column')) mesh.material = m.concrete
-    else if (name.includes('furn')) {
-      // keep the furniture's baked colour but give it a sane finish — created
-      // once per mesh, then reused across re-styles (userData guard)
+    else if (name.includes('furn') || name.includes('door')) {
+      // furniture AND door leaves (D1): keep the baked wood colour but give it
+      // a sane wood finish, created once per mesh and reused across re-styles.
+      // Without this a 'door_*' mesh falls through to plaster and reads as a
+      // wall slab instead of a door.
       if (!mesh.userData.furnMat) {
         mesh.material = new THREE.MeshStandardMaterial({
-          vertexColors: true, roughness: 0.7, metalness: 0.0,
+          vertexColors: true, roughness: 0.6, metalness: 0.0,
         })
         mesh.userData.furnMat = true
       }

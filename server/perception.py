@@ -191,3 +191,101 @@ def detections(image_bytes):
     segs = walls.vectorize_walls((rooms_pred == wall_idx).astype(np.uint8))
     boxes = openings.boxes_from_mask(icons_pred, min_area=max(30, int(0.00015 * w * h)))
     return segs, boxes, int(w), int(h)
+
+
+# E5: CubiCasa already classifies every pixel's ROOM TYPE (Kitchen/Bath/…) — we
+# used to throw that away and ship untyped, unfurnished ML scenes. Map its
+# classes to Drishti's room vocabulary (see vastu._RULES / furnish.STAGEABLE).
+CUBI_ROOM_TO_DRISHTI = {
+    "Kitchen": "kitchen",
+    "Living Room": "living",
+    "Bed Room": "bedroom",
+    "Bath": "bathroom",
+    "Entry": "lobby",
+    "Storage": "storage",
+    "Garage": "parking",
+    "Outdoor": "balcony",
+}
+
+
+def rooms_from_pred(rooms_pred, min_area_frac=0.0008):
+    """PURE: CubiCasa room-type argmax map -> typed room regions in PIXELS
+    (origin top-left, y-down): [{"type","cx","cy","area_px"}]. One entry per
+    connected region of a mappable class; speckle below min_area_frac (of the
+    image) is dropped. Unit-tested with synthetic maps (no torch needed)."""
+    import cv2
+    arr = np.asarray(rooms_pred)
+    if arr.ndim != 2:
+        return []
+    H, W = arr.shape[:2]
+    min_area = max(40, int(min_area_frac * H * W))
+    out = []
+    for idx, name in enumerate(ROOM_CLASSES):
+        dtype = CUBI_ROOM_TO_DRISHTI.get(name)
+        if not dtype:
+            continue
+        mask = (arr == idx).astype(np.uint8)
+        n, _lbl, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        for i in range(1, n):
+            a = int(stats[i, cv2.CC_STAT_AREA])
+            if a < min_area:
+                continue
+            cx, cy = centroids[i]
+            out.append({"type": dtype, "cx": float(cx), "cy": float(cy),
+                        "area_px": a})
+    return out
+
+
+# G4: CubiCasa also detects fixture ICONS (Toilet/Sink/Bathtub/Closet) — we
+# used to keep only Door/Window and drop these, so ML bathrooms/kitchens came
+# out empty. Map them to renderable furniture (see scene_to_glb._add_furniture).
+ICON_TO_FURNITURE = {
+    "Toilet": "commode",
+    "Sink": "basin",
+    "Bathtub": "bathtub",
+    "Closet": "cupboard",
+}
+
+
+def furniture_from_icons(icons_pred, min_area_frac=0.0002):
+    """PURE: CubiCasa icon argmax map -> fixture furniture at each icon's
+    CENTROID in PIXELS: [{"type","cx","cy"}]. One entry per connected icon
+    region; symbol-sized specks below min_area_frac are dropped. Nominal
+    real-world sizes are applied later in scene_builder (the drawn symbol size
+    is unreliable). Unit-tested with synthetic maps (no torch)."""
+    import cv2
+    arr = np.asarray(icons_pred)
+    if arr.ndim != 2:
+        return []
+    H, W = arr.shape[:2]
+    min_area = max(15, int(min_area_frac * H * W))
+    out = []
+    for idx, name in enumerate(ICON_CLASSES):
+        ftype = ICON_TO_FURNITURE.get(name)
+        if not ftype:
+            continue
+        mask = (arr == idx).astype(np.uint8)
+        n, _lbl, stats, centroids = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        for i in range(1, n):
+            if int(stats[i, cv2.CC_STAT_AREA]) < min_area:
+                continue
+            cx, cy = centroids[i]
+            out.append({"type": ftype, "cx": float(cx), "cy": float(cy)})
+    return out
+
+
+def detect_parts(image_bytes):
+    """ONE inference -> EVERYTHING the scene needs: wall segments, opening
+    boxes, typed rooms (E5) AND fixture furniture (G4) — both room-type and
+    icon maps that detections() used to drop. Returns a dict {segments, boxes,
+    width, height, rooms, furniture}. main._one_ml_scene prefers this."""
+    import walls
+    import openings
+    img, rooms_pred, icons_pred = _infer(image_bytes)
+    h, w = img.shape[:2]
+    wall_idx = ROOM_CLASSES.index("Wall")
+    segs = walls.vectorize_walls((rooms_pred == wall_idx).astype(np.uint8))
+    boxes = openings.boxes_from_mask(icons_pred, min_area=max(30, int(0.00015 * w * h)))
+    return {"segments": segs, "boxes": boxes, "width": int(w), "height": int(h),
+            "rooms": rooms_from_pred(rooms_pred),
+            "furniture": furniture_from_icons(icons_pred)}

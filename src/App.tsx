@@ -23,7 +23,7 @@ import { FLOOR_MATERIALS, FloorKey } from './materials'
 import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
-import { buildPlan, downloadAreaStatement, type BuiltPlan } from './api/scene'
+import { buildPlan, downloadAreaStatement, recomputePlan, type BuiltPlan } from './api/scene'
 import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
 import LoadingScreen from './components/LoadingScreen'
 import LandingHero from './landing/LandingHero'
@@ -296,6 +296,32 @@ export default function App() {
   const [currentRoomType, setCurrentRoomType] = useState<string | undefined>(undefined)
   const [measureOn, setMeasureOn] = useState(false)   // M: click-to-measure
   const [pNorthDeg, setPNorthDeg] = useState(0)       // Vastu compass: sheet-North
+  // G7 user corrections: fix a room's type / drop a phantom room, then let the
+  // backend recompute area/vastu/boq instantly (no re-parse, no GPU)
+  const [correctOpen, setCorrectOpen] = useState(false)
+  const [correctBusy, setCorrectBusy] = useState(false)
+  const ROOM_TYPE_OPTS = ['', 'bedroom', 'living', 'kitchen', 'bathroom',
+    'dining', 'study', 'parking', 'balcony', 'lobby', 'storage']
+  const applyCorrections = useCallback(async (corr: {
+    room_types?: Record<string, string>; delete_rooms?: string[]
+  }) => {
+    if (!pPlan?.raw) return
+    // claim the request sequence: if the user uploads a new plan / picks the
+    // sample / rotates North while this recompute is in flight, that newer
+    // action bumps planReqId and we DROP this stale result — otherwise it would
+    // overwrite the new plan and point <Model> at an already-revoked blob URL
+    const id = ++planReqId.current
+    setCorrectBusy(true)
+    try {
+      const { plan } = await recomputePlan(pPlan, corr)
+      if (id !== planReqId.current) return             // a newer plan won
+      setPPlan(plan)                                   // fresh numbers, same 3D
+    } catch (e) {
+      console.error('recompute failed', e)
+    } finally {
+      if (id === planReqId.current) setCorrectBusy(false)
+    }
+  }, [pPlan])
   const framePlan = useCallback((info: FrameInfo) => {
     lastFrame.current = info
     setFrame(info)
@@ -353,9 +379,11 @@ export default function App() {
   }
   const exportJSON = () => {
     const data = { metresWide: cDims.w, metresDeep: cDims.d, ceilingHeight: 2.5, wallThickness: 0.2, walls: cSegs }
+    const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
     const a = document.createElement('a')
-    a.href = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+    a.href = url
     a.download = 'plan.json'; a.click()
+    URL.revokeObjectURL(url)              // free the blob (was leaked per click)
   }
 
   // desktop keyboard shortcuts: T = top view, F = re-frame, R = roof, 1-9 = enter room
@@ -773,6 +801,53 @@ export default function App() {
           >
             {areaBusy ? 'Preparing…' : '⬇ Download Excel'}
           </button>
+
+          {/* G7: correct a wrong room type or drop a phantom room -> instant
+              recompute of every number. Only when we have the raw scene. */}
+          {pPlan.raw && pPlan.rooms.length > 0 && (
+            <div className="mt-2 border-t border-white/10 pt-2">
+              <button
+                onClick={() => setCorrectOpen((v) => !v)}
+                className="flex w-full items-center justify-between text-[11px] text-white/50 hover:text-white/80"
+              >
+                <span>✎ Correct rooms</span>
+                <span>{correctOpen ? '▾' : '▸'}</span>
+              </button>
+              {correctOpen && (
+                <div className="mt-2 flex flex-col gap-1.5">
+                  <p className="text-[10px] leading-snug text-white/30">
+                    Fix a mislabeled room or remove one that isn’t real — areas,
+                    Vastu and cost update instantly. (Wrong overall size? set the
+                    width above and re-parse.)
+                  </p>
+                  {pPlan.rooms.map((r) => (
+                    <div key={r.id} className="flex items-center gap-1.5">
+                      <select
+                        value={r.type ?? ''}
+                        disabled={correctBusy}
+                        onChange={(e) => applyCorrections({ room_types: { [r.id]: e.target.value } })}
+                        className="h-7 flex-1 rounded border border-input bg-surface/60 px-1.5 text-[11px] text-foreground"
+                      >
+                        {ROOM_TYPE_OPTS.map((t) => (
+                          <option key={t} value={t}>{t || '— untyped —'}</option>
+                        ))}
+                      </select>
+                      <span className="w-14 text-right text-[10px] text-white/35">
+                        {Math.round(r.area_sqft)} sf
+                      </span>
+                      <button
+                        title="remove this room"
+                        disabled={correctBusy}
+                        onClick={() => applyCorrections({ delete_rooms: [r.id] })}
+                        className="rounded border border-red-400/30 px-1.5 text-[11px] text-red-300 hover:bg-red-500/15 disabled:opacity-40"
+                      >×</button>
+                    </div>
+                  ))}
+                  {correctBusy && <p className="text-[10px] text-neon/70">updating…</p>}
+                </div>
+              )}
+            </div>
+          )}
         </motion.div>
       )}
 

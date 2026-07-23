@@ -269,3 +269,32 @@ def test_offload_env_overrides(monkeypatch):
     assert visualize._wants_offload(("canny",)) is True
     monkeypatch.setenv("GPU_OFFLOAD", "never")
     assert visualize._wants_offload(("depth", "seg")) is False
+
+
+# --------------------------------------------------------------------------- #
+# G6: reported render conditioning is HONEST about seg availability
+# --------------------------------------------------------------------------- #
+def test_render_conditioning_drops_seg_when_model_absent(client, monkeypatch, tmp_path):
+    """seg map sent but no seg ControlNet cached -> conditioning must NOT claim
+    'seg' (it would be silently dropped). Uses the cache to return 200 without
+    a GPU."""
+    import render_cache
+    import visualize
+    monkeypatch.setenv("RENDER_CACHE_DIR", str(tmp_path))
+    monkeypatch.setenv("RENDER_CACHE", "1")
+    monkeypatch.setattr(visualize, "_seg_id", lambda: "")     # no seg model
+    import io as _io
+    from PIL import Image
+    buf = _io.BytesIO(); Image.new("RGB", (8, 8)).save(buf, "PNG"); png = buf.getvalue()
+    steps = __import__("inspect").signature(visualize.render_ep).parameters["steps"].default.default
+    prompt = visualize._compose_prompt("living room", "scandinavian")
+    # prime the cache under the HONEST ctype 'depth' (seg dropped)
+    key = render_cache.make_key((b"D") + (b"S"), prompt, visualize.NEG_PROMPT,
+                                steps, 6.0, 0.7, 12345, "depth")
+    render_cache.put(key, b"\x89PNG")
+    r = client.post("/visualize/render", files={
+        "image": ("v.png", png, "image/png"),
+        "depth": ("d.png", b"D", "image/png"),
+        "seg": ("s.png", b"S", "image/png")})
+    assert r.status_code == 200
+    assert r.json()["conditioning"] == "depth"                # NOT 'depth+seg'

@@ -39,8 +39,17 @@ def _issue(issues, level, tag, message):
 
 
 def diagnose(scene):
-    """Scene -> diagnosis dict. PURE (no I/O), safe on partial scenes."""
-    meta = scene.get("meta", {}) or {}
+    """Scene -> diagnosis dict. PURE (no I/O), safe on partial/malformed
+    scenes (client-supplied via /recompute)."""
+    if not isinstance(scene, dict):
+        scene = {}
+    meta = scene.get("meta", {})
+    if not isinstance(meta, dict):
+        meta = {}
+    # scale may arrive malformed (a string) from a client scene -> coerce
+    scale_meta = meta.get("scale")
+    if not isinstance(scale_meta, dict):
+        scale_meta = {}
     rooms = scene.get("rooms", []) or []
     openings = scene.get("openings", []) or []
     stmt = scene.get("area_statement", {}) or {}
@@ -76,7 +85,7 @@ def diagnose(scene):
                "be over-counted (circulation included) or walls read too thin.")
 
     # --- scale trust (every ft/sqft/₹ number scales with this) ---
-    ssrc = (meta.get("scale", {}) or {}).get("source", "")
+    ssrc = scale_meta.get("source", "")
     if ssrc == "column_box_12in":
         _issue(issues, "warn", "scale_column_guess",
                "Scale was inferred by assuming the columns are 12 inches wide. "
@@ -87,7 +96,22 @@ def diagnose(scene):
                "No dimension text was found, so the drawing was scaled to an "
                "assumed overall width. All ft / sqft / cost numbers move with "
                "that guess — confirm the real plot width.")
-    if (meta.get("scale", {}) or {}).get("envelope") == "overall_dimension_text":
+    if scale_meta.get("needs_review"):
+        sc = scale_meta
+        _ov = sc.get("implied_oversize")
+        _md = sc.get("door_median_ft")
+        _corrected = "door_corrected" in str(sc.get("source", ""))
+        if _corrected:
+            _issue(issues, "ok", "scale_door_corrected",
+                   f"Scale was auto-corrected from door widths (median door "
+                   f"{_md} ft) — sizes should now be right; still worth a check.")
+        else:
+            _issue(issues, "fail", "scale_door_mismatch",
+                   f"Sizes look off: the doors imply the plan is about "
+                   f"{_ov}x wrong (median door reads {_md} ft, real doors are "
+                   "~3 ft). Re-upload with the true plan width to fix every "
+                   "measurement, or the areas/₹ cost will be off.")
+    if scale_meta.get("envelope") == "overall_dimension_text":
         _issue(issues, "ok", "envelope_verified",
                "Plot size was taken from the architect's own overall dimension "
                "on the sheet (more trustworthy than raw linework).")
@@ -184,7 +208,9 @@ def diagnose(scene):
         "issues": issues,
         "learn_tags": sorted({i["tag"] for i in issues if i["level"] != "ok"}),
         # NON-NEGOTIABLE efficiency contract for the UI: never a silent 0%
-        "efficiency_display": ("needs_review" if (not stmt or eff <= 0)
+        # NON-NEGOTIABLE: never a silent 0% — a tiny positive eff that would
+        # round to "0.0%" is treated as needs_review too
+        "efficiency_display": ("needs_review" if (not stmt or eff < 0.05)
                                else f"{eff:.1f}%"),
     }
 

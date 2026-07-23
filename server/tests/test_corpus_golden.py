@@ -52,16 +52,26 @@ def test_combined_sheet_golden():
     assert c["w"] == pytest.approx(80.0, abs=1.5)
     assert c["d"] == pytest.approx(47.8, abs=1.5)
     assert c["doors"] >= 20
-    assert c["snapped"] >= 15          # golden: 15/20
+    # snapped lowered 15 -> 10: door-strip VALIDATION (23 Jul 2026) demotes
+    # oversize/fat strips (>5.5 ft wide or >1.6 ft thick = merged walls, not
+    # doors) to unsnapped, so the count now reflects only PLAUSIBLE door cuts.
+    assert c["snapped"] >= 9           # golden: 10/20 plausible
     assert c["windows"] >= 27          # golden: 27
 
 
 def test_first_floor_default_wing_golden():
+    """The DEFAULT wing pick must now be the REAL floor plan (wing 1), not the
+    tall door-schedule/legend block it used to wrongly pick (which inflated
+    depth to 96.9 ft). Fixed 23 Jul 2026: wings are scored by enclosed ROOMS
+    first, so the actual plan wins even without a door layer."""
     from pdf_vector import parse
     c = _counts(parse(_load("neelachala FIRST FLOOR.pdf"), None))
-    assert c["doors"] >= 28
-    assert c["snapped"] >= 10          # golden: 10/28
-    assert c["windows"] >= 20          # golden: 20 (W/V tags + legend)
+    # default now matches the user-confirmed plot (38'3" x 64'2"), like wing=1
+    assert abs(c["w"] - 38.25) / 38.25 < 0.025
+    assert abs(c["d"] - 64.167) / 64.167 < 0.035
+    assert c["doors"] >= 12            # real plan doors (was 28 from the schedule)
+    assert c["snapped"] >= 6           # golden: 9/16
+    assert c["windows"] >= 15          # golden: 19
 
 
 def test_first_floor_wing1_matches_confirmed_envelope():

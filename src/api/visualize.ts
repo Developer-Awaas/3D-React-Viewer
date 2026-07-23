@@ -1,14 +1,18 @@
 // Talks to the Drishti "Visualize" (Beta) backend endpoints (server/visualize.py).
 // Dev default: http://localhost:8000.  Prod: set VITE_API_BASE.
+// Resolve WITHOUT throwing at module-init (a top-level throw white-screens the
+// whole app). '' in prod when unset -> apiBase() fails loud only on actual use.
 const API_BASE: string = (() => {
   const base = (import.meta as any).env?.VITE_API_BASE
   if (base) return base
-  // never silently point a production build at localhost — fail loud at init
-  if ((import.meta as any).env?.PROD) {
-    throw new Error('VITE_API_BASE is not set — configure it in your deployment environment')
-  }
+  if ((import.meta as any).env?.PROD) return ''
   return 'http://localhost:8000'
 })()
+
+function apiBase(): string {
+  if (!API_BASE) throw new Error('Rendering is not configured (VITE_API_BASE is not set).')
+  return API_BASE
+}
 
 export type RenderOpts = {
   roomType?: string
@@ -64,7 +68,7 @@ export async function renderImage(
   if (opts.seed != null) form.append('seed', String(opts.seed))
   let res: Response
   try {
-    res = await fetch(`${API_BASE}/visualize/render`, {
+    res = await fetch(`${apiBase()}/visualize/render`, {
       method: 'POST', body: form,
       signal: guardSignal(RENDER_TIMEOUT_MS, opts.signal),
     })
@@ -88,7 +92,7 @@ export async function animateImage(
   form.append('seed', String(seed))
   let res: Response
   try {
-    res = await fetch(`${API_BASE}/visualize/animate`, {
+    res = await fetch(`${apiBase()}/visualize/animate`, {
       method: 'POST', body: form,
       signal: guardSignal(ANIMATE_TIMEOUT_MS, signal),
     })
@@ -106,7 +110,8 @@ export async function animateImage(
 /** Is the Visualize backend up? Returns the backend name ('local'|'fal') or null. */
 export async function visualizeHealth(): Promise<{ backend: string; cuda: boolean } | null> {
   try {
-    const res = await fetch(`${API_BASE}/visualize/health`)
+    const res = await fetch(`${apiBase()}/visualize/health`,
+                            { signal: AbortSignal.timeout(8000) })  // never hang
     if (!res.ok) return null
     return await res.json()
   } catch {

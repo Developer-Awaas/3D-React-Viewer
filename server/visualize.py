@@ -413,7 +413,8 @@ def _load_svd():
 
 
 def _animate_local(image_bytes, motion, fps, seed, frames):
-    import torch
+    _require_local()                     # clean 503 on a no-GPU/no-diffusers host
+    import torch                         # (matches _render_local; was a raw 500)
     from PIL import Image
     from diffusers.utils import export_to_video
     pipe = _load_svd()
@@ -495,7 +496,18 @@ async def render_ep(
     depth_bytes = await _read_render_upload(depth, "depth map", required=False)
     seg_bytes = await _read_render_upload(seg, "seg map", required=False)
     full_prompt = prompt.strip() or _compose_prompt(room_type, style)
-    ctype = "+".join([c for c, b in (("depth", depth_bytes), ("seg", seg_bytes)) if b]) or "canny"
+    # report the conditioning that will ACTUALLY run: seg only counts if the seg
+    # ControlNet is available (_seg_id) — otherwise it's silently dropped, so
+    # claiming "seg" would mislead. (G6: the depth/seg "moat" comes from the
+    # frontend g-buffer; this keeps the reported conditioning honest.)
+    seg_active = bool(seg_bytes) and bool(_seg_id())
+    if seg_bytes and not seg_active:
+        import logging
+        logging.getLogger("drishti.visualize").info(
+            "seg map received but no seg ControlNet cached — rendering without it "
+            "(set SEG_CONTROLNET or finish the 5GB download)")
+    ctype = "+".join([c for c, b in (("depth", depth_bytes), ("seg", seg_active))
+                      if b]) or "canny"
 
     # cache lookup BEFORE the GPU semaphore: a repeat of the same view+style+seed
     # returns instantly and never queues behind a live render
