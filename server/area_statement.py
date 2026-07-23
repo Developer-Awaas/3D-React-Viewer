@@ -58,13 +58,31 @@ def compute_area_statement(scene, loading_factor=1.30):
                      for wp in walls_poly for h in (wp.get("holes") or []))
         carpet_source = "wall_interior" if carpet > 0 else "none"
 
-    # built-up = gross footprint = area inside the outer wall outline(s)
-    built_up = sum(polygon_area(wp.get("outer") or []) for wp in walls_poly)
-    if built_up <= 0:                       # fallback: envelope box
+    # built-up = gross footprint. The parser emits walls_poly in TWO shapes:
+    #   (a) ONE building outline whose outer ring IS the gross area and whose
+    #       holes are the rooms — then sum(outer) already = gross.
+    #   (b) MANY thin wall STRIPS (the common case) — then sum(outer) is just
+    #       the wall footprint (~15-20% of carpet), NOT the gross area.
+    # The old code used sum(outer) for both, so in case (b) built_up came out
+    # SMALLER than carpet and the clamp below forced built_up == carpet — which
+    # made wall_and_circulation = 0 and BOQ report ZERO masonry on every real
+    # plan, and pinned efficiency. Fix: detect which shape we have.
+    gross_outer = sum(polygon_area(wp.get("outer") or []) for wp in walls_poly)
+    wall_material = sum(
+        max(0.0, polygon_area(wp.get("outer") or [])
+            - sum(polygon_area(h) for h in (wp.get("holes") or [])))
+        for wp in walls_poly)
+    if gross_outer >= carpet and gross_outer > 0:
+        built_up = gross_outer                 # shape (a): outer already gross
+    elif wall_material > 0:
+        built_up = carpet + wall_material      # shape (b): walls sit ON carpet
+    else:
+        built_up = gross_outer
+    if built_up <= 0:                          # fallback: envelope box
         built_up = float(meta.get("plan_width_ft", 0) or 0) * \
                    float(meta.get("plan_depth_ft", 0) or 0)
 
-    # built-up can't be less than carpet; if geometry is odd, clamp up
+    # built-up can never be less than carpet
     built_up = max(built_up, carpet)
     loading_factor = float(loading_factor) if loading_factor else 1.30
     # Indian market convention: the developer's loading factor is applied to

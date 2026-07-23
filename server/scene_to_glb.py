@@ -15,8 +15,19 @@ FT = 0.3048  # feet -> metres
 def interval_boxes(w, H, openings):
     """Tile a wall into solid (x0,x1,y0,y1,z0,z1) boxes, skipping opening voids."""
     out = []
-    ops = sorted(((o["along"][0], o["along"][1], o["z"][0], o["z"][1])
-                  for o in openings if o.get("wall") == w["id"]))
+    lo_w = w["x0"] if w["axis"] == "x" else w["y0"]
+    hi_w = w["x1"] if w["axis"] == "x" else w["y1"]
+
+    def _clamp(o):
+        # CLAMP the opening span to the wall extent, so a stray/oversize `along`
+        # can't stretch a wall past its ends or spawn a floating box
+        a0 = max(min(o["along"][0], o["along"][1]), lo_w)
+        a1 = min(max(o["along"][0], o["along"][1]), hi_w)
+        return (a0, a1, o["z"][0], o["z"][1])
+
+    ops = sorted(_clamp(o) for o in openings
+                 if o.get("wall") == w["id"] and o.get("along") and o.get("z"))
+    ops = [op for op in ops if op[1] - op[0] > 0.01]      # drop clamped-away
     if w["axis"] == "x":
         fy0, fy1 = w["y0"], w["y1"]; cur = w["x0"]
         for s0, s1, zb, zt in ops:
@@ -77,6 +88,64 @@ def poly_bands(wall, H, openings):
         if not geom.is_empty:
             bands.append((geom, z0, z1))
     return bands
+
+
+_DOOR_LEAF = _hexrgba("#6b4a2f")     # walnut leaf
+
+
+def _door_opening_rect(o, walls_by_id):
+    """The door void as (x0,y0,x1,y1) plan-ft. Prefers the vector `footprint`;
+    else derives it from the wall the door sits on + its `along` span (ML path
+    doors carry no footprint). None if it can't be located."""
+    fp = o.get("footprint")
+    if fp and len(fp) == 4:
+        x0, y0, x1, y1 = (float(fp[0]), float(fp[1]), float(fp[2]), float(fp[3]))
+        return min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)
+    w = walls_by_id.get(o.get("wall"))
+    along = o.get("along")
+    if not w or not along or "axis" not in w:
+        return None
+    a0, a1 = sorted((float(along[0]), float(along[1])))
+    wy0, wy1 = sorted((float(w["y0"]), float(w["y1"])))
+    wx0, wx1 = sorted((float(w["x0"]), float(w["x1"])))
+    if w["axis"] == "x":
+        return a0, wy0, a1, wy1
+    return wx0, a0, wx1, a1
+
+
+def _add_door_leaf(meshes, o, rect, H, name):
+    """A real door LEAF standing AJAR in the opening — hinged at one jamb and
+    swung ~60 deg into the swing arc — so a doorway reads as an openable
+    designer door instead of an empty hole. Built for EVERY door (vector or
+    ML). glTF axes: X=plan_x, Y=height, Z=plan_y (same as _add_box)."""
+    import math
+    import trimesh
+    x0, y0, x1, y1 = rect
+    zt = float((o.get("z") or [0, H])[1] or H)
+    zt = min(zt, H) if zt > 0 else H
+    run_x = (x1 - x0) >= (y1 - y0)          # does the wall run along X?
+    width = (x1 - x0) if run_x else (y1 - y0)
+    if width < 0.5 or zt <= 0:
+        return
+    THICK = 0.14                             # leaf thickness (ft)
+    if run_x:
+        rdx, rdy = 1.0, 0.0
+        hinge = (x0, (y0 + y1) / 2.0)        # hinge at the low-x jamb, mid-thickness
+    else:
+        rdx, rdy = 0.0, 1.0
+        hinge = ((x0 + x1) / 2.0, y0)        # hinge at the low-y jamb
+    ang = math.radians(60.0)                 # ajar angle
+    if str(o.get("hinge", "")).endswith("1"):
+        ang = -ang                           # hint flips the swing side
+    phi = math.atan2(-rdy, rdx)              # local +X -> run direction (about Y)
+    Wm, Hm, Tm = width * FT, zt * FT, THICK * FT
+    tf = trimesh.transformations
+    M = (tf.translation_matrix((hinge[0] * FT, 0.0, hinge[1] * FT))
+         @ tf.rotation_matrix(phi + ang, (0, 1, 0))
+         @ tf.translation_matrix((Wm / 2.0, Hm / 2.0, 0.0)))
+    leaf = trimesh.creation.box(extents=(Wm, Hm, Tm), transform=M)
+    leaf.visual.face_colors = _DOOR_LEAF
+    meshes.append((name, leaf))
 
 
 def _add_poly_prism(meshes, geom, z0, z1, rgba, name=None):
@@ -179,6 +248,10 @@ def _add_furniture(meshes, f, i):
     elif t == "counter":
         B((x0, x1, y0, y1, 0.0, 2.6), _hexrgba("#7a6a55"), "body")
         B((x0 - 0.05, x1 + 0.05, y0 - 0.05, y1 + 0.05, 2.6, 2.8), _GRANITE, "top")
+    elif t == "bathtub":                                   # G4
+        B((x0, x1, y0, y1, 0.0, 1.85), _SANITARY, "tub")   # white outer shell
+        B((x0 + 0.3, x1 - 0.3, y0 + 0.3, y1 - 0.3, 1.35, 1.8),
+          _hexrgba("#dfe8ec"), "water")                    # inset recess
     else:
         B((x0, x1, y0, y1, 0.0, f.get("h", 2.0)), _hexrgba("#d85a30"), "body")
 
@@ -207,6 +280,15 @@ def _build_scene(scene):
         for j, (geom, z0, z1) in enumerate(poly_bands(w, H, openings)):
             _add_poly_prism(meshes, geom, z0, z1, _hexrgba("#cfcabd"),
                             name=f"wall_p{i}_{j}")
+    # a real door LEAF standing ajar in every door void (D1): reads as an
+    # openable designer door, not a hole. Named 'door_*' so the viewer gives it
+    # a wood finish. Works for vector (footprint) and ML (wall+along) doors.
+    walls_by_id = {w["id"]: w for w in walls if "id" in w}
+    for i, o in enumerate(openings):
+        if o.get("type") == "door":
+            rect = _door_opening_rect(o, walls_by_id)
+            if rect:
+                _add_door_leaf(meshes, o, rect, H, name=f"door_{i}")
     # glass panes in the window voids (slightly inset to avoid z-fighting);
     # the viewer swaps 'glass_*' meshes to a translucent material by NAME
     for i, o in enumerate(openings):
@@ -223,6 +305,12 @@ def _build_scene(scene):
     for i, f in enumerate(scene.get("furniture", [])):
         _add_furniture(meshes, f, i)
     sc = trimesh.Scene()
+    if not meshes:
+        # a geometry-less scene (no walls/poly/furniture/columns/glass) would
+        # make trimesh raise "Can't export empty scenes!" — add a tiny invisible
+        # floor marker so export always yields a valid GLB instead of crashing
+        _add_box(meshes, (0.0, 1.0, 0.0, 1.0, -0.01, 0.0),
+                 _hexrgba("#e8e4da"), name="floor")
     for name, m in meshes:
         sc.add_geometry(m, node_name=name, geom_name=name)
     return sc, meshes

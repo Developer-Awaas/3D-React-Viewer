@@ -50,7 +50,8 @@ class Limiter:
         return b.allow()
 
 
-HEAVY_PREFIXES = ("/scene", "/perceive", "/visualize", "/area-statement")
+HEAVY_PREFIXES = ("/scene", "/perceive", "/visualize", "/area-statement",
+                  "/recompute")   # public + accepts an arbitrary JSON body
 EXEMPT_CLIENTS = {"127.0.0.1", "::1", "testclient"}   # local dev + tests
 
 

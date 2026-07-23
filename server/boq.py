@@ -35,6 +35,8 @@ def compute_boq(scene, wall_height_ft=None, rates=None):
     import area_statement
     meta = scene.get("meta", {}) or {}
     h = float(wall_height_ft or meta.get("wall_height_ft") or 9.84)
+    if not (h > 0):                       # a bad/negative height must never yield
+        h = 9.84                          # negative brick/cement/cost quantities
     rates = {**DEFAULT_RATES_INR, **(rates or {})}
 
     area = area_statement.compute_area_statement(scene)

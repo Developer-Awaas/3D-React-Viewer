@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager
 
 import anyio.to_thread
 from dotenv import load_dotenv
-from fastapi import FastAPI, File, Query, Request, UploadFile, HTTPException
+from fastapi import Body, FastAPI, File, Query, Request, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
@@ -25,7 +25,9 @@ import area_report
 import area_statement
 import boq
 import cad_vector
+import corrections
 import db
+import opening_fusion
 import pipeline
 import plan_doctor
 import plan_health
@@ -146,6 +148,11 @@ _limiter = _rl.Limiter()
 
 @app.middleware("http")
 async def _rate_limit_mw(request, call_next):
+    # NEVER rate-limit CORS preflight: an OPTIONS 429 kills the preflight, the
+    # real request never fires, and the browser shows an opaque CORS error
+    # (also, preflight would burn the heavy-endpoint budget 2x per call).
+    if request.method == "OPTIONS":
+        return await call_next(request)
     # real visitor IP: behind Cloudflare Tunnel everyone arrives as 127.0.0.1
     # (which is exempt!) — with TRUST_PROXY=1 client_key() reads the visitor's
     # IP from CF-Connecting-IP / X-Forwarded-For instead.
@@ -153,8 +160,14 @@ async def _rate_limit_mw(request, call_next):
     if _rl.is_heavy(request.url.path) and client not in _rl.EXEMPT_CLIENTS:
         if not _limiter.allow(client):
             log.warning("rate limited %s on %s", client, request.url.path)
+            # echo CORS headers so the browser can READ the 429 body (the
+            # CORSMiddleware runs AFTER this short-circuit, so add them here)
+            origin = request.headers.get("origin")
+            hdrs = {}
+            if origin and (origin.rstrip("/") in origins or "*" in origins):
+                hdrs["Access-Control-Allow-Origin"] = origin
             return JSONResponse({"detail": "Too many requests — please slow down."},
-                                status_code=429)
+                                status_code=429, headers=hdrs)
     return await call_next(request)
 
 # Visualize (Beta): SDXL + ControlNet photoreal render / SVD walkthrough. Safe
@@ -168,7 +181,7 @@ except Exception as _ve:          # never let an optional feature block boot
     log.warning("visualize not mounted: %s: %s", type(_ve).__name__, _ve)
 
 
-@app.get("/health")
+@app.api_route("/health", methods=["GET", "HEAD"])   # HEAD too: LB/uptime probes
 def health():
     """Quick check the server is up (and whether the model is loaded)."""
     return {"ok": True,
@@ -453,14 +466,19 @@ async def _read_upload(image: UploadFile):
 async def perceive(image: UploadFile = File(...)):
     """Send a floor-plan image or PDF, get back what the model detected."""
     raw = await _read_upload(image)
-    if perception is None:
+    # honor the reader registry: if cubicasa is disabled by the license gate
+    # (DISABLE_CUBICASA) or its weights aren't installed, return the friendly
+    # beta 503 like /scene does — NOT a 500, and never bypass the gate.
+    if perception is None or "cubicasa" not in _ACTIVE_READERS:
         raise HTTPException(503, BETA_MSG)
     try:
         result = await _run_heavy(perception.detect, raw, what="perception")
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(500, f"perception failed: {e}")
+        if _is_gpu_oom(e):
+            raise HTTPException(503, "model ran out of GPU memory - retry shortly")
+        raise HTTPException(503, BETA_MSG)
     return JSONResponse(result)
 
 
@@ -535,11 +553,24 @@ async def _scene_from_upload(image: UploadFile, width_ft: float, wing: str = "la
 
 
 async def _one_ml_scene(reader, name, png_bytes, width_ft):
-    """One model -> one scene (raises on failure; caller decides what to do)."""
-    segs, boxes, w, h = await _run_heavy(reader.detections, png_bytes,
-                                         what=f"detection ({name})")
+    """One model -> one scene (raises on failure; caller decides what to do).
+    E5: readers exposing detect_parts() also hand back typed rooms (CubiCasa's
+    room-type map) in the SAME single inference; readers with only the older
+    detections() contract (e.g. tf2) keep working with no rooms."""
+    rooms_px = furniture_px = None
+    if hasattr(reader, "detect_parts"):
+        parts = await _run_heavy(reader.detect_parts, png_bytes,
+                                 what=f"detection ({name})")
+        segs, boxes = parts["segments"], parts["boxes"]
+        w, h, rooms_px = parts["width"], parts["height"], parts.get("rooms")
+        furniture_px = parts.get("furniture")
+    else:
+        segs, boxes, w, h = await _run_heavy(reader.detections, png_bytes,
+                                             what=f"detection ({name})")
     segs, ops = openings.attach_openings(segs, boxes, openings.default_tol(w))
-    scene = scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops)
+    scene = scene_builder.scene_from_segments(segs, w, h, width_ft, openings=ops,
+                                              rooms_px=rooms_px,
+                                              furniture_px=furniture_px)
     scene.setdefault("meta", {})["reader"] = f"ml:{name}"
     return scene
 
@@ -572,6 +603,13 @@ async def _ml_scene_from_png(png_bytes, width_ft):
     if len(scores) > 1:
         best["meta"]["reader_scores"] = scores          # transparency: who won
         log.info("ml best-of: %s won %s", best["meta"]["reader"], scores)
+        # G5: union doors/windows the LOSERS found onto the winner's walls, so
+        # an opening seen by either model survives (no conflicting geometry).
+        others = [c[2] for c in candidates[1:]]
+        best, n_fused = opening_fusion.augment_openings(best, others)
+        if n_fused:
+            best["meta"]["fused_openings"] = n_fused
+            log.info("ml fusion: added %d opening(s) from other readers", n_fused)
     return best
 
 
@@ -666,6 +704,59 @@ async def scene(image: UploadFile = File(...),
                  duration_ms=int((time.perf_counter() - t0) * 1000), ok=True,
                  upload_bytes=corpus_bytes)
     return JSONResponse(s)
+
+
+def _reanalyze(s, loading_factor, north_deg):
+    """Re-run the pure-geometry analysis blocks on a scene (area / vastu / boq /
+    pipeline / doctor). Each is guarded so one failure never breaks the rest.
+    Shared shape with /scene; used by /recompute after user corrections."""
+    for name, fn in (
+        ("area_statement", lambda: area_statement.compute_area_statement(s, loading_factor)),
+        ("vastu", lambda: vastu.analyze(s, north_deg)),
+        ("boq", lambda: boq.compute_boq(s)),
+        ("analysis", lambda: pipeline.analyze(s, loading_factor)),
+    ):
+        try:
+            s[name] = fn()
+        except Exception as e:
+            log.warning("%s skipped on recompute: %s: %s", name, type(e).__name__, e)
+    try:
+        # diagnose so the UI shows a fresh grade, but do NOT record() — a
+        # recompute fires on every user edit and would spam docs/LEARNINGS.md
+        # with low-value "(recompute)" lines (the log is for real parses).
+        s["diagnosis"] = plan_doctor.diagnose(s)
+    except Exception as e:
+        log.warning("plan doctor skipped on recompute: %s: %s", type(e).__name__, e)
+    return s
+
+
+@app.post("/recompute")
+async def recompute(payload: dict = Body(...)):
+    """G7 user correction: apply human fixes (true width -> rescale, room-type
+    edits, delete phantom rooms) to an already-parsed scene and return it with
+    FRESH area / Vastu / BOQ / diagnosis. Pure geometry — no re-parse, no GPU,
+    instant. Body: {scene: <scene.json>, corrections: {true_width_ft?,
+    room_types?, delete_rooms?, loading_factor?, north_deg?}}."""
+    scene = payload.get("scene")
+    corr = payload.get("corrections") or {}
+    if not isinstance(scene, dict) or "meta" not in scene:
+        raise HTTPException(422, "body.scene must be a parsed scene object")
+    if not isinstance(corr, dict):
+        raise HTTPException(422, "body.corrections must be an object")
+    try:
+        scene, info = corrections.apply_corrections(scene, corr)
+        # coerce inside the guard too: a bad loading_factor/north_deg must be a
+        # clean 422, not a 500 (both floats are client-supplied)
+        loading = float(corr.get("loading_factor", 1.30) or 1.30)
+        north = float(corr.get("north_deg",
+                               (scene.get("meta", {}) or {}).get("north_deg", 0)) or 0)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(422, f"invalid correction: {e}")
+    if not (math.isfinite(loading) and math.isfinite(north)):
+        raise HTTPException(422, "loading_factor / north_deg must be finite")
+    scene = _reanalyze(scene, loading, north)
+    scene.setdefault("meta", {})["correction_info"] = info
+    return JSONResponse(scene)
 
 
 @app.post("/area-statement.xlsx")

@@ -89,6 +89,11 @@ TAG_HELP = {
     "door_width_odd": "door sizes implausible -> scale suspicion",
     "envelope_implausible": "building size outside 12-400 ft -> scale failed",
     "ml_reader": "read by the AI photo path (approximate walls)",
+    # G3 scale cross-check
+    "scale_door_mismatch": "doors imply the plan scale is wrong -> every size "
+                           "off; user should re-enter the true width",
+    "scale_door_corrected": "scale was auto-corrected from door widths (fixed)",
+    "no_rooms_fallback": "rooms missing but carpet estimated from wall interior",
 }
 
 

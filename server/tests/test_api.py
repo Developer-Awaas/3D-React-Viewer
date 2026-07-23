@@ -58,6 +58,7 @@ def test_scene_returns_openings(client, monkeypatch):
     fake = ([[10, 50, 90, 50]],
             [{"type": "door", "x0": 40, "y0": 44, "x1": 55, "y1": 56}],
             100, 100)
+    monkeypatch.delattr(perception, "detect_parts", raising=False)
     monkeypatch.setattr(perception, "detections", lambda raw: fake)
     r = client.post("/scene?width_ft=10", files={"image": ("p.png", _tiny_png(), "image/png")})
     assert r.status_code == 200
@@ -66,6 +67,23 @@ def test_scene_returns_openings(client, monkeypatch):
     assert len(body["openings"]) == 1
     o = body["openings"][0]
     assert o["type"] == "door" and o["wall"] == "w0" and o["z"][0] == 0
+
+
+def test_scene_ml_path_returns_typed_rooms(client, monkeypatch):
+    """E5: a reader exposing detect_parts feeds typed rooms into the ML scene
+    (CubiCasa's room-type map, previously discarded -> untyped, roomless)."""
+    import perception
+    parts = {"segments": [[10, 50, 90, 50], [10, 10, 10, 90],
+                          [90, 10, 90, 90], [10, 10, 90, 10], [10, 90, 90, 90]],
+             "boxes": [{"type": "door", "x0": 40, "y0": 44, "x1": 55, "y1": 56}],
+             "width": 100, "height": 100,
+             "rooms": [{"type": "bedroom", "cx": 50, "cy": 50, "area_px": 4000}]}
+    monkeypatch.setattr(perception, "detect_parts", lambda raw: parts)
+    r = client.post("/scene?width_ft=30", files={"image": ("p.png", _tiny_png(), "image/png")})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["rooms"] and body["rooms"][0]["type"] == "bedroom"
+    assert body["diagnosis"]["grade"] != "F"        # typed rooms -> not junk
 
 
 def test_scene_routes_vector_pdf(client, monkeypatch):
@@ -115,6 +133,7 @@ def test_inference_timeout_returns_504(client, monkeypatch):
     import main
     import perception
     monkeypatch.setenv("INFER_TIMEOUT_S", "0.2")
+    monkeypatch.delattr(perception, "detect_parts", raising=False)
     monkeypatch.setattr(perception, "detections", lambda raw: time.sleep(2))
     # deterministic on GPU boxes too: only the patched reader may answer
     monkeypatch.setattr(main, "_ACTIVE_READERS", {"cubicasa": perception})
@@ -129,6 +148,7 @@ def test_gpu_oom_returns_503(client, monkeypatch):
 
     def boom(raw):
         raise RuntimeError("CUDA out of memory. Tried to allocate 2.00 GiB")
+    monkeypatch.delattr(perception, "detect_parts", raising=False)
     monkeypatch.setattr(perception, "detections", boom)
     # pin the registry to cubicasa only: with tf2 ALSO registered (GPU box),
     # best-of would swallow the OOM and answer from the other reader
@@ -167,6 +187,7 @@ def test_scene_flat_pdf_falls_back_to_raster(client, monkeypatch):
     monkeypatch.setattr(pdf_vector, "is_vector_plan", lambda raw: False)
     monkeypatch.setattr(main, "_pdf_first_page_png", lambda raw: b"fake png")
     fake = ([[10, 50, 90, 50]], [], 100, 100)
+    monkeypatch.delattr(perception, "detect_parts", raising=False)
     monkeypatch.setattr(perception, "detections", lambda raw: fake)
     r = client.post("/scene", files={"image": ("p.pdf", b"%PDF-1.4 fake", "application/pdf")})
     assert r.status_code == 200

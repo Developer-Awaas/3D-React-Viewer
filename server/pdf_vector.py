@@ -467,6 +467,32 @@ def _wing_groups(m, gap_ft=8.0):
     return sorted(groups, key=lambda g: -g[2])
 
 
+def _wing_room_pockets(m_env, bbox_px, min_room_px):
+    """Count enclosed free-space pockets inside a wing's bbox — a cheap 'how
+    many rooms does this region hold'. The real FLOOR PLAN wing is full of
+    rooms; a dimension-string / section / title block region that got captured
+    as a tall thin 'wing' has none. Used to pick the right wing when there's no
+    door layer to score by."""
+    import cv2
+    import numpy as np
+    x0, y0, x1, y1 = bbox_px
+    sub = m_env[max(0, y0):y1, max(0, x0):x1]
+    if sub.size == 0:
+        return 0
+    free = (sub == 0).astype(np.uint8)
+    n, _lab, stt, _c = cv2.connectedComponentsWithStats(free, 4)
+    Hs, Ws = sub.shape
+    cnt = 0
+    for i in range(1, n):
+        rx, ry, rw, rh, ra = stt[i]
+        if ra < min_room_px:
+            continue
+        if rx == 0 or ry == 0 or rx + rw >= Ws or ry + rh >= Hs:
+            continue                         # touches the wing border = outside
+        cnt += 1
+    return cnt
+
+
 def is_vector_plan(raw):
     """True if these PDF bytes can take the vector path: recognizable CAD
     layers, OR enough raw axis-aligned linework for geometry wall detection
@@ -637,6 +663,27 @@ def _snap_envelope(dim_ft, candidates):
     return best
 
 
+def _footprint_free_mask(wall_mask, seal_ft, norm_ppx=NORM_PPX):
+    """G1 wall-gap healing: interior free-space BOUNDED by the building
+    footprint. Closes the wall blob (bridges outer-wall gaps up to seal_ft),
+    fills its largest outer contour = footprint, then subtracts the walls. Lets
+    rooms form even when the outer wall is broken/missing — which otherwise
+    leaks interior free-space to the image border and yields 0 rooms (0%
+    efficiency). Interior partitions are still subtracted, so real rooms stay
+    separate. Pure -> unit-tested. Returns a 0/255 mask or None."""
+    import cv2
+    import numpy as np
+    fk = max(3, int(seal_ft * norm_ppx)) | 1
+    blob = cv2.morphologyEx(wall_mask, cv2.MORPH_CLOSE,
+                            cv2.getStructuringElement(cv2.MORPH_RECT, (fk, fk)))
+    cnts, _h = cv2.findContours(blob, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None
+    foot = np.zeros_like(wall_mask)
+    cv2.drawContours(foot, [max(cnts, key=cv2.contourArea)], -1, 255, -1)
+    return cv2.bitwise_and(foot, cv2.bitwise_not(wall_mask))
+
+
 def _scale_ppf(col_rects, bbox_w_pt, width_ft):
     """Points-per-foot. Priority: dominant column box (=1 ft) > PPF env > width_ft."""
     if col_rects:
@@ -645,7 +692,9 @@ def _scale_ppf(col_rects, bbox_w_pt, width_ft):
         vals, cnt = np.unique(sizes, return_counts=True)
         return float(vals[cnt.argmax()]) / COL_FT, "column_box_12in"
     if os.environ.get("PPF"):
-        return float(os.environ["PPF"]), "env_ppf"
+        _ppf = float(os.environ["PPF"])
+        if _ppf > 0:                      # guard: ppf is a divisor in ~15 places
+            return _ppf, "env_ppf"
     if width_ft and bbox_w_pt > 0:
         return bbox_w_pt / width_ft, "assumed_width"
     raise ValueError("no scale: no column layer boxes; pass width_ft or set PPF")
@@ -897,25 +946,149 @@ def _furniture_items(drawings, ppf):
     return kept
 
 
-def _door_scale_sanity(openings, warnings):
-    """Practical cross-check: snapped doors are real doors (2'0"-4'6" wide in
-    Indian residential work). If their median width is far outside that band,
-    the SCALE is suspect - warn with the implied correction factor."""
+NOMINAL_DOOR_FT = 3.0            # 2'6"-3'6" band centre (Indian residential)
+GUESSED_SCALES = ("column_box_12in", "assumed_width", "env_ppf")
+
+
+def _door_median_ft(openings):
+    """Median snapped-door width in feet, or None if < 5 snapped doors."""
     import statistics
     widths = []
     for o in openings:
         if o.get("type") == "door" and o.get("snapped") and o.get("footprint"):
             x0, y0, x1, y1 = o["footprint"]
             widths.append(max(x1 - x0, y1 - y0))
-    if len(widths) < 5:
-        return
-    med = statistics.median(widths)
-    if not (2.1 <= med <= 4.2):
-        factor = med / 3.0          # vs a nominal 3'0" door
+    return statistics.median(widths) if len(widths) >= 5 else None
+
+
+def _assign_room_labels(rooms, tokens, only_untyped=False):
+    """Give each room the label TOKEN nearest its interior point AND inside its
+    own free-space component (so a merged region can't steal a neighbour's
+    label). tokens: [(feet_x, feet_y, component_label, room_type), ...].
+    only_untyped=True skips rooms that already have a type, so a lower-
+    confidence source (OCR) fills gaps without overwriting live text.
+    Returns how many rooms it newly typed. Pure -> unit-tested."""
+    gained = 0
+    for r in rooms:
+        if only_untyped and r.get("type"):
+            continue
+        was_typed = bool(r.get("type"))
+        best, best_d = None, 1e18
+        for tx, ty, lab, rtype in tokens:
+            if lab != r.get("_lab"):
+                continue
+            dd = (tx - r.get("x", 0)) ** 2 + (ty - r.get("y", 0)) ** 2
+            if dd < best_d:
+                best_d, best = dd, rtype
+        if best:
+            r["type"] = best
+            if not was_typed:
+                gained += 1
+    return gained
+
+
+def _door_scale_sanity(openings, warnings):
+    """Practical cross-check: snapped doors are real doors (2'0"-4'6" wide in
+    Indian residential work). If their median width is far outside that band,
+    the SCALE is suspect - warn with the implied correction factor."""
+    med = _door_median_ft(openings)
+    if med is not None and not (2.1 <= med <= 4.2):
+        factor = med / NOMINAL_DOOR_FT
         warnings.append(
             f"SCALE SUSPECT: median snapped-door width {med:.2f} ft "
             f"(expected 2'6\"-3'6\"); sizes may be off ~{factor:.2f}x - "
             f"check the column size or provide width_ft")
+
+
+def _rescale_scene_ft(scene, k):
+    """G3: multiply every FEET coordinate/area in a FINISHED scene dict by k
+    (heights and z-ranges are FIXED and never scaled). One uniform pass so no
+    field is missed; unit-tested against a scene with every field populated."""
+    if not k or abs(k - 1.0) < 1e-6:
+        return scene
+
+    def sp(p):
+        return [round(p[0] * k, 3), round(p[1] * k, 3)]
+
+    def sv(seq):
+        return [round(v * k, 3) for v in seq]
+
+    m = scene.get("meta", {}) or {}
+    for key in ("plan_width_ft", "plan_depth_ft"):
+        if key in m:
+            m[key] = round(m[key] * k, 3)
+    wing = m.get("wing") or {}
+    if wing.get("bbox_ft"):
+        wing["bbox_ft"] = sv(wing["bbox_ft"])
+    sc = m.get("scale")
+    if isinstance(sc, dict) and sc.get("pt_per_ft"):
+        sc["pt_per_ft"] = round(float(sc["pt_per_ft"]) / k, 4)   # stays consistent
+    for wt in (scene.get("wall_types") or {}).values():
+        if isinstance(wt, dict) and "thickness_ft" in wt:
+            wt["thickness_ft"] = round(float(wt["thickness_ft"]) * k, 4)
+    for wp in scene.get("walls_poly", []) or []:
+        if wp.get("outer"):
+            wp["outer"] = [sp(p) for p in wp["outer"]]
+        if wp.get("holes"):
+            wp["holes"] = [[sp(p) for p in h] for h in wp["holes"]]
+    for w in scene.get("walls", []) or []:
+        for key in ("x0", "x1", "y0", "y1"):
+            if key in w:
+                w[key] = round(w[key] * k, 3)
+    for o in scene.get("openings", []) or []:
+        if o.get("along"):
+            o["along"] = sv(o["along"])
+        for key in ("footprint", "swing_area"):
+            if o.get(key):
+                o[key] = sv(o[key])
+        # z (height range) is NOT scaled
+    for coll in ("columns", "ducts", "furniture"):
+        for c in scene.get(coll, []) or []:
+            for key in ("x", "y", "w", "d"):
+                if key in c:
+                    c[key] = round(c[key] * k, 3)
+    for r in scene.get("rooms", []) or []:
+        for key in ("x", "y"):
+            if key in r:
+                r[key] = round(r[key] * k, 3)
+        if "area_sqft" in r:
+            r["area_sqft"] = round(r["area_sqft"] * k * k, 1)   # area ~ k^2
+    return scene
+
+
+def _apply_scale_correction(scene):
+    """G3 scale auto-correction. When the scale came from a GUESS (columns=12in
+    / assumed width) and the snapped doors say it's confidently off, flag it
+    loudly with the exact correction factor. DRISHTI_AUTOSCALE=1 also APPLIES
+    the correction (rescales geometry so a nominal 3ft door lands right);
+    default is flag-only — on a RERA product we don't silently reshape a
+    building on a door-width guess, we tell the user to confirm width_ft."""
+    m = scene.get("meta", {}) or {}
+    scale = m.get("scale", {}) or {}
+    if scale.get("source") not in GUESSED_SCALES:
+        return scene
+    med = _door_median_ft(scene.get("openings", []) or [])
+    if med is None or 2.2 <= med <= 4.0:
+        return scene                             # no doors, or doors look right
+    oversize = round(med / NOMINAL_DOOR_FT, 3)   # >1 = scene too big
+    k = round(NOMINAL_DOOR_FT / med, 4)          # multiply feet by this to fix
+    scale["needs_review"] = True
+    scale["door_median_ft"] = round(med, 2)
+    scale["suggested_factor"] = k
+    scale["implied_oversize"] = oversize
+    if os.getenv("DRISHTI_AUTOSCALE", "0").lower() in ("1", "true", "yes"):
+        _rescale_scene_ft(scene, k)
+        scale["source"] = f"{scale.get('source')}+door_corrected"
+        scale["pt_per_ft"] = round(float(scale.get("pt_per_ft", 0)) / k, 3)
+        m.setdefault("warnings", []).append(
+            f"scale auto-corrected x{k:.3f} from door widths "
+            f"(median door was {med:.2f} ft)")
+    else:
+        m.setdefault("warnings", []).append(
+            f"SCALE NEEDS REVIEW: doors imply the plan is ~{oversize:.2f}x off "
+            f"(median door {med:.2f} ft). Re-upload with the real width, or set "
+            "DRISHTI_AUTOSCALE=1, to correct every size.")
+    return scene
 
 
 def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False):
@@ -932,7 +1105,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     import fitz
     import numpy as np
 
-    page = fitz.open(stream=raw, filetype="pdf")[0]
+    try:                                  # corrupt/empty bytes -> ValueError, not
+        page = fitz.open(stream=raw, filetype="pdf")[0]   # a raw PyMuPDF type the
+    except Exception as e:                # CAD path / batch_eval would leak as 500
+        raise ValueError(f"could not open PDF: {type(e).__name__}: {e}")
     drawings = _page_drawings(page)
 
     warnings = []
@@ -1093,24 +1269,32 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     wbox_ft = None
     w_idx = 0
     if wing_count > 1:
-        if wing == "largest" and door_centers:
+        if wing == "largest":
             def _ft_box(wb):
                 return ((wb[0] - PAD_PX) / NORM_PPX,
                         d_ft - (wb[3] - PAD_PX) / NORM_PPX,
                         (wb[2] - PAD_PX) / NORM_PPX,
                         d_ft - (wb[1] - PAD_PX) / NORM_PPX)
+            # score every wing by (enclosed ROOMS, doors, area). Rooms are the
+            # strongest 'this is the floor plan' signal — a section/detail block
+            # or a door SCHEDULE (many door symbols, NO rooms) has none, so
+            # rooms must outrank doors (a door schedule was out-scoring the real
+            # plan on neelachala). Doors break ties when walls are too
+            # fragmented for pockets to form; area breaks the final tie.
+            _min_room_px = int(28 * NORM_PPX * NORM_PPX)
             scores = []
             for g in wing_groups:
                 bx0, by0, bx1, by1 = _ft_box(g[1])
-                scores.append(sum(1 for cx, cy in door_centers
-                                  if bx0 - 2 <= cx <= bx1 + 2
-                                  and by0 - 2 <= cy <= by1 + 2))
-            w_idx = max(range(wing_count),
-                        key=lambda i: (scores[i], wing_groups[i][2]))
+                dsc = sum(1 for cx, cy in door_centers
+                          if bx0 - 2 <= cx <= bx1 + 2 and by0 - 2 <= cy <= by1 + 2)
+                pockets = _wing_room_pockets(m_env, g[1], _min_room_px)
+                scores.append((pockets, dsc, g[2]))
+            w_idx = max(range(wing_count), key=lambda i: scores[i])
             if w_idx != 0:
-                warnings.append(f"wing auto-pick: wing {w_idx} holds the most "
-                                f"doors ({scores[w_idx]}) - overriding the "
-                                f"largest-area wing (a non-plan drawing)")
+                warnings.append(
+                    f"wing auto-pick: wing {w_idx} is the floor plan "
+                    f"(rooms={scores[w_idx][0]}, doors={scores[w_idx][1]}) - "
+                    "overriding the largest-area wing (a non-plan drawing)")
         elif wing != "largest":
             w_idx = int(wing)
         if not (0 <= w_idx < wing_count):
@@ -1294,28 +1478,54 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # there too - fine for v1). Marker point = the component's most interior
     # pixel (distance transform), NOT the centroid, which lands on a wall in
     # L-shaped rooms. Used by the viewer's walk-inside beacons. ---
-    rooms = []
     # rooms come from the SEALED mask (bridged wall gaps -> enclosed pockets);
     # walls_poly above stays from the unsealed `m`, so stairs/open features are
     # unaffected in the exported geometry.
-    free = (m_env == 0).astype(np.uint8)
-    ndt = cv2.distanceTransform(free, cv2.DIST_L2, 3)
-    ncomp, rlab, rstt, _rcent = cv2.connectedComponentsWithStats(free, 4)
     min_room_px = int(28 * NORM_PPX * NORM_PPX)          # >= ~28 sqft
     Hpx, Wpx = m.shape
-    for i in range(1, ncomp):
-        rx, ry, rw, rh, rarea = rstt[i]
-        if rarea < min_room_px:
-            continue
-        if rx == 0 or ry == 0 or rx + rw >= Wpx or ry + rh >= Hpx:
-            continue                                     # touches border = outside
-        comp = (rlab == i)
-        d = np.where(comp, ndt, 0)
-        py_, px_ = np.unravel_index(int(d.argmax()), d.shape)
-        rooms.append({"x": fx(px_), "y": fy(py_),
-                      "area_sqft": round(rarea / (NORM_PPX ** 2), 1),
-                      "_lab": int(i),
-                      "_bbox_ft": (fx(rx), fy(ry + rh), fx(rx + rw), fy(ry))})
+
+    def _rooms_from_free(free, drop_border=True):
+        """Enclosed free-space components -> (room dicts, label array). Marker =
+        most-interior pixel (distance transform). The returned label array MUST
+        travel with the rooms: each room's `_lab` indexes into it (room-label
+        matching below reads rlab[y, x])."""
+        out = []
+        ndt = cv2.distanceTransform(free, cv2.DIST_L2, 3)
+        ncomp, rlab, rstt, _c = cv2.connectedComponentsWithStats(free, 4)
+        for i in range(1, ncomp):
+            rx, ry, rw, rh, rarea = rstt[i]
+            if rarea < min_room_px:
+                continue
+            if drop_border and (rx == 0 or ry == 0
+                                or rx + rw >= Wpx or ry + rh >= Hpx):
+                continue                                 # touches border = outside
+            comp = (rlab == i)
+            d = np.where(comp, ndt, 0)
+            py_, px_ = np.unravel_index(int(d.argmax()), d.shape)
+            out.append({"x": fx(px_), "y": fy(py_),
+                        "area_sqft": round(rarea / (NORM_PPX ** 2), 1),
+                        "_lab": int(i),
+                        "_bbox_ft": (fx(rx), fy(ry + rh), fx(rx + rw), fy(ry))})
+        return out, rlab
+
+    rooms, rlab = _rooms_from_free((m_env == 0).astype(np.uint8))
+    if not rooms:
+        # G1 WALL-GAP HEALING: 0 rooms means the interior free-space leaked to
+        # the raster border (broken / missing OUTER wall) or no pocket formed
+        # -> 0% efficiency. Cap the free space to the building FOOTPRINT (close
+        # the wall blob, fill its largest outer contour) so interior pockets
+        # stay bounded even with a gappy outer wall. Fires ONLY on the 0-room
+        # failure, so healthy plans can't regress; room-only, so walls_poly and
+        # stairs are untouched. GENERAL rule, not per-plan.
+        rsf = float(os.getenv("DRISHTI_ROOM_SEAL_FT", "6") or 0)
+        inside_free = _footprint_free_mask(m_env, rsf) if rsf > 0 else None
+        if inside_free is not None:
+            healed, healed_lab = _rooms_from_free(inside_free, drop_border=False)
+            if healed:
+                rooms, rlab = healed, healed_lab
+                warnings.append(
+                    f"rooms recovered by footprint sealing ({len(rooms)} "
+                    "room(s); the outer wall had gaps on this sheet)")
     rooms.sort(key=lambda r: -r["area_sqft"])
     rooms = rooms[:16]
     for k, r in enumerate(rooms):
@@ -1326,8 +1536,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # label token NEAREST its interior point and inside its own component (so a
     # merged region doesn't pick up an unrelated label). Gives room types for
     # staging + render prompts. Poorly-sealed plans stay best-effort. ---
-    lab_to_room = {r["_lab"]: r for r in rooms}
-    name_tokens = []                      # (feet_x, feet_y, component_label, type)
+    # 1) LIVE PDF text is authoritative: collect room-name words, assign each
+    # room the nearest one inside its own component.
+    live_tokens = []                      # (feet_x, feet_y, component_label, type)
     for w in page.get_text("words"):
         rtype = furnish.classify_room_type((w[4] or "").strip())
         if not rtype:
@@ -1335,13 +1546,17 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         rr = (fitz.Rect(w[:4]) * page.rotation_matrix).normalize()
         cxp, cyp = tp((rr.x0 + rr.x1) / 2, (rr.y0 + rr.y1) / 2)
         if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
-            name_tokens.append((fx(cxp), fy(cyp), int(rlab[cyp, cxp]), rtype))
-    # OCR fallback: many CAD exports OUTLINE their text (letters become line
-    # art, invisible to get_text). When live text yielded no labels but rooms
-    # exist, render the page and OCR it — pixmap pixels are already in rotated
-    # page space, matching tp()'s coordinate frame. Optional dependency:
-    # skipped silently when tesseract/pytesseract are absent.
-    if not name_tokens and rooms:
+            live_tokens.append((fx(cxp), fy(cyp), int(rlab[cyp, cxp]), rtype))
+    _assign_room_labels(rooms, live_tokens)
+
+    # 2) OCR FILL (G2): many CAD exports OUTLINE their text (letters become line
+    # art, invisible to get_text). Run whenever rooms remain UNTYPED — not only
+    # when live text found NOTHING — so a plan with a few readable labels still
+    # gets the rest via OCR. OCR NEVER overwrites a live label. Pixmap pixels
+    # are already in rotated page space, matching tp()'s frame. Optional dep:
+    # skipped silently if tesseract absent; DRISHTI_OCR=0 disables.
+    untyped = [r for r in rooms if not r.get("type")]
+    if untyped and os.getenv("DRISHTI_OCR", "auto").lower() not in ("0", "off", "false"):
         try:
             import pytesseract
             from PIL import Image as _Img
@@ -1351,7 +1566,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             img = _Img.frombytes("RGB", (pix.width, pix.height), pix.samples)
             data = pytesseract.image_to_data(img,
                                              output_type=pytesseract.Output.DICT)
-            n_ocr = 0
+            ocr_tokens = []
             for i, txt in enumerate(data["text"]):
                 t = (txt or "").strip()
                 if len(t) < 3 or int(data["conf"][i]) < 40:
@@ -1363,24 +1578,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 cy_pt = (data["top"][i] + data["height"][i] / 2) / _zoom
                 cxp, cyp = tp(cx_pt, cy_pt)
                 if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
-                    name_tokens.append((fx(cxp), fy(cyp),
-                                        int(rlab[cyp, cxp]), rtype))
-                    n_ocr += 1
-            if n_ocr:
-                warnings.append(f"room labels recovered by OCR: {n_ocr} "
-                                f"(outlined text on this sheet)")
+                    ocr_tokens.append((fx(cxp), fy(cyp),
+                                       int(rlab[cyp, cxp]), rtype))
+            gained = _assign_room_labels(rooms, ocr_tokens, only_untyped=True)
+            if gained:
+                warnings.append(f"room labels recovered by OCR: {gained} "
+                                "(outlined text on this sheet)")
         except Exception:
             pass                          # OCR unavailable/failed -> untyped rooms
-    for r in rooms:
-        best, best_d = None, 1e18
-        for tx, ty, lab, rtype in name_tokens:
-            if lab != r["_lab"]:
-                continue
-            dd = (tx - r["x"]) ** 2 + (ty - r["y"]) ** 2
-            if dd < best_d:
-                best_d, best = dd, rtype
-        if best:
-            r["type"] = best
 
     def ft_rect(r):
         return [round((r.x0 - x0) / ppf, 3), round(d_ft - (r.y1 - y0) / ppf, 3),
@@ -1527,11 +1732,23 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         rec = {"id": f"o{len(openings)}", "type": "door",
                "z": [0, DOOR_HEAD_FT], "swing_area": ft_rect(cl),
                "snapped": bool(bbox_px)}
+        fp = None
         if bbox_px:
             px0, py0, px1, py1 = bbox_px
-            rec["footprint"] = [fx(px0), fy(py1), fx(px1), fy(py0)]
+            cand = [fx(px0), fy(py1), fx(px1), fy(py0)]
+            span = max(abs(cand[2] - cand[0]), abs(cand[3] - cand[1]))
+            thick = min(abs(cand[2] - cand[0]), abs(cand[3] - cand[1]))
+            # VALIDATE the snapped strip: a real door cut is a plausible leaf
+            # width AND thin. A fat/oversize strip (>5.5 ft wide or >1.6 ft
+            # thick) is a merged WALL, not a door — demote it to an unsnapped
+            # swing-box cut so BOQ / the door-scale check don't trust it.
+            if DOOR_MIN_FT - 0.3 <= span <= DOOR_MAX_FT + 0.5 and thick <= 1.6:
+                fp = cand
+        if fp is not None:
+            rec["footprint"] = fp
         else:
             rec["footprint"] = ft_rect(cl)       # swing box; snapped=False flags it
+            rec["snapped"] = False
             fallback_doors += 1
         openings.append(rec)
     if fallback_doors:
@@ -1698,7 +1915,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 f"ft includes projections)")
     except Exception:
         pass
-    return {
+    scene = {
         "meta": {
             "source": f"vector_pdf_{mode}",
             "units": "ft",
@@ -1719,3 +1936,6 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         "columns": columns,
         "ducts": [], "furniture": furniture,
     }
+    # G3: cross-check a GUESSED scale against snapped-door widths; flag (default)
+    # or auto-correct (DRISHTI_AUTOSCALE=1). No-op on verified scales.
+    return _apply_scale_correction(scene)

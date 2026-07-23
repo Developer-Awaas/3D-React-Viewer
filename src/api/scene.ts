@@ -1,15 +1,24 @@
 // Step C: upload a floor plan -> the backend parses it (/scene) and builds a
 // ready 3D model (/scene.glb). One call returns both: the meta (dimensions,
 // scale source, wings, warnings) and a blob URL the viewer can load directly.
+// Resolve the API base WITHOUT throwing at module-init: a top-level throw here
+// white-screens the ENTIRE app (landing page included) if VITE_API_BASE is
+// missing in a prod build. Instead return '' and fail loudly only when an API
+// call is actually made (apiBase()), so the site still renders.
 const API_BASE: string = (() => {
   const base = (import.meta as any).env?.VITE_API_BASE
   if (base) return base
-  // never silently point a production build at localhost — fail loud at init
-  if ((import.meta as any).env?.PROD) {
-    throw new Error('VITE_API_BASE is not set — configure it in your deployment environment')
-  }
+  if ((import.meta as any).env?.PROD) return ''       // unset in prod -> see apiBase()
   return 'http://localhost:8000'
 })()
+
+function apiBase(): string {
+  if (!API_BASE) {
+    throw new Error('This site is not fully configured (VITE_API_BASE is not set). '
+      + 'Please try again shortly.')
+  }
+  return API_BASE
+}
 
 export type SceneMeta = {
   source: string
@@ -57,12 +66,13 @@ export type BuiltPlan = {
   vastu?: VastuSummary
   costInr?: number          // BOQ total incl. labour (budgeting estimate)
   diagnosis?: Diagnosis
+  raw?: any                 // full scene.json — sent back to /recompute (G7)
 }
 
 async function post(path: string, file: File, q: URLSearchParams, signal?: AbortSignal): Promise<Response> {
   const form = new FormData()
   form.append('image', file)
-  const res = await fetch(`${API_BASE}${path}?${q}`, { method: 'POST', body: form, signal })
+  const res = await fetch(`${apiBase()}${path}?${q}`, { method: 'POST', body: form, signal })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(`${path} failed (${res.status}): ${detail.slice(0, 200)}`)
@@ -98,10 +108,15 @@ export async function buildPlan(
   }
   const scene = await sceneRes.json()
   const glb = await glbRes.blob()
+  return { ...planFromScene(scene), glbUrl: URL.createObjectURL(glb) }
+}
+
+/** Map a raw scene.json into the viewer's BuiltPlan shape (minus glbUrl). The
+ *  raw scene is kept on `.raw` so /recompute (G7 corrections) can send it back. */
+function planFromScene(scene: any): Omit<BuiltPlan, 'glbUrl'> {
   const ops: any[] = scene.openings ?? []
   return {
     meta: scene.meta,
-    glbUrl: URL.createObjectURL(glb),
     doors: ops.filter((o) => o.type === 'door').length,
     windows: ops.filter((o) => o.type === 'window').length,
     rooms: (scene.rooms ?? []) as Room[],
@@ -109,6 +124,39 @@ export async function buildPlan(
     vastu: scene.vastu as VastuSummary | undefined,
     costInr: scene.boq?.cost_inr?.total_with_labour as number | undefined,
     diagnosis: scene.diagnosis as Diagnosis | undefined,
+    raw: scene,
+  }
+}
+
+export type Corrections = {
+  true_width_ft?: number
+  room_types?: Record<string, string>
+  delete_rooms?: string[]
+  loading_factor?: number
+  north_deg?: number
+}
+
+/** G7: apply user corrections to a parsed plan and get fresh numbers back.
+ *  No re-parse / no GPU — instant. Returns the updated plan (keeps the SAME
+ *  glbUrl; scale corrections also return `scaleFactor` so the caller can
+ *  scale the 3D model without a rebuild). */
+export async function recomputePlan(
+  plan: BuiltPlan, corr: Corrections,
+): Promise<{ plan: BuiltPlan; scaleFactor?: number }> {
+  const res = await fetch(`${apiBase()}/recompute`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scene: plan.raw, corrections: corr }),
+    signal: AbortSignal.timeout(30_000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`recompute failed (${res.status}): ${detail.slice(0, 200)}`)
+  }
+  const scene = await res.json()
+  const scaleFactor = scene.meta?.correction_info?.scale_factor as number | undefined
+  return {
+    plan: { ...planFromScene(scene), glbUrl: plan.glbUrl },
+    scaleFactor,
   }
 }
 
