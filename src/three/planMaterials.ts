@@ -1,4 +1,5 @@
 import * as THREE from 'three'
+import { COLUMN_DEPTH_BIAS } from './depthLayers'
 
 // Visual pass for backend-built plans (Wed of launch week).
 //
@@ -215,9 +216,11 @@ function materials(style: string): PlanMaterials {
       roughness: p.floorRoughness, metalness: p.floorMetalness,
       envMapIntensity: 1.25,
     }),
+    // COLUMN_DEPTH_BIAS: columns sit 0 → wall height, same as the walls, so a
+    // column inside a wall shares its top face plane — see three/depthLayers.ts
     concrete: new THREE.MeshStandardMaterial({
       map: concreteTexture(p), color: p.concreteTint, roughness: 0.85, metalness: 0.0,
-      envMapIntensity: 0.7,
+      envMapIntensity: 0.7, ...COLUMN_DEPTH_BIAS,
     }),
     glass: new THREE.MeshStandardMaterial({
       color: '#a8cfe3', transparent: true, opacity: 0.38,

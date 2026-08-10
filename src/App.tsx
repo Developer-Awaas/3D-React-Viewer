@@ -25,6 +25,7 @@ import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
 import { buildPlan, downloadAreaStatement, recomputePlan, type BuiltPlan } from './api/scene'
 import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
+import { CONTACT_SHADOW_Y, GROUND_Y, GROUND_DEPTH_BIAS, MIN_DEPTH_GAP } from './three/depthLayers'
 import LoadingScreen from './components/LoadingScreen'
 import LandingHero from './landing/LandingHero'
 
@@ -73,6 +74,26 @@ function TextInput(props: InputHTMLAttributes<HTMLInputElement>) {
     className="h-9 w-full rounded-md border border-input bg-surface/60 px-3 text-sm text-foreground
                placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring" />
 }
+// ROOF (press R). Indian residential construction is an RCC flat slab, so a
+// flat slab on the building's own footprint is the default and the only thing
+// most plans should ever show. The pitched hip roof below is kept for the
+// occasional sloped-roof plan, behind VITE_PITCHED_ROOF=1, default OFF.
+const PITCHED_ROOF = import.meta.env.VITE_PITCHED_ROOF === '1'
+
+// Flat RCC slab on the footprint, with a small chhajja lip (the 1.02 at the
+// call site). The lip is not decoration: a slab cut exactly to the footprint
+// would put its side faces on the same planes as the outer wall faces and
+// trade the old flicker for a new one. MIN_DEPTH_GAP lifts the underside clear
+// of the wall tops for the same reason — see three/depthLayers.ts.
+function FlatRoof({ center, w, d }: { center: [number, number, number]; w: number; d: number }) {
+  return (
+    <mesh position={[center[0], center[1] + MIN_DEPTH_GAP + 0.06, center[2]]} castShadow>
+      <boxGeometry args={[w, 0.12, d]} />
+      <meshStandardMaterial color="#cfc9bf" roughness={0.95} />
+    </mesh>
+  )
+}
+
 // Hip roof fitted to the building footprint: ridge along the LONG axis, sloped
 // trapezoid sides + triangular hip ends, plus a thin eave slab. Replaces the
 // old 4-sided cone, which ballooned into a huge pyramid on elongated plans.
@@ -622,10 +643,12 @@ export default function App() {
             <ErrorBoundary fallback={null}>
               <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
             </ErrorBoundary>
-            <ContactShadows position={[0, 0, 0]} opacity={0.5} scale={44} blur={2.4} far={12} />
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            {/* ground · contact shadow · model floor were ALL at y=0 and
+                z-fought on every orbit — see three/depthLayers.ts */}
+            <ContactShadows position={[0, CONTACT_SHADOW_Y, 0]} opacity={0.5} scale={44} blur={2.4} far={12} />
+            <mesh position={[0, GROUND_Y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
               <planeGeometry args={[400, 400]} />
-              <meshStandardMaterial color="#ccd3da" roughness={1} />
+              <meshStandardMaterial color="#ccd3da" roughness={1} {...GROUND_DEPTH_BIAS} />
             </mesh>
             {pPlan && (
               <Suspense fallback={null}>
@@ -635,15 +658,23 @@ export default function App() {
                 </ErrorBoundary>
               </Suspense>
             )}
-            {/* roof (press R): a HIP roof fitted to the building's footprint —
-                ridge along the long axis, 45°-style hip ends, slight eave
-                overhang. Off by default so the rooms stay visible. */}
+            {/* roof (press R): flat RCC slab on the building's footprint, the
+                Indian residential default. Pitched only with VITE_PITCHED_ROOF=1.
+                Off by default either way so the rooms stay visible. */}
             {pPlan && frame && roofOn && (
-              <HipRoof
-                center={[frame.center[0], frame.position[1] + frame.size[1], frame.center[2]]}
-                w={frame.size[0] * 1.05}
-                d={frame.size[2] * 1.05}
-              />
+              PITCHED_ROOF ? (
+                <HipRoof
+                  center={[frame.center[0], frame.position[1] + frame.size[1], frame.center[2]]}
+                  w={frame.size[0] * 1.05}
+                  d={frame.size[2] * 1.05}
+                />
+              ) : (
+                <FlatRoof
+                  center={[frame.center[0], frame.position[1] + frame.size[1], frame.center[2]]}
+                  w={frame.size[0] * 1.02}
+                  d={frame.size[2] * 1.02}
+                />
+              )
             )}
             {/* walk-inside beacons: one per detected room — click to step in */}
             {pPlan && frame && pPlan.rooms.map((r, i) => (
@@ -661,10 +692,11 @@ export default function App() {
             <ErrorBoundary fallback={null}>
               <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
             </ErrorBoundary>
-            <ContactShadows position={[0, 0, 0]} opacity={0.55} scale={30} blur={2.2} far={12} />
-            <mesh rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
+            {/* same coplanar-at-y=0 fix as plan mode (three/depthLayers.ts) */}
+            <ContactShadows position={[0, CONTACT_SHADOW_Y, 0]} opacity={0.55} scale={30} blur={2.2} far={12} />
+            <mesh position={[0, GROUND_Y, 0]} rotation={[-Math.PI / 2, 0, 0]} receiveShadow>
               <planeGeometry args={[40, 40]} />
-              <meshStandardMaterial color="#d9d6d0" roughness={0.95} />
+              <meshStandardMaterial color="#d9d6d0" roughness={0.95} {...GROUND_DEPTH_BIAS} />
             </mesh>
             {modelUrl && (
               <Suspense fallback={null}>
