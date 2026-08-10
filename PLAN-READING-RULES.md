@@ -22,6 +22,27 @@ A number the tool cannot justify must never be presented as fact.
 
 ---
 
+## 0.1 VERIFICATION FIRST
+
+**Where a sheet carries its own AREA STATEMENT, opening schedule, or printed
+room dimensions, those are ground truth. Any parser output that contradicts
+them is wrong until proven otherwise.**
+
+This check runs **BEFORE** any diagnosis of a suspected parser error. Read the
+sheet's own numbers first, compare, and only then reason about what the code
+did. A correction proposed without this check is a guess, however plausible
+its arithmetic.
+
+**Worked example — FLOOR PLAN.pdf (10 Aug 2026).** The sheet states its own
+built-up area: **870 + 835 = 1705 sqft**. The parser reports **1693.3 sqft** —
+a **99.3% match**, so the scale on this sheet is right. That single comparison
+disproved a proposed scale correction (derived from median door width reading
+3.81 ft) which would have shrunk every dimension by ~27% and made the built-up
+number **38% wrong**. The sheet's own statement caught in one line what a chain
+of geometric inference got backwards.
+
+---
+
 ## 1. What is NOT the building
 
 Before anything else, these must be excluded from geometry, area and 3D.
@@ -56,7 +77,7 @@ Before anything else, these must be excluded from geometry, area and 3D.
 3. **W-3** — Sanity band: any measured gap below 3 inches or above 18 inches is not a wall. Reject it.
 4. **W-4** — Walls form closed loops around rooms. A gap in the loop is an opening (door/window/arch), not a broken wall.
 5. **W-5** — Wall lines may be interrupted by columns, doors and windows. Continuity across those interruptions must be inferred, not required.
-6. **W-6** — Wall height is NOT on the floor plan. Default 10 ft floor-to-floor unless stated. `ELEVATION`
+6. **W-6** — Wall height is NOT on the floor plan. Default **3.0 m (9.843 ft)** floor-to-floor, which is what the code already uses (`pdf_vector.WALL_HEIGHT_FT`, `scene_builder.WALL_HEIGHT_FT`). The user may override it by entry, or by uploading an elevation. `ASK`
 
 ---
 
@@ -81,6 +102,8 @@ Before anything else, these must be excluded from geometry, area and 3D.
      - G+10 to G+25: 600–900 mm, up to ~1200 mm (48") in tall towers
 5. **C-5 — Aspect ratio.** Columns are rarely longer than 1:3. A long thin slot is not a column.
 6. **C-6 — Columns are a scale anchor, but a weak one.** The existing "column = 12 inches" assumption is unsafe: 9-inch column plans come out ~33% wrong. Only use column width for scale when no dimension text exists, and always flag it.
+   - **The 12-inch assumption applies to the column's SHORT side, never the long side.** A column is a rectangle (see C-5): its short side is the dimension the reference bands in C-4 constrain, and the one that stays near the practical minimum across storey counts. The long side varies freely and anchors nothing.
+   - **CODE FIX PENDING** — `pdf_vector._scale_ppf` pins `max(r.width, r.height)`, i.e. the LONG side. That is wrong. It must use the short side. On a near-square column the error is small; on a 9"×15" column it scales the whole building by 1.6x.
 
 ---
 
@@ -149,10 +172,11 @@ Before anything else, these must be excluded from geometry, area and 3D.
 2. **DR-2** — One straight edge of the quarter circle is the hinge side, sitting in the wall gap. The other straight edge is the door leaf when open.
 3. **DR-3** — The arc tells you the **swing direction** and **which room it opens into**.
 4. **DR-4** — Tagged D, D1, D2, D3, SD with a circle. Typical Indian residential:
-   - D1 main entrance ~3'6" (some sheets 3'3")
+   - D1 main entrance **3'6"**
    - D2 bedrooms and kitchen ~3'0"
    - D3 bathrooms and balconies ~2'6"
    - SD sliding door ~7'0"
+   - **CODE FIX PENDING** — `tag_openings.DOOR_W_FT["D1"]` is 3.25 (3'3"). It must be 3.5. Where a sheet carries its own door schedule, that schedule overrides this table (TG-5, and §0.1).
 5. **DR-5 — Footprint validation.** An "opening" wider than 6 ft or thicker than 1.6 ft is not a door — it is merged wall geometry. Demote it.
 6. **DR-6 — 3D representation:** show the leaf **open at the swing angle** for now. (Interim decision; to be revisited.)
 7. **DR-7** — Door height is not on the floor plan. Default 7'0" (matches every reference schedule). `ASK`
@@ -163,10 +187,15 @@ Before anything else, these must be excluded from geometry, area and 3D.
 
 1. **WN-1** — Window = 2 thin lines nested inside the 2 thick wall lines. (3-line variants exist in some conventions; not yet seen in the reference set — add when encountered.)
 2. **WN-2** — The window's length along the wall IS its width. Measure it.
-3. **WN-3** — Tagged W, W1, W2, W3 with a circle. Typical Indian residential:
-   - W1 main living areas ~5'0" × 4'0", sill 3'0"
-   - W2 standard bedrooms ~4'0" × 4'0", sill 3'0"
-   - W3 kitchen/utility ~3'0" × 3'0", sill 3'6" (above counter datum)
+3. **WN-3** — Tagged W, W1, W2, W3 with a circle. This is the SINGLE window table; there is no second one. Typical Indian residential:
+
+   | Tag | Width × height | Sill |
+   |---|---|---|
+   | W1 main living areas | ~5'0" × 4'0" | **3'0"** |
+   | W2 standard bedrooms | ~4'0" × 4'0" | **3'0"** |
+   | W3 kitchen/utility | ~3'0" × 3'0" | **3'6"** (above counter datum) |
+
+   - **CODE FIX PENDING** — the code holds TWO conflicting tables: `pdf_vector.LEGEND` (sills 3'0" / 3'0" / 3'6") and `tag_openings.WIN_FT` (sill 2'6" for all three). Which one fires depends on the detection path, so the same tag can produce two different sills. Both must be reconciled to the table above, ideally by deleting one and sharing the other.
 4. **WN-4 — Windows are NOT always drawn.** Some sheets (e.g. FLOOR PLAN.pdf) omit them entirely. When absent: **do not invent them.** Report "windows not marked on this drawing" and offer user entry or an elevation. Currently the tool guesses — this must stop. `ASK`
 5. **WN-5** — Window height and sill are not on the floor plan. Use the tag defaults above and flag them. `ELEVATION`
 
@@ -220,6 +249,10 @@ Before anything else, these must be excluded from geometry, area and 3D.
 - Multi-flat sheets: splitting one sheet into per-flat modules
 - Sloped / curved walls
 - Mezzanine, loft, double-height
+- **Elevation-file upload** — the resolution path for everything a floor plan
+  genuinely cannot state: wall height (W-6), window sill and head height
+  (WN-5, V-3), and balcony railing vs parapet (B-2, B-3). Until it exists,
+  those stay defaults marked `ASK` / `ELEVATION`, never facts.
 
 ---
 
@@ -228,3 +261,9 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | Date | Change | Source |
 |---|---|---|
 | 10 Aug 2026 | v1 — walls, columns, ducts, lift, staircase, cupboard, doors, windows, ventilators, tags, rooms, balconies, exclusions | Rahul, from FLOOR PLAN.pdf + neelachala sheets |
+| 10 Aug 2026 | **§0.1 VERIFICATION FIRST added** — a sheet's own area statement / opening schedule / printed room dimensions are ground truth and are checked BEFORE diagnosing any suspected parser error. Worked example: FLOOR PLAN.pdf states 870 + 835 = 1705 sqft built-up vs parser 1693.3 (99.3%), which disproved a proposed scale correction that would have made the number 38% wrong | Rahul |
+| 10 Aug 2026 | **C-6 extended** — the 12-inch column assumption applies to the column's SHORT side, never the long side. Flagged CODE FIX PENDING: `pdf_vector._scale_ppf` pins `max(width, height)` | Rahul |
+| 10 Aug 2026 | **DR-4 corrected** — D1 main entrance is 3'6" (was "~3'6" (some sheets 3'3")"). Flagged CODE FIX PENDING: `tag_openings.DOOR_W_FT["D1"]` is 3.25 | Rahul |
+| 10 Aug 2026 | **W-6 corrected** — wall height default is 3.0 m (9.843 ft), matching the code; the 10 ft figure is removed. Certainty mark changed `ELEVATION` → `ASK` (user entry or elevation upload overrides) | Rahul |
+| 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
+| 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |

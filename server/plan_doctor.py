@@ -84,6 +84,33 @@ def diagnose(scene):
                f"Efficiency {eff:.0f}% is above the typical band — carpet may "
                "be over-counted (circulation included) or walls read too thin.")
 
+    # --- R-8 / §0.1: the sheet's OWN printed area statement is ground truth.
+    # This outranks every other accuracy signal here, because it comes from the
+    # architect rather than from our own geometry. A parse that contradicts it
+    # is wrong until proven otherwise, so a big gap is a FAIL, not a warning.
+    cmp_ = scene.get("area_comparison") or {}
+    if isinstance(cmp_, dict) and cmp_.get("rows"):
+        worst = float(cmp_.get("worst_diff_pct", 0) or 0)
+        detail = "; ".join(
+            f"{r.get('label', r.get('figure'))} printed {r.get('printed_sqft')} vs "
+            f"parsed {r.get('parsed_sqft')} sqft ({r.get('match_pct')}% match)"
+            for r in cmp_["rows"])
+        if cmp_.get("verdict") == "mismatch":
+            _issue(issues, "fail", "printed_area_mismatch",
+                   f"The sheet prints its own area statement and our numbers "
+                   f"disagree with it by up to {worst:.0f}% — {detail}. The "
+                   "printed figures are the architect's, so treat OUR areas as "
+                   "wrong until the parse is checked.")
+        elif cmp_.get("verdict") == "close":
+            _issue(issues, "warn", "printed_area_close",
+                   f"Our areas are within {worst:.0f}% of the sheet's own "
+                   f"printed area statement — {detail}. Close, but worth a look "
+                   "before quoting the numbers.")
+        else:
+            _issue(issues, "ok", "printed_area_verified",
+                   f"Confirmed against the sheet's own printed area statement — "
+                   f"{detail}. This is the strongest accuracy check available.")
+
     # --- scale trust (every ft/sqft/₹ number scales with this) ---
     ssrc = scale_meta.get("source", "")
     if ssrc == "column_box_12in":

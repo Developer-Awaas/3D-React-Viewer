@@ -747,6 +747,36 @@ export default function App() {
               </span>
             </div>
           ))}
+          {/* R-8: the sheet's OWN printed area statement, where it has one.
+              These are the architect's numbers — shown next to ours so a
+              mismatch is visible instead of implied (PLAN-READING-RULES §0.1). */}
+          {pPlan.areaComparison && (
+            <div className="mt-1.5 border-t border-white/10 pt-1.5">
+              <div className="mb-1 flex items-baseline justify-between">
+                <span className="text-white/60">Printed on sheet</span>
+                <span className={
+                  pPlan.areaComparison.verdict === 'match' ? 'text-[10px] text-emerald-300'
+                    : pPlan.areaComparison.verdict === 'close' ? 'text-[10px] text-amber-300'
+                    : 'text-[10px] text-red-300'
+                }>
+                  {pPlan.areaComparison.verdict}
+                </span>
+              </div>
+              {pPlan.areaComparison.rows.map((r) => (
+                <div key={r.figure} className="flex items-baseline justify-between py-0.5 text-[11px]">
+                  <span className="text-white/40">{r.label}</span>
+                  <span className="text-white/70">
+                    {r.printed_sqft.toLocaleString()}
+                    <span className="text-white/30"> vs </span>
+                    {r.parsed_sqft.toLocaleString()}
+                    <span className={r.match_pct >= 95 ? 'text-emerald-300' : 'text-amber-300'}>
+                      {' '}{r.match_pct}%
+                    </span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
           <div className="mt-1 flex items-baseline justify-between border-t border-white/10 pt-1.5 text-white/60">
             <span>Efficiency</span>
             {/* NON-NEGOTIABLE: a failed room detection must never show as a

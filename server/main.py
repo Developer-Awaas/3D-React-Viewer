@@ -21,6 +21,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, HTMLResponse, Response
 from fastapi.concurrency import run_in_threadpool
 
+import area_compare
 import area_report
 import area_statement
 import boq
@@ -661,6 +662,14 @@ async def scene(image: UploadFile = File(...),
         s["area_statement"] = area_statement.compute_area_statement(s, loading_factor)
     except Exception as e:
         log.warning("area statement skipped: %s: %s", type(e).__name__, e)
+    # R-8 / §0.1: where the sheet printed its OWN area statement, compare.
+    # The sheet is ground truth; this block only reports, never rewrites.
+    try:
+        _cmp = area_compare.compare(s.get("printed_areas"), s.get("area_statement"))
+        if _cmp:
+            s["area_comparison"] = _cmp
+    except Exception as e:
+        log.warning("area comparison skipped: %s: %s", type(e).__name__, e)
     # Vastu report (pure geometry; guidance only) — never breaks the scene
     try:
         s["vastu"] = vastu.analyze(s, north_deg)
@@ -712,6 +721,10 @@ def _reanalyze(s, loading_factor, north_deg):
     Shared shape with /scene; used by /recompute after user corrections."""
     for name, fn in (
         ("area_statement", lambda: area_statement.compute_area_statement(s, loading_factor)),
+        # printed-vs-parsed must be recomputed too: a user correction changes
+        # the parsed side, so a stale comparison would contradict the card
+        ("area_comparison", lambda: area_compare.compare(s.get("printed_areas"),
+                                                         s.get("area_statement"))),
         ("vastu", lambda: vastu.analyze(s, north_deg)),
         ("boq", lambda: boq.compute_boq(s)),
         ("analysis", lambda: pipeline.analyze(s, loading_factor)),
@@ -720,6 +733,8 @@ def _reanalyze(s, loading_factor, north_deg):
             s[name] = fn()
         except Exception as e:
             log.warning("%s skipped on recompute: %s: %s", name, type(e).__name__, e)
+    if not s.get("area_comparison"):
+        s.pop("area_comparison", None)    # no printed table: no key, not null
     try:
         # diagnose so the UI shows a fresh grade, but do NOT record() — a
         # recompute fires on every user edit and would spam docs/LEARNINGS.md

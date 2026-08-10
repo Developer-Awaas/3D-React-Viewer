@@ -41,6 +41,19 @@ export type AreaStatement = {
   efficiency_pct: number
 }
 
+// R-8: the sheet's OWN printed area statement, read off the drawing, vs what
+// we parsed. The printed figures are the architect's — where they disagree
+// with ours, ours are the ones under suspicion (PLAN-READING-RULES §0.1).
+export type AreaComparison = {
+  rows: {
+    figure: string; label: string
+    printed_sqft: number; parsed_sqft: number
+    diff_pct: number; match_pct: number
+  }[]
+  worst_diff_pct: number
+  verdict: 'match' | 'close' | 'mismatch'
+}
+
 export type VastuSummary = {
   score: number | null
   rooms_scored: number
@@ -63,6 +76,7 @@ export type BuiltPlan = {
   windows: number
   rooms: Room[]
   areaStatement?: AreaStatement
+  areaComparison?: AreaComparison
   vastu?: VastuSummary
   costInr?: number          // BOQ total incl. labour (budgeting estimate)
   diagnosis?: Diagnosis
@@ -121,6 +135,7 @@ function planFromScene(scene: any): Omit<BuiltPlan, 'glbUrl'> {
     windows: ops.filter((o) => o.type === 'window').length,
     rooms: (scene.rooms ?? []) as Room[],
     areaStatement: scene.area_statement as AreaStatement | undefined,
+    areaComparison: scene.area_comparison as AreaComparison | undefined,
     vastu: scene.vastu as VastuSummary | undefined,
     costInr: scene.boq?.cost_inr?.total_with_labour as number | undefined,
     diagnosis: scene.diagnosis as Diagnosis | undefined,

@@ -987,6 +987,79 @@ def _assign_room_labels(rooms, tokens, only_untyped=False):
     return gained
 
 
+_OCR_NUM_RE = None
+OCR_REFINE_MAX = 40          # cap the per-cell re-reads; a table has ~10
+
+
+def _ocr_refine_numbers(img, tokens, dpi, pad=8.0, scale=4):
+    """Re-read every NUMBER on the sheet digits-only, from its own box.
+
+    A whole-page OCR pass reads CAD lettering well enough for words but
+    misreads thin digits (on FLOOR PLAN.pdf it returned 935 for 835, 346 for
+    246 and 71 for 1900). Cropping each numeric token with a little padding,
+    upscaling it and running tesseract in single-line digits-only mode fixes
+    every one of those — and an area statement read wrong is worse than none
+    at all (R-8 treats these as ground truth). Mutates nothing: returns a new
+    token list. A crop that fails to re-read keeps its original text."""
+    import re
+    global _OCR_NUM_RE
+    if _OCR_NUM_RE is None:
+        _OCR_NUM_RE = re.compile(r"^[\d][\d,]{1,6}$")
+    import pytesseract
+    from PIL import Image as _Img
+    z = dpi / 72.0
+    cfg = "--psm 7 -c tessedit_char_whitelist=0123456789"
+    out, done = [], 0
+    for t in tokens:
+        if done >= OCR_REFINE_MAX or not _OCR_NUM_RE.match(t["text"]):
+            out.append(t)
+            continue
+        try:
+            box = (int((t["x0"] - pad) * z), int((t["y0"] - pad) * z),
+                   int((t["x1"] + pad) * z), int((t["y1"] + pad) * z))
+            c = img.crop(box)
+            c = c.resize((c.width * scale, c.height * scale), _Img.LANCZOS)
+            fixed = pytesseract.image_to_string(c, config=cfg).strip()
+            done += 1
+        except Exception:
+            fixed = ""
+        out.append({**t, "text": fixed} if fixed.isdigit() else t)
+    return out
+
+
+def _ocr_page_tokens(page, dpi=150, refine_numbers=False):
+    """OCR the rendered page -> [{text, x0, y0, x1, y1, conf}] in POINT
+    coordinates of the ROTATED page (the frame tp() works in).
+
+    Indian CAD sheets outline their lettering, so page.get_text() returns
+    nothing usable (FLOOR PLAN.pdf: 24 live words, all of them the Autodesk
+    educational banner). OCR is therefore the ONLY way to read room labels
+    (G2) and the printed area statement (R-8). Optional dependency: any
+    failure returns [] and the callers simply skip their feature.
+    refine_numbers re-reads digits cell-by-cell (see _ocr_refine_numbers)."""
+    out = []
+    try:
+        import pytesseract
+        from PIL import Image as _Img
+        zoom = dpi / 72.0
+        pix = page.get_pixmap(dpi=dpi)
+        img = _Img.frombytes("RGB", (pix.width, pix.height), pix.samples)
+        data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
+        for i, txt in enumerate(data["text"]):
+            t = (txt or "").strip()
+            if not t:
+                continue
+            x, y = data["left"][i] / zoom, data["top"][i] / zoom
+            w, h = data["width"][i] / zoom, data["height"][i] / zoom
+            out.append({"text": t, "x0": x, "y0": y, "x1": x + w, "y1": y + h,
+                        "conf": int(data["conf"][i])})
+        if refine_numbers and out:
+            out = _ocr_refine_numbers(img, out, dpi)
+    except Exception:
+        return []
+    return out
+
+
 def _door_scale_sanity(openings, warnings):
     """Practical cross-check: snapped doors are real doors (2'0"-4'6" wide in
     Indian residential work). If their median width is far outside that band,
@@ -1555,28 +1628,29 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # gets the rest via OCR. OCR NEVER overwrites a live label. Pixmap pixels
     # are already in rotated page space, matching tp()'s frame. Optional dep:
     # skipped silently if tesseract absent; DRISHTI_OCR=0 disables.
+    # ONE OCR pass per parse, shared by room labels (G2) and the printed area
+    # statement (R-8) below — the render+recognize is the expensive part.
+    _ocr_on = os.getenv("DRISHTI_OCR", "auto").lower() not in ("0", "off", "false")
+    _ocr_cache = {}
+
+    def ocr_words():
+        if "t" not in _ocr_cache:
+            _ocr_cache["t"] = (_ocr_page_tokens(page, refine_numbers=True)
+                               if _ocr_on else [])
+        return _ocr_cache["t"]
+
     untyped = [r for r in rooms if not r.get("type")]
-    if untyped and os.getenv("DRISHTI_OCR", "auto").lower() not in ("0", "off", "false"):
+    if untyped and _ocr_on:
         try:
-            import pytesseract
-            from PIL import Image as _Img
-            _dpi = 150
-            _zoom = _dpi / 72.0
-            pix = page.get_pixmap(dpi=_dpi)
-            img = _Img.frombytes("RGB", (pix.width, pix.height), pix.samples)
-            data = pytesseract.image_to_data(img,
-                                             output_type=pytesseract.Output.DICT)
             ocr_tokens = []
-            for i, txt in enumerate(data["text"]):
-                t = (txt or "").strip()
-                if len(t) < 3 or int(data["conf"][i]) < 40:
+            for w in ocr_words():
+                t = w["text"]
+                if len(t) < 3 or w["conf"] < 40:
                     continue
                 rtype = furnish.classify_room_type(t)
                 if not rtype:
                     continue
-                cx_pt = (data["left"][i] + data["width"][i] / 2) / _zoom
-                cy_pt = (data["top"][i] + data["height"][i] / 2) / _zoom
-                cxp, cyp = tp(cx_pt, cy_pt)
+                cxp, cyp = tp((w["x0"] + w["x1"]) / 2, (w["y0"] + w["y1"]) / 2)
                 if 0 <= cyp < Hpx and 0 <= cxp < Wpx:
                     ocr_tokens.append((fx(cxp), fy(cyp),
                                        int(rlab[cyp, cxp]), rtype))
@@ -1915,6 +1989,38 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 f"ft includes projections)")
     except Exception:
         pass
+    # --- R-8 / §0.1: the sheet's OWN printed area statement is ground truth.
+    # Read-only and additive: it never touches a parsed number, it is only
+    # compared against them (main.py builds the comparison block). Absent
+    # table / no OCR -> the key is simply not there. ---
+    printed_areas = None
+    try:
+        import area_compare
+        # LIVE text first — it is free and exact where a sheet has it. OCR is
+        # the fallback, and only where it is warranted: the sheet's text is
+        # unreadable anyway (outlined lettering), or an OCR pass already ran
+        # for room labels so it costs nothing extra. A sheet with healthy live
+        # text and no table never pays for OCR.
+        _live_toks = []
+        for _w in page.get_text("words"):
+            _r = (fitz.Rect(_w[:4]) * page.rotation_matrix).normalize()
+            _live_toks.append({"text": _w[4], "x0": _r.x0, "y0": _r.y0,
+                               "x1": _r.x1, "y1": _r.y1, "conf": 100})
+        printed_areas = area_compare.parse_area_statement(_live_toks)
+        _dead_text = len(_live_toks) < 50
+        if not printed_areas and (_dead_text or "t" in _ocr_cache):
+            printed_areas = area_compare.parse_area_statement(ocr_words())
+        if printed_areas:
+            _bits = []
+            if printed_areas.get("built_up_total_sqft"):
+                _bits.append(f"built-up {printed_areas['built_up_total_sqft']:.0f}")
+            if printed_areas.get("carpet_total_sqft"):
+                _bits.append(f"carpet {printed_areas['carpet_total_sqft']:.0f}")
+            warnings.append("printed AREA STATEMENT read from the sheet"
+                            + (f" ({', '.join(_bits)} sqft)" if _bits else ""))
+    except Exception:
+        printed_areas = None
+
     scene = {
         "meta": {
             "source": f"vector_pdf_{mode}",
@@ -1936,6 +2042,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         "columns": columns,
         "ducts": [], "furniture": furniture,
     }
+    if printed_areas:
+        scene["printed_areas"] = printed_areas
     # G3: cross-check a GUESSED scale against snapped-door widths; flag (default)
     # or auto-correct (DRISHTI_AUTOSCALE=1). No-op on verified scales.
     return _apply_scale_correction(scene)
