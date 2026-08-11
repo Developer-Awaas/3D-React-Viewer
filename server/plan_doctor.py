@@ -30,7 +30,7 @@ EFF_LO, EFF_HI = 55.0, 90.0          # healthy carpet/super band for Indian flat
 ENV_LO, ENV_HI = 12.0, 400.0         # plausible building side, ft
 DOOR_LO, DOOR_HI = 2.0, 4.5          # plausible door leaf width, ft
 TINY_ROOM_SQFT = 15.0
-ROOM_DIM_OK, ROOM_DIM_FAIL = 90.0, 75.0   # R-2 median match bands
+ROOM_DIM_OK, ROOM_DIM_FAIL = 90.0, 80.0   # R-2 median match bands
 
 TRUSTED_SCALES = {"dimension_text", "cad_units", "room_dim_text"}
 
@@ -171,6 +171,25 @@ def diagnose(scene):
         _issue(issues, "ok", "envelope_verified",
                "Plot size was taken from the architect's own overall dimension "
                "on the sheet (more trustworthy than raw linework).")
+
+    # --- PHYSICS: the building cannot be bigger than the land it stands on.
+    # Not a warning — a footprint above the plot is impossible, so something in
+    # the reading is definitely wrong (§0.1). Skipped when the sheet states no
+    # plot area: an unknown plot is not evidence of anything.
+    fp_sqft = meta.get("footprint_sqft")
+    plot_sqft = meta.get("plot_sqft")
+    try:
+        fp_sqft = float(fp_sqft) if fp_sqft else None
+        plot_sqft = float(plot_sqft) if plot_sqft else None
+    except (TypeError, ValueError):
+        fp_sqft = plot_sqft = None
+    if fp_sqft and plot_sqft and fp_sqft > plot_sqft:
+        _issue(issues, "fail", "footprint_exceeds_plot",
+               f"The building footprint reads {fp_sqft:.0f} sqft on a plot of "
+               f"{plot_sqft:.0f} sqft — impossible, a building cannot be larger "
+               "than its land. The wall reading has swallowed ground outside "
+               "the building (setbacks, an adjacent drawing, or the plot line "
+               "read as a wall); every area on this plan is unsafe.")
 
     # --- envelope sanity ---
     w = float(meta.get("plan_width_ft", 0) or 0)

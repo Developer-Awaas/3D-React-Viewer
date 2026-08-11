@@ -143,7 +143,16 @@
    ],
    "wd_legend": "use default_opening_legend (provided 2026-07-10)",
    "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
-   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive"
+   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive",
+   "r2_finding_2026_08_11": {
+    "verdict": "REJECTED - room detection on this sheet is NOT trustworthy",
+    "r2_median_match_pct": 58.6,
+    "rooms_checked": 14,
+    "rooms_off_by_over_20pct": 12,
+    "diagnosis": "UNDER-SEGMENTATION, not a scale error. 13 of 14 rooms measure ~57% of their printed size while r0 measures 3.2x (530.5 vs 163.7 printed) - a constant ratio would mean scale, this scatter means rooms are merging and leaking into each other.",
+    "units": "sheet is in METRES (prints 3.43x4.04 etc); 44 metric pairs read. Feeding them to the scale voter derived 33.7 pt/ft against the column-box 8.8 - a 3.8x disagreement - which would have shipped a 2.75 ft building. The §0.1 consistency cross-check rejected OUR derivation and kept the column-box scale; sheet stays flagged NEEDS REVIEW.",
+    "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80%"
+   }
   },
   "neelachala FIRST FLOOR.pdf": {
    "source": "single-floor CAD export, same project",
@@ -200,7 +209,15 @@
     "10'-0\" X 13'-5\""
    ],
    "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
-   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive"
+   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive",
+   "r2_finding_2026_08_11": {
+    "verdict": "FAILS R-2 - room detection on this sheet is NOT trustworthy",
+    "r2_median_match_pct": 31.1,
+    "rooms_checked": 1,
+    "rooms_off_by_over_20pct": 1,
+    "different_from_ghatikia": "YES - probably a DIFFERENT disease. GHATIKIA fails across 14 matched rooms with a consistent ~57% shortfall (systematic under-segmentation). Here only ONE printed dimension matched a room at all (r1: measured 164.2 vs printed 97.2, 31.1%), so the headline is a single sample: the primary failure is that R-2 cannot MATCH this sheet's printed dimensions to rooms, and r1 reading 1.7x its label suggests merging. NOT INVESTIGATED - flag only.",
+    "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80% across several rooms"
+   }
   },
   "BRICK WORK LAYOUT.pdf": {
    "source": "THE ZENITH, Architrave Design & Infraprojects (SAME FIRM as FLOOR PLAN.pdf, DIFFERENT building - geometry compared 2026-07-19: ZENITH = tall block, stretcher lift 9'6\"x6'0\"; FLOOR PLAN = long strip, lift 5'x5'). Drawing no. 9, Ar. Rehan Ahamed / Er. P.K. Tripathy",

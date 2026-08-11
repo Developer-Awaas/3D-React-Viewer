@@ -137,3 +137,34 @@ class TestDoctor:
     def test_no_printed_dims_is_silent(self):
         d = self._diagnose([])
         assert not any(i["tag"].startswith("room_dims") for i in d["issues"])
+
+
+class TestPrintedWidths:
+    """B-5 depth bound: a balcony is a strip, so the sheet prints its WIDTH
+    ('BALCONY 4' WIDE'), not a W x H pair. The name usually sits on its own
+    line above the dimension, so the search has to be 2D."""
+
+    def _label(self, name, wtxt, x, y):
+        return [_tok(name, x, y - 22),
+                _tok(wtxt, x, y), _tok("WIDE", x + 40, y)]
+
+    def test_reads_a_stacked_balcony_label(self):
+        toks = self._label("BALCONY", "4'", 359, 1583)
+        assert R.printed_widths(toks, "BALCON") == [4.0]
+
+    def test_reads_an_inline_label(self):
+        toks = [_tok("3'6\"", 2326, 1216), _tok("WIDE", 2375, 1216),
+                _tok("BALCONY", 2328, 1245)]
+        assert R.printed_widths(toks, "BALCON") == [3.5]
+
+    def test_keyword_must_be_near(self):
+        toks = self._label("KITCHEN", "4'", 359, 1583)
+        assert R.printed_widths(toks, "BALCON") == []
+
+    def test_needs_the_word_wide(self):
+        toks = [_tok("BALCONY", 359, 1561), _tok("4'", 359, 1583)]
+        assert R.printed_widths(toks, "BALCON") == []
+
+    def test_utility_uses_the_same_reader(self):
+        toks = self._label("UTILITY", "4'6\"", 1239, 1089)
+        assert R.printed_widths(toks, "UTI") == [4.5]

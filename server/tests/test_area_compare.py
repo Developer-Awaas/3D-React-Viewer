@@ -196,6 +196,9 @@ def test_floor_plan_pdf_end_to_end():
     # sheet's printed room dimensions, the coverage gap is now visible —
     # 1161 sqft parsed vs 1705 printed, because we find 9 pockets of ~16 rooms.
     # This number MUST RISE as room coverage improves, and must never silently
-    # fall. Raise the floor when it does; do not delete the check.
-    assert 65.0 <= bu["match_pct"] <= 100.0
+    # fall. If this assertion FAILS, it means one of two things and both need a
+    # human ruling: coverage improved (good — re-baseline this floor upward,
+    # with the evidence, per §0.1) or something regressed (bad — investigate).
+    # Do not delete the check, and do not relax it to make a change pass.
+    assert bu["match_pct"] >= 98.8
     assert bu["printed_sqft"] == 1705.0       # the sheet's own figure, fixed

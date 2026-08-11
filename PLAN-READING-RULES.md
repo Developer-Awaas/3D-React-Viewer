@@ -39,6 +39,39 @@ and the superseded value recorded in `plans/ground_truth.json`. A golden may
 **NEVER** be changed to make new code pass. The old number stays visible in the
 file: a corrected observation is part of the record, not a deletion.
 
+**A gap can never be longer than the wall it is a hole in.** When closing the
+outer wall ring, a bridge may not exceed the material length of the collinear
+wall RUN it sits in. Reject longer spans and log them. The bound is relative to
+the wall, not a guessed constant, and not the building's shorter side — on a
+95×30 ft strip the balcony faces run along the LENGTH, so a 42 ft opening can
+be legitimate while a 96 ft one is the sheet. (Corrected 11 Aug 2026; the
+shorter-side version was wrong for exactly that reason.) Where the flanking
+walls are shorter than the gap, the space beyond is not a room behind an
+opening — it is a balcony or open side, and §10 governs it, not ring bridging.
+
+**UNITS — decide per sheet, never mix.** Indian sheets use feet-inches and
+metres, sometimes across one project (GHATIKIA prints `3.43x4.04` in metres;
+neelachala FIRST FLOOR prints `13'6" X 10'3"`). Decide by how the number is
+written and by plausibility, never by assumption: feet carry `'` and `"`; a
+bare decimal under ~7 is almost always metres. A residential room is 2.4–6.0 m
+or 8–20 ft. Cross-check the result against the measured scale and require
+consistency across the sheet — where the two disagree by more than 2x, our
+READING is wrong (the sheet is still ground truth), so keep the previous scale
+and flag for review rather than ship an impossible building. One sheet, one
+unit: minority-unit readings are misreads and get dropped.
+
+**The building can never be bigger than its land.** Where the plot area is
+known — printed on the sheet, or from verified plot dimension text — a computed
+footprint above it is a physical impossibility, not a tolerance question. It
+**FAILS**; it does not warn. Where the sheet states no plot, the check is
+skipped: an unknown plot is not evidence of anything. (This is the check that
+disqualified the fixed-kernel footprint: at a 14 ft seal, neelachala FIRST
+FLOOR computed 2,563 sqft of building on a 2,455 sqft plot.)
+
+`plans/ground_truth.json` is mode **444 (read-only) on purpose** — the guard
+that makes an edit to it a deliberate act rather than an accident. Unlock it
+only for an authorised re-baseline, and **restore 444 immediately afterwards**.
+
 **Worked example — FLOOR PLAN.pdf (10 Aug 2026).** The sheet states its own
 built-up area: **870 + 835 = 1705 sqft**. The parser reports **1693.3 sqft** —
 a **99.3% match**, so the scale on this sheet is right. That single comparison
@@ -275,5 +308,15 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | 10 Aug 2026 | **W-6 corrected** — wall height default is 3.0 m (9.843 ft), matching the code; the 10 ft figure is removed. Certainty mark changed `ELEVATION` → `ASK` (user entry or elevation upload overrides) | Rahul |
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
+| 11 Aug 2026 | **R-5 / L-5 / S-5 BUILT** — lift, staircase and lobby are split out of carpet into a separate `common_area` line (`area_statement.COMMON_TYPES`); built-up covers carpet + common, so the split never deducts common area from the plate. Tiny-room floor lowered 28 → 18 sqft ONLY for spaces fully ringed by wall (L-4), which recovers FLOOR PLAN's 5'x5' lift. FLOOR PLAN: carpet 1032.6 → 842.9 (expected dip), common 213.4 vs printed 246, R-8 79.2% → 80.6% | Rahul |
+| 11 Aug 2026 | **NAMED PATTERN — "a correct TOTAL is not evidence of a correct SPLIT".** FLOOR PLAN's built-up reads 98.8% of the printed 1705, yet its parts are wrong in opposite directions: balcony 310.6 sqft against roughly 60 sqft of printed 4'0"+3'6" strips, carpet 842.9 against a printed 1370. The over and the under cancel. This is the SAME cancellation as the morning's whole-plan case (a 1.2x scale inflation cancelling 40% missing rooms), one level down. **`test_bucket_split_preserves_the_total` CANNOT catch this** — it only checks the sum. Each bucket needs its own instrument against printed data (R-2 does this for rooms; balcony and common have none yet) | Rahul |
+| 11 Aug 2026 | **Per-face balcony split ATTEMPTED and REVERTED** — banding the space within the sheet's printed balcony width (4'0") of each rejected span swept a 4 ft strip along the whole 96 ft and 42 ft spurious spans, yielding a 208.9 sqft "balcony" of outside ground at (85.9, 5.4) and dropping built-up 98.8% -> 96.0%. Reverted to one honest region. The band is the wrong primitive: the depth bound belongs on the RESULTING region's short side, and the spurious spans must be eliminated first. `room_dims.printed_widths` (reads 4'0" / 3'6" / utility 4'6") is built and tested, ready for the next attempt | Rahul |
+| 11 Aug 2026 | **NAMED PATTERN — "a bucket change can silently empty the total".** Splitting the lift/stair/lobby OUT of carpet also removed them from BUILT-UP, because built-up was computed as `carpet + wall_material` and carpet had just shrunk. R-8 fell 79.2% → 68.1% for a change that added information. **Rule: any change that moves an item between buckets must assert the TOTAL is unchanged.** Enforced by `test_area_report.py::test_bucket_split_preserves_the_total` | Rahul |
+| 11 Aug 2026 | **A bogus bridge inflated an ACCEPTED result** — FLOOR PLAN's R-8 97.5% (accepted 11 Aug) rested on a 96 ft bridge across a 95 ft building. The relative bound exposed it; the honest figure was 79.2%. Lesson: a result that improves an instrument is not thereby verified — check WHAT produced the improvement, especially when a bound was absent | Rahul |
+| 11 Aug 2026 | **Bridge bound CORRECTED** — was "no longer than the building's shorter side", now "no longer than the wall run it sits in". Reason: on a 95x30 ft strip the balcony faces run along the LENGTH, so the shorter-side bound rejected a legitimate 42 ft opening. Measured effect on FLOOR PLAN: the 42 ft span is still rejected under the corrected rule (its flanking wall run holds only 14.8 ft of material), so R-8 reads 79.2%, not the ~97.5% expected — the 97.5% had depended on a bogus 96 ft bridge. Long open faces are balconies (§10), not ring gaps | Rahul |
+| 11 Aug 2026 | **R-2 median below 80% is now a Doctor FAIL** (was 75%), same class as an R-8 mismatch. First application: GHATIKIA at 58.6% across 14 rooms — under-segmentation, recorded in `ground_truth.json` | Rahul |
+| 11 Aug 2026 | **§0.1 units rule added** — unit decided per sheet by notation + plausibility (feet carry ' and "; bare decimals under ~7 are metres), cross-checked against the measured scale (>2x disagreement ⇒ reject OUR derivation, keep the previous scale, flag), never mixed within a sheet. Implemented in `room_dims.one_unit` + the scale cross-check in `pdf_vector`. **The cross-check earned itself immediately**: GHATIKIA's metric labels derived 33.7 pt/ft against the column-box 8.8, which would have shipped a **2.75 ft building**; the clause rejected our derivation and kept the working scale | Rahul |
+| 11 Aug 2026 | **§0.1 relative bridge bound added** — a ring bridge longer than the building's shorter side is rejected and logged; relative, not a constant | Rahul |
+| 11 Aug 2026 | **§0.1 footprint-vs-plot physics check added** — a footprint above a known plot area FAILS (never warns); skipped when no plot is stated. Enforced in `plan_doctor` + `tests/test_footprint.py`. Footprint now comes from the outer wall RING (W-1), bridged jamb-to-jamb, replacing a fixed-kernel morphological close whose kernel was a guess at the widest opening | Rahul |
 | 11 Aug 2026 | **§0.1 re-baselining rule added** — a golden number moves only when the drawing's own printed data disproves it, with evidence + superseded value recorded in `ground_truth.json`; never to make new code pass. First application: FLOOR PLAN.pdf envelope 113.9x35.6 -> 95.2x29.8 (R-2 median match 61.5% -> 96.4%, scale 23.80 -> 28.47 pt/ft, door gap and printed stilt agreeing) | Rahul |
 | 11 Aug 2026 | **TG-5 BUILT, out of §11 deferred** — `opening_schedule.py` reads the sheet's own schedule and overrides `DOOR_W_FT` / `WIN_FT` / `LEGEND`. Verified on BRICK WORK LAYOUT.pdf: W now 6'0" sill 2'6" (was 4'0" sill 3'0"). Rows that cannot be read whole are dropped, never half-read | Rahul |

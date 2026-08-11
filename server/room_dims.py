@@ -17,12 +17,20 @@ area_compare's: {"text", "x0", "y0", "x1", "y1"}.
 """
 import re
 
-from area_compare import text_rows
+from area_compare import center_x, center_y, text_rows
 
 # "13'6"X10'3"" once the tokens are joined and spaces stripped. Both sides must
 # be well-formed: OCR that drops an apostrophe ("13'6"X121"") is unreadable,
 # and an unreadable dimension is skipped, never repaired by guesswork.
 _PAIR_RE = re.compile(r"(\d{1,2})'(\d{1,2})?\"?[X](\d{1,2})'(\d{1,2})?\"?")
+
+# METRES. Indian sheets use both systems, sometimes across one project
+# (GHATIKIA prints `3.43x4.04`, neelachala FIRST FLOOR prints `13'6" X 10'3"`).
+# The unit is decided by HOW the number is written — feet carry ' and ", metres
+# are bare decimals — and then by plausibility, never by assumption.
+_PAIR_M_RE = re.compile(r"(\d{1,2}\.\d{1,2})[X](\d{1,2}\.\d{1,2})")
+M_TO_FT = 3.280839895
+MIN_SIDE_M, MAX_SIDE_M = 0.8, 20.0
 
 MIN_SIDE_FT, MAX_SIDE_FT = 3.0, 60.0
 
@@ -81,24 +89,49 @@ def dimension_pairs(tokens, max_join=4):
         text = ""
         for n, t in enumerate(chain, start=1):
             text += (t["text"] or "")
-            m = _PAIR_RE.search(text.upper().replace("×", "X").replace(" ", ""))
-            if not m:
-                continue
-            w, h = _ft(m.group(1), m.group(2)), _ft(m.group(3), m.group(4))
-            if w is None or h is None:
-                continue
-            if not (MIN_SIDE_FT <= w <= MAX_SIDE_FT
-                    and MIN_SIDE_FT <= h <= MAX_SIDE_FT):
-                continue
+            norm = text.upper().replace("×", "X").replace(" ", "")
+            unit, w, h = "ft", None, None
+            m = _PAIR_RE.search(norm)
+            if m:
+                w, h = _ft(m.group(1), m.group(2)), _ft(m.group(3), m.group(4))
+                if w is None or h is None or not (
+                        MIN_SIDE_FT <= w <= MAX_SIDE_FT
+                        and MIN_SIDE_FT <= h <= MAX_SIDE_FT):
+                    continue
+            else:
+                # metres: bare decimals. Stray quotes appear on OCR'd metric
+                # labels ('1.07"x2.13'), so they are dropped before matching —
+                # a feet-inch reading was already ruled out above.
+                mm = _PAIR_M_RE.search(norm.replace('"', "").replace("'", ""))
+                if not mm:
+                    continue
+                wm, hm = float(mm.group(1)), float(mm.group(2))
+                if not (MIN_SIDE_M <= wm <= MAX_SIDE_M
+                        and MIN_SIDE_M <= hm <= MAX_SIDE_M):
+                    continue
+                unit, w, h = "m", wm * M_TO_FT, hm * M_TO_FT
             used = chain[:n]
-            out.append({"w_ft": round(w, 3), "h_ft": round(h, 3),
+            out.append({"w_ft": round(w, 3), "h_ft": round(h, 3), "unit": unit,
                         "x": (min(u["x0"] for u in used)
                               + max(u["x1"] for u in used)) / 2.0,
                         "y": (min(u["y0"] for u in used)
                               + max(u["y1"] for u in used)) / 2.0})
             consumed.update(toks.index(u) for u in used)
             break
-    return out
+    return one_unit(out)
+
+
+def one_unit(pairs):
+    """NEVER mix units within one sheet: keep the dominant unit, drop the rest.
+
+    A sheet is drawn in one system. A handful of readings in the other unit are
+    misreads, and mixing them would silently scale part of a plan by 3.28.
+    Pure -> unit-tested."""
+    if not pairs:
+        return pairs
+    ft = [p for p in pairs if p.get("unit") != "m"]
+    me = [p for p in pairs if p.get("unit") == "m"]
+    return ft if len(ft) >= len(me) else me
 
 
 def merge_pairs(*sets, tol=15.0):
@@ -121,6 +154,40 @@ def merge_pairs(*sets, tol=15.0):
             elif (hit["w_ft"], hit["h_ft"]) != (p["w_ft"], p["h_ft"]):
                 hit["_conflict"] = True
     return [p for p in out if not p.get("_conflict")]
+
+
+_WIDE_RE = re.compile(r"^(\d{1,2})'(\d{1,2})?\"?$")
+
+
+def printed_widths(tokens, keyword, max_join=6):
+    """Single-dimension labels: `BALCONY 4' WIDE`, `3'6" WIDE BALCONY`.
+
+    A balcony is a strip, so the sheet gives its WIDTH, not a W x H pair —
+    B-5's depth bound has to come from these. Returns the feet values from
+    every `<ft-in> WIDE` label whose local text also contains `keyword`.
+    Pure -> unit-tested."""
+    key = keyword.upper()
+    toks = sorted(tokens or [], key=lambda t: (t["x0"], t["y0"]))
+    out = []
+    for t0 in toks:
+        m = _WIDE_RE.match((t0["text"] or "").strip().upper())
+        if not m:
+            continue
+        v = _ft(m.group(1), m.group(2))
+        if v is None or not (1.0 <= v <= 12.0):
+            continue
+        chain = _chain(toks, t0, max_join)
+        if not any((t["text"] or "").strip().upper() == "WIDE" for t in chain):
+            continue
+        # The name sits on its OWN line above or below the dimension
+        # ("BALCONY" over "4' WIDE"), so look in 2D, not along the line.
+        h = max(1.0, t0["y1"] - t0["y0"])
+        cx0, cy0 = center_x(t0), center_y(t0)
+        if any(key in (t["text"] or "").upper()
+               and abs(center_x(t) - cx0) <= 8 * h
+               and abs(center_y(t) - cy0) <= 4 * h for t in toks):
+            out.append(round(v, 3))
+    return out
 
 
 def match_pct(measured_sqft, printed_sqft):

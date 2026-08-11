@@ -684,6 +684,176 @@ def _snap_envelope(dim_ft, candidates):
     return best
 
 
+FOOTPRINT_MIN_COMP_FRAC = 0.10      # ignore wall specks below 10% of the biggest
+
+
+def _free_ring_endpoints(seg_px, join_tol, min_gap):
+    """Wall ends that meet nothing — the jambs of an opening in the ring.
+
+    A wall end that lands on another wall (corner, T-junction) is joined; one
+    that lands on nothing is a JAMB: a balcony face, an entrance, a doorway.
+    Pairs closer than `min_gap` (one wall thickness) are skipped, because the
+    two faces of a single wall end beside each other and capping that gap
+    closes nothing. Returns [(p, q), ...] pixel pairs to bridge. Pure."""
+    import numpy as np
+    if not seg_px:
+        return []
+    # The WALL RUN an end belongs to: every segment collinear with it, summed.
+    # A wall line is drawn as many short pieces between junctions, so one
+    # segment's own length is far too small a bound — the run is the wall.
+    runs = {}
+    for x0, y0, x1, y1 in seg_px:
+        horiz = abs(y1 - y0) <= abs(x1 - x0)
+        perp = (y0 + y1) / 2.0 if horiz else (x0 + x1) / 2.0
+        key = (horiz, round(perp / max(1e-6, join_tol)))
+        runs[key] = runs.get(key, 0.0) + math.hypot(x1 - x0, y1 - y0)
+
+    ends, runlen = [], []
+    for x0, y0, x1, y1 in seg_px:
+        horiz = abs(y1 - y0) <= abs(x1 - x0)
+        perp = (y0 + y1) / 2.0 if horiz else (x0 + x1) / 2.0
+        L = runs[(horiz, round(perp / max(1e-6, join_tol)))]
+        ends += [(float(x0), float(y0)), (float(x1), float(y1))]
+        runlen += [L, L]                 # the wall run this end belongs to
+    arr = np.array(ends, dtype=np.float64)
+    if len(arr) < 2:
+        return []
+    d = np.linalg.norm(arr[:, None, :] - arr[None, :, :], axis=2)
+    touching = (d <= join_tol).sum(axis=1)          # counts itself
+    free = [i for i in range(len(arr)) if touching[i] <= 1]
+    pairs, used = [], set()
+    cand = sorted(((d[i, j], i, j) for k, i in enumerate(free)
+                   for j in free[k + 1:] if d[i, j] >= min_gap))
+    for dist, i, j in cand:
+        if i in used or j in used:
+            continue
+        used.add(i)
+        used.add(j)
+        # A GAP CANNOT BE LONGER THAN THE WALL IT IS A HOLE IN. The bound is
+        # the longer of the two walls the gap sits between — so a 42 ft
+        # balcony face between two 40 ft+ walls is legitimate on a 95x30 strip,
+        # while a 96 ft span between two stubs is the sheet, not an opening.
+        pairs.append((arr[i], arr[j], dist, max(runlen[i], runlen[j])))
+    return pairs
+
+
+def _footprint_from_walls(wall_mask, seg_px=None, norm_ppx=NORM_PPX,
+                          min_frac=FOOTPRINT_MIN_COMP_FRAC):
+    """The building footprint, from the OUTER WALL RING (W-1).
+
+    The old footprint closed the wall mask with a fixed kernel and filled the
+    result. That kernel is a guess about the widest opening in the outer wall,
+    and no value is right: a 6 ft kernel leaves FLOOR PLAN's balcony faces open
+    (footprint 1240 sqft against a real plate of ~1951), while 14 ft closes
+    them and simultaneously inflates neelachala FIRST FLOOR past its own plot.
+
+    So bridge the ring instead of dilating it. Each wall COMPONENT is joined to
+    the next by a straight line between their two CLOSEST points — a minimum
+    spanning tree over the components — so a balcony face is bridged by a line
+    exactly as long as that gap happens to be, and nothing else grows. Then the
+    largest external contour is the footprint.
+
+    Returns (filled_footprint_mask, bridged_ft, rejected_ft); the mask is None
+    when no contour can be formed.
+    """
+    import cv2
+    import numpy as np
+    n, lab, stt, _c = cv2.connectedComponentsWithStats(wall_mask, 8)
+    if n <= 1:
+        return None, [], [], None, []
+    areas = [(i, stt[i, cv2.CC_STAT_AREA]) for i in range(1, n)]
+    biggest = max(a for _i, a in areas)
+    keep = [i for i, a in areas if a >= min_frac * biggest]
+    work = np.zeros_like(wall_mask)
+    for i in keep:
+        work[lab == i] = 255
+
+    # 1) bridge openings WITHIN the ring — jamb to jamb. FLOOR PLAN's walls are
+    # a single connected component whose ring is open at the balcony faces, so
+    # component-to-component bridging alone never fires there.
+    # Jamb bridges are bounded per-gap by the wall run they sit in (see
+    # _free_ring_endpoints). COMPONENT bridges join separate wall blobs rather
+    # than filling a hole in one wall, so they keep a building-relative bound.
+    max_bridge = float(min(wall_mask.shape))
+    bridges, rejected, rejected_lines = [], [], []
+    thick = max(3, int(0.5 * norm_ppx))
+    for pa, pb, dist, bound in _free_ring_endpoints(seg_px or [],
+                                                    join_tol=0.35 * norm_ppx,
+                                                    min_gap=1.2 * norm_ppx):
+        if dist > bound:
+            rejected.append(round(dist / norm_ppx, 2))
+            rejected_lines.append((pa, pb))       # an OPEN SIDE (B-1)
+            continue
+        cv2.line(work, (int(pa[0]), int(pa[1])), (int(pb[0]), int(pb[1])),
+                 255, thick)
+        bridges.append(round(dist / norm_ppx, 2))
+
+    # 2) boundary points per component (subsampled: only the nearest PAIR matters)
+    pts = []
+    for i in keep:
+        comp = np.zeros_like(wall_mask)
+        comp[lab == i] = 255
+        cnts, _h = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+        p = np.vstack([c.reshape(-1, 2) for c in cnts]) if cnts else np.empty((0, 2))
+        if len(p) > 400:
+            p = p[:: max(1, len(p) // 400)]
+        pts.append(p.astype(np.float64))
+
+    # 3) Prim's MST over components, weight = distance between closest points
+    if len(pts) > 1:
+        inside, outside = {0}, set(range(1, len(pts)))
+        while outside:
+            best = None                   # (dist, i, j, pi, pj)
+            for i in inside:
+                for j in outside:
+                    if len(pts[i]) == 0 or len(pts[j]) == 0:
+                        continue
+                    d = np.linalg.norm(pts[i][:, None, :] - pts[j][None, :, :],
+                                       axis=2)
+                    k = int(d.argmin())
+                    a, b = divmod(k, d.shape[1])
+                    if best is None or d[a, b] < best[0]:
+                        best = (float(d[a, b]), i, j, pts[i][a], pts[j][b])
+            if best is None:
+                break
+            dist, _i, j, pa, pb = best
+            if dist > max_bridge:            # same relative cap as the jambs
+                rejected.append(round(dist / norm_ppx, 2))
+                rejected_lines.append((pa, pb))
+                outside.discard(j)           # leave it a separate component
+                continue
+            cv2.line(work, (int(pa[0]), int(pa[1])), (int(pb[0]), int(pb[1])),
+                     255, thick)
+            bridges.append(round(dist / norm_ppx, 2))
+            inside.add(j)
+            outside.discard(j)
+
+    cnts, _h = cv2.findContours(work, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not cnts:
+        return None, bridges, rejected, None, rejected_lines
+    foot = np.zeros_like(wall_mask)
+    cv2.drawContours(foot, [max(cnts, key=cv2.contourArea)], -1, 255, -1)
+
+    # B-1: the spaces behind the REJECTED spans are the open sides — balconies.
+    # Closing the ring with those spans too gives footprint + balconies; the
+    # difference is the balcony area. The span is drawn ONLY on this scratch
+    # mask, never on the wall geometry, so the open face is never built as a
+    # wall (B-4).
+    foot_ext = None
+    if rejected_lines:
+        ext = work.copy()
+        for pa, pb in rejected_lines:
+            cv2.line(ext, (int(pa[0]), int(pa[1])), (int(pb[0]), int(pb[1])),
+                     255, thick)
+        ecnts, _eh = cv2.findContours(ext, cv2.RETR_EXTERNAL,
+                                      cv2.CHAIN_APPROX_SIMPLE)
+        if ecnts:
+            foot_ext = np.zeros_like(wall_mask)
+            cv2.drawContours(foot_ext, [max(ecnts, key=cv2.contourArea)],
+                             -1, 255, -1)
+    return foot, bridges, rejected, foot_ext, rejected_lines
+
+
 def _footprint_free_mask(wall_mask, seal_ft, norm_ppx=NORM_PPX):
     """G1 wall-gap healing: interior free-space BOUNDED by the building
     footprint. Closes the wall blob (bridges outer-wall gaps up to seal_ft),
@@ -1372,6 +1542,25 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             if _p:
                 room_ppf = _room_dim_scale(page, drawings, warnings, pairs=_p,
                                            wall_segs=struct)
+                # CONSISTENCY (§0.1): the printed dimensions are ground truth,
+                # but the ppf we DERIVE from them (voting room extents between
+                # walls) is not. Cross-check it against the column-box scale;
+                # when the two disagree by more than 2x, our derivation is
+                # broken, not the sheet. Keep the old scale and say so, rather
+                # than ship a 2.75 ft building.
+                if room_ppf and col_rects:
+                    import numpy as _np
+                    _sz = [round(max(r.width, r.height), 1) for r in col_rects]
+                    _v, _c = _np.unique(_sz, return_counts=True)
+                    _ref = float(_v[_c.argmax()]) / COL_FT
+                    if _ref > 0 and not (0.5 <= room_ppf / _ref <= 2.0):
+                        warnings.append(
+                            f"printed room dimensions imply {room_ppf:.1f} pt/ft "
+                            f"but the column boxes imply {_ref:.1f} — a "
+                            f"{room_ppf / _ref:.1f}x disagreement, so the "
+                            "room-dimension scale is REJECTED (our reading of "
+                            "them is wrong, not the sheet). NEEDS REVIEW.")
+                        room_ppf = None
                 if room_ppf:
                     warnings.append(
                         f"scale from PRINTED room dimensions read by OCR "
@@ -1727,6 +1916,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # walls_poly above stays from the unsealed `m`, so stairs/open features are
     # unaffected in the exported geometry.
     min_room_px = int(28 * NORM_PPX * NORM_PPX)          # >= ~28 sqft
+    # A small space that is COMPLETELY ringed by wall is a real room — a lift
+    # shaft, a shaft, a WC. FLOOR PLAN's lift is printed 5'x5' = 25 sqft and was
+    # being dropped by the 28 sqft floor. Anything this small that is NOT fully
+    # wall-enclosed is a sliver between wall faces, so the enclosure test is
+    # what keeps noise out (L-4: a lift is an enclosed shaft).
+    small_room_px = int(18 * NORM_PPX * NORM_PPX)        # >= ~18 sqft, enclosed
     Hpx, Wpx = m.shape
 
     def _rooms_from_free(free, drop_border=True):
@@ -1740,7 +1935,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         for i in range(1, ncomp):
             rx, ry, rw, rh, rarea = rstt[i]
             if rarea < min_room_px:
-                continue
+                if rarea < small_room_px:
+                    continue
+                comp8 = (rlab == i).astype(np.uint8)
+                ring = cv2.dilate(comp8, np.ones((3, 3), np.uint8)) - comp8
+                if not np.all(m_env[ring > 0] > 0):
+                    continue              # not fully ringed by wall: a sliver
             if drop_border and (rx == 0 or ry == 0
                                 or rx + rw >= Wpx or ry + rh >= Hpx):
                 continue                                 # touches border = outside
@@ -1753,7 +1953,86 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                         "_bbox_ft": (fx(rx), fy(ry + rh), fx(rx + rw), fy(ry))})
         return out, rlab
 
-    rooms, rlab = _rooms_from_free((m_env == 0).astype(np.uint8))
+    # FOOTPRINT BOUNDING (2026-08-11). "Inside the building" is decided by the
+    # outer WALL RING (W-1), not by whether a free-space blob happens to touch
+    # the raster border. That border test discarded 675 sqft of REAL rooms on
+    # FLOOR PLAN.pdf, because the balconies' open faces chain interior ->
+    # balcony -> outside. See _footprint_from_walls for why the ring is bridged
+    # rather than dilated.
+    footprint_sqft = None
+    _seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
+    _foot, _bridges, _rejected, _foot_ext, _rej_lines = _footprint_from_walls(
+        m_env, seg_px=_seg_px)
+    rooms, rlab = [], None
+    if _foot is not None:
+        footprint_sqft = round(float((_foot > 0).sum()) / (NORM_PPX ** 2), 1)
+        rooms, rlab = _rooms_from_free(
+            cv2.bitwise_and(_foot, cv2.bitwise_not(m_env)), drop_border=False)
+        if rooms:
+            warnings.append(
+                f"footprint from the outer wall ring: {footprint_sqft:.0f} sqft"
+                + (f", {len(_bridges)} opening(s) bridged "
+                   f"({', '.join(f'{b:.1f}ft' for b in sorted(_bridges)[-4:])})"
+                   if _bridges else "")
+                + (f"; {len(_rejected)} span(s) REJECTED as longer than the "
+                   f"building's shorter side "
+                   f"({', '.join(f'{b:.0f}ft' for b in sorted(_rejected)[-3:])})"
+                   if _rejected else ""))
+    # B-1 / B-5: a balcony is enclosed on 3 sides and open on 1, so it never
+    # forms an enclosed pocket and ring bridging cannot reach it (§0.1). It IS
+    # the space between the footprint and the ring closed across its open face.
+    # Closed as a SPACE here, reported on its own line, and its open face is
+    # never built as a wall — walls_poly comes from `m`, which is untouched.
+    if rooms and _foot is not None and _foot_ext is not None:
+        _bal_free = cv2.bitwise_and(
+            cv2.bitwise_and(_foot_ext, cv2.bitwise_not(m_env)),
+            cv2.bitwise_not(_foot))
+        # ONE OPEN FACE = ONE BALCONY, and a balcony is a STRIP: bound its depth
+        # by the widest balcony width the sheet itself prints ("BALCONY 4' WIDE"),
+        # never by a constant (B-5). Everything deeper than that is not balcony —
+        # it is interior space (the utility strip) or ground outside, and the two
+        # are told apart by how much wall rings them (B-1: enclosed on 3 sides).
+        _bal_ft = []
+        try:
+            import room_dims as _rd2
+            _src = live_words() if _rd2.printed_widths(live_words(), "BALCON") \
+                else ocr_words()
+            _bal_ft = _rd2.printed_widths(_src, "BALCON")
+        except Exception:
+            _bal_ft = []
+        # NOT YET SPLIT PER FACE. Banding the space within the printed balcony
+        # width of each rejected span was tried on 11 Aug and REJECTED: the long
+        # spurious spans (42 ft, 96 ft) sweep a 4 ft band along the whole south
+        # edge, so the "balcony" came out 208.9 sqft of outside ground at
+        # (85.9, 5.4) and built-up fell 98.8% -> 96.0%. The band is the wrong
+        # primitive; the depth bound belongs on the RESULTING region's short
+        # side, and the spurious spans need eliminating first. Kept as one
+        # region until that is built — an honest lump beats a confident
+        # mis-split. `room_dims.printed_widths` (4'0" / 3'6" here) is ready.
+        _bands = _bal_free.copy()
+        _bals, _ = _rooms_from_free(_bands, drop_border=False)
+        for _b in _bals:
+            _b["type"] = "balcony"
+            _b["open_side"] = True
+            _b["_lab"] = -1              # never matched to a printed room label
+        # what is left is too deep to be a balcony
+        _rest = cv2.bitwise_and(_bal_free, cv2.bitwise_not(_bands))
+        _deep, _ = _rooms_from_free(_rest, drop_border=False)
+        _kept_deep = []
+        for _d in _deep:
+            _d["_lab"] = -1
+            _kept_deep.append(_d)         # untyped -> counts as carpet
+        if _bals or _kept_deep:
+            rooms += _bals + _kept_deep
+            warnings.append(
+                f"{len(_bals)} balcony(s) ({sum(b['area_sqft'] for b in _bals):.0f} "
+                f"sqft, depth bounded by the sheet's own "
+                f"{max(_bal_ft) if _bal_ft else 0:.1f} ft balcony width) + "
+                f"{len(_kept_deep)} deeper space(s) "
+                f"({sum(d['area_sqft'] for d in _kept_deep):.0f} sqft) behind "
+                f"{len(_rej_lines)} open face(s)")
+    if not rooms:
+        rooms, rlab = _rooms_from_free((m_env == 0).astype(np.uint8))
     if not rooms:
         # G1 WALL-GAP HEALING: 0 rooms means the interior free-space leaked to
         # the raster border (broken / missing OUTER wall) or no pocket formed
@@ -2273,6 +2552,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         printed_areas = None
 
+    _plot_sqft = None
+    if printed_areas and printed_areas.get("plot_area_sqft"):
+        _plot_sqft = round(float(printed_areas["plot_area_sqft"]), 1)
+    elif env_src == "overall_dimension_text":
+        _plot_sqft = round(float(out_w) * float(out_d), 1)
+
     scene = {
         "meta": {
             "source": f"vector_pdf_{mode}",
@@ -2282,6 +2567,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "plan_depth_ft": round(out_d, 3),
             "scale": {"source": scale_src, "pt_per_ft": round(ppf, 3),
                       "envelope": env_src},
+            # PHYSICS CHECK (§0.1): a building cannot be bigger than its land.
+            # plot_sqft is the sheet's own printed plot area, else the verified
+            # overall-dimension envelope; None when the sheet states neither,
+            # and then the check is skipped rather than guessed.
+            "footprint_sqft": footprint_sqft,
+            "plot_sqft": _plot_sqft,
             "wing": {"count": wing_count, "index": w_idx,
                      "bbox_ft": [round(v, 3) for v in wbox_ft] if wbox_ft else None},
             "warnings": warnings,

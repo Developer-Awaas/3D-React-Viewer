@@ -21,6 +21,14 @@ for drafting/analysis — a licensed architect must verify before any RERA filin
 
 SQFT_TO_SQM = 0.09290304
 
+# room types that are COMMON area, never carpet (R-5, L-5, S-5). "stairs" also
+# carries lifts — furnish.classify_room_type maps lift/elevator to it.
+COMMON_TYPES = frozenset({"stairs", "lobby"})
+
+# B-5: balconies are reported SEPARATELY in Indian practice - neither carpet
+# nor common. They are part of the built-up plate.
+BALCONY_TYPES = frozenset({"balcony"})
+
 
 def polygon_area(pts):
     """Shoelace area (absolute) of a polygon given as [[x, y], ...]. 0 if <3
@@ -47,7 +55,19 @@ def compute_area_statement(scene, loading_factor=1.30):
     walls_poly = scene.get("walls_poly", []) or []
     meta = scene.get("meta", {}) or {}
 
-    carpet = sum(float(r.get("area_sqft", 0) or 0) for r in rooms)
+    # R-5 / L-5 / S-5: the lift, the staircase and the lobby are COMMON area.
+    # They are inside the building and they count in built-up, but they are not
+    # carpet and a flat is not sold on them. Counting them as carpet inflates
+    # every flat's headline area — the single most consequential misreport a
+    # RERA tool can make. `furnish.classify_room_type` folds lift/elevator into
+    # "stairs", so both arrive under that one type.
+    common_rooms = [r for r in rooms if r.get("type") in COMMON_TYPES]
+    balcony_rooms = [r for r in rooms if r.get("type") in BALCONY_TYPES]
+    carpet_rooms = [r for r in rooms if r.get("type") not in COMMON_TYPES
+                    and r.get("type") not in BALCONY_TYPES]
+    common = sum(float(r.get("area_sqft", 0) or 0) for r in common_rooms)
+    balcony = sum(float(r.get("area_sqft", 0) or 0) for r in balcony_rooms)
+    carpet = sum(float(r.get("area_sqft", 0) or 0) for r in carpet_rooms)
     carpet_source = "rooms"
     if carpet <= 0:
         # GENERAL fallback (any plan, no per-plan logic): when room detection
@@ -72,27 +92,41 @@ def compute_area_statement(scene, loading_factor=1.30):
         max(0.0, polygon_area(wp.get("outer") or [])
             - sum(polygon_area(h) for h in (wp.get("holes") or [])))
         for wp in walls_poly)
-    if gross_outer >= carpet and gross_outer > 0:
+    # NB: built-up covers the whole floor plate — carpet AND common area (the
+    # lift, stair and lobby are inside the building even though they are not
+    # carpet). Using carpet alone here silently deducted the common area from
+    # built-up the moment R-5 split it out.
+    floor_inside = carpet + common + balcony
+    if gross_outer >= floor_inside and gross_outer > 0:
         built_up = gross_outer                 # shape (a): outer already gross
     elif wall_material > 0:
-        built_up = carpet + wall_material      # shape (b): walls sit ON carpet
+        built_up = floor_inside + wall_material  # shape (b): walls sit ON floor
     else:
         built_up = gross_outer
     if built_up <= 0:                          # fallback: envelope box
         built_up = float(meta.get("plan_width_ft", 0) or 0) * \
                    float(meta.get("plan_depth_ft", 0) or 0)
 
-    # built-up can never be less than carpet
-    built_up = max(built_up, carpet)
+    # built-up can never be less than the floor it covers — carpet AND the
+    # common area, both of which are inside the building
+    built_up = max(built_up, carpet + common + balcony)
     loading_factor = float(loading_factor) if loading_factor else 1.30
     # Indian market convention: the developer's loading factor is applied to
     # CARPET (super = carpet x loading; loading already covers walls + common
     # areas). The previous built_up * loading double-counted the wall footprint,
     # inflating super area and understating efficiency. Never below built-up.
     super_built = max(carpet * loading_factor, built_up)
-    wall_loss = max(0.0, built_up - carpet)
+    wall_loss = max(0.0, built_up - carpet - common - balcony)
 
     notes = []
+    if balcony > 0:
+        notes.append("Balcony area is reported separately from carpet (B-5, "
+                     "Indian practice); its open side is not built as a wall.")
+    if common > 0:
+        notes.append(
+            f"Common area ({', '.join(sorted({str(r.get('type')) for r in common_rooms}))})"
+            f" is reported separately and is NOT part of carpet (RERA: a flat "
+            f"is sold on carpet).")
     if carpet_source == "wall_interior":
         notes.append("No individual rooms detected — carpet estimated from the "
                      "enclosed area inside the walls (includes internal "
@@ -104,13 +138,18 @@ def compute_area_statement(scene, loading_factor=1.30):
                      "areas scale with that number; confirm the plan width.")
     notes.append("Carpet excludes internal partition-wall footprint (slight "
                  "under-count vs the strict RERA definition).")
-    notes.append("Balconies / open-to-sky / service shafts are not separated out "
-                 "automatically — adjust manually if present.")
+    if balcony <= 0:
+        notes.append("No balcony/open space was detected; if the plan has one, "
+                     "adjust manually. Service shafts are not separated out.")
     notes.append("Super built-up = carpet x loading factor (market convention; "
                  "loading covers walls + common-area share), floored at built-up.")
 
     return {
         "carpet_area": _pair(carpet),
+        "common_area": _pair(common),          # lift + staircase + lobby
+        "common_rooms": [r.get("id") for r in common_rooms],
+        "balcony_area": _pair(balcony),        # B-5: reported separately
+        "balcony_rooms": [r.get("id") for r in balcony_rooms],
         "built_up_area": _pair(built_up),
         "super_built_up_area": _pair(super_built),
         "wall_and_circulation": _pair(wall_loss),
