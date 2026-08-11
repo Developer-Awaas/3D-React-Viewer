@@ -8,8 +8,24 @@
    "flats": "2BHK x2 + lobby/lift",
    "doors_expected": 12,
    "windows_expected": "in wall layer (not extractable yet)",
-   "overall_ft": "USER TO CONFIRM from drawing dimension text (parser says 113.9 x 35.6 after junk fix; old 122x65 was junk-inflated)",
-   "column_in": "12 (assumed, drives scale)"
+   "overall_ft": "95.2 x 29.8 (CORRECTED 2026-08-11 from the sheet's own printed room dimensions)",
+   "column_in": "12 assumed - SUPERSEDED as the scale source by printed room dimensions (see envelope_rebaseline); C-6 short/long-side fix still pending",
+   "overall_ft_superseded": "113.9 x 35.6 (parser self-reported 2026-07-14; DISPROVEN - see envelope_rebaseline)",
+   "envelope_rebaseline": {
+    "date": "2026-08-11",
+    "old_ft": "113.9 x 35.6",
+    "corrected_ft": "95.2 x 29.8",
+    "scale_pt_per_ft": "23.80 -> 28.47 (x1.196)",
+    "scale_source": "column_box_12in -> room_dim_text (printed room dimensions, read by OCR)",
+    "evidence": [
+     "R-2: 6 rooms checked against the sheet's own printed dimensions - median match 61.5% -> 96.4%, worst 86.1%, 0 rooms off by >20% (was 6 of 6)",
+     "the 1.37-1.40x area ratio was CONSTANT across a 5x room-size range (26 to 138 sqft), so it is multiplicative (scale), not additive (wall inclusion)",
+     "door gap: median snapped door 3.81 ft vs schedule D1 3'3\" = 1.17x, agrees with the 1.196x correction",
+     "stilt: printed STILT FLOOR 1900 sqft ~= printed flats 1705 + common 246 = 1951 (2.6%), corroborating the printed figures as the true floor plate"
+    ],
+    "known_open": "R-8 built-up knowingly RED at 68.1% (1161 parsed vs 1705 printed): room COVERAGE is short - 9 pockets found of ~16 rooms. Sizes are right; coverage is the next gap. R-8 must RISE as coverage improves, never silently fall.",
+    "rule": "PLAN-READING-RULES 0.1: a golden may be re-baselined ONLY when the drawing's own printed data disproves it."
+   }
   },
   "attachment-1 FIRST FLOOR PLAN (photo, awaiting file)": {
    "source": "Neelachala Homes Ghatikia - photo pasted in chat 2026-07-10",
@@ -317,7 +333,7 @@
    "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
   },
   "plan_roomdim_342.pdf (tests/fixtures)": {
-   "source": "internet CAD PDF, no column layer, no on-line dims \u2014 scale from room-dimension text (9'0\"X12'0\")",
+   "source": "internet CAD PDF, no column layer, no on-line dims — scale from room-dimension text (9'0\"X12'0\")",
    "type": "vector-cad-flattened",
    "expected": {
     "envelope_ft": "20.3 x 65.3 (self-scaled)",
@@ -334,7 +350,7 @@
    "fixed": "2026-07-21"
   },
   "plan_unnamed_layers_343.pdf (tests/fixtures)": {
-   "source": "internet CAD PDF \u2014 real walls on unnamed layer '6'; named wall layers are decoys",
+   "source": "internet CAD PDF — real walls on unnamed layer '6'; named wall layers are decoys",
    "type": "vector-cad-unnamed-layers",
    "expected": {
     "envelope_ft": "38.0 x 37.9 (sheet says 38')",

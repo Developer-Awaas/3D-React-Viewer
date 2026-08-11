@@ -42,27 +42,27 @@ def _val(text):
     return v if MIN_SQFT <= v <= MAX_SQFT else None
 
 
-def _cx(t):
+def center_x(t):
     return (t["x0"] + t["x1"]) / 2.0
 
 
-def _cy(t):
+def center_y(t):
     return (t["y0"] + t["y1"]) / 2.0
 
 
-def _rows(tokens):
+def text_rows(tokens):
     """Group tokens into visual rows by y, left-to-right. Pure."""
     if not tokens:
         return []
     heights = sorted(abs(t["y1"] - t["y0"]) for t in tokens)
     h = heights[len(heights) // 2] or 1.0
     out, cur = [], []
-    for t in sorted(tokens, key=_cy):
-        if cur and _cy(t) - _cy(cur[-1]) > 0.6 * h:
-            out.append(sorted(cur, key=_cx))
+    for t in sorted(tokens, key=center_y):
+        if cur and center_y(t) - center_y(cur[-1]) > 0.6 * h:
+            out.append(sorted(cur, key=center_x))
             cur = []
         cur.append(t)
-    out.append(sorted(cur, key=_cx))
+    out.append(sorted(cur, key=center_x))
     return out
 
 
@@ -107,7 +107,7 @@ def parse_area_statement(tokens):
        "built_up_total_sqft", "carpet_total_sqft"}
     Keys whose figure is not printed are omitted, never guessed.
     """
-    rows = _rows(tokens or [])
+    rows = text_rows(tokens or [])
     if not rows:
         return None
     # the header row defines the columns; without it there is no table
@@ -124,8 +124,8 @@ def parse_area_statement(tokens):
         return None
     heights = sorted(abs(t["y1"] - t["y0"]) for t in tokens)
     rh = heights[len(heights) // 2] or 1.0
-    y_lo = _cy(hdr[0]) - _TABLE_ROWS_SPAN * rh * 2
-    y_hi = _cy(hdr[0]) + _TABLE_ROWS_SPAN * rh * 2
+    y_lo = center_y(hdr[0]) - _TABLE_ROWS_SPAN * rh * 2
+    y_hi = center_y(hdr[0]) + _TABLE_ROWS_SPAN * rh * 2
     # x-span of the table: the header row's own extent, widened left to reach
     # the LABEL column ("FLAT-1 (2-BHK)" starts left of the "FLAT NO.S"
     # heading). Without the left margin the label falls outside the table and
@@ -135,7 +135,7 @@ def parse_area_statement(tokens):
     x_hi = max([t["x1"] for t in hdr] + xs) + 12 * rh
 
     def _in_table(t):
-        return y_lo <= _cy(t) <= y_hi and x_lo <= _cx(t) <= x_hi
+        return y_lo <= center_y(t) <= y_hi and x_lo <= center_x(t) <= x_hi
 
     # a value belongs to the nearest column within HALF the column pitch —
     # derived from the header itself, so it holds at any sheet scale
@@ -149,8 +149,8 @@ def parse_area_statement(tokens):
         for name, x in col.items():
             if x is None:
                 continue
-            if abs(_cx(t) - x) < bd:
-                bd, best = abs(_cx(t) - x), name
+            if abs(center_x(t) - x) < bd:
+                bd, best = abs(center_x(t) - x), name
         return best
 
     out = {"flats": []}

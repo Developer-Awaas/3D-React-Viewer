@@ -33,6 +33,12 @@ sheet's own numbers first, compare, and only then reason about what the code
 did. A correction proposed without this check is a guess, however plausible
 its arithmetic.
 
+**Re-baselining a golden number.** A golden number may be re-baselined **ONLY
+when the drawing's own printed data disproves it**, and only with the evidence
+and the superseded value recorded in `plans/ground_truth.json`. A golden may
+**NEVER** be changed to make new code pass. The old number stays visible in the
+file: a corrected observation is part of the record, not a deletion.
+
 **Worked example — FLOOR PLAN.pdf (10 Aug 2026).** The sheet states its own
 built-up area: **870 + 835 = 1705 sqft**. The parser reports **1693.3 sqft** —
 a **99.3% match**, so the scale on this sheet is right. That single comparison
@@ -269,4 +275,5 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | 10 Aug 2026 | **W-6 corrected** — wall height default is 3.0 m (9.843 ft), matching the code; the 10 ft figure is removed. Certainty mark changed `ELEVATION` → `ASK` (user entry or elevation upload overrides) | Rahul |
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
+| 11 Aug 2026 | **§0.1 re-baselining rule added** — a golden number moves only when the drawing's own printed data disproves it, with evidence + superseded value recorded in `ground_truth.json`; never to make new code pass. First application: FLOOR PLAN.pdf envelope 113.9x35.6 -> 95.2x29.8 (R-2 median match 61.5% -> 96.4%, scale 23.80 -> 28.47 pt/ft, door gap and printed stilt agreeing) | Rahul |
 | 11 Aug 2026 | **TG-5 BUILT, out of §11 deferred** — `opening_schedule.py` reads the sheet's own schedule and overrides `DOOR_W_FT` / `WIN_FT` / `LEGEND`. Verified on BRICK WORK LAYOUT.pdf: W now 6'0" sill 2'6" (was 4'0" sill 3'0"). Rows that cannot be read whole are dropped, never half-read | Rahul |

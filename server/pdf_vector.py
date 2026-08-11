@@ -537,13 +537,18 @@ def _column_rects(drawings):
 _DIMPAIR = None
 
 
-def _room_dim_scale(page, drawings, warnings):
+def _room_dim_scale(page, drawings, warnings, pairs=None, wall_segs=None):
     """Scale from room-DIMENSION text like 9'0"X12'0" (a W x H pair written
     inside a room). Very common on Indian/CAD residential plans that carry no
     column layer and no on-line dimension text. For each such label we measure
     the room it sits in (nearest walls in each direction) and vote
     extent_points / stated_feet; the true scale is where the votes cluster.
-    Returns pt/ft or None. Scale-free: uses only ratios."""
+    Returns pt/ft or None. Scale-free: uses only ratios.
+
+    `pairs` supplies already-read dimension labels (room_dims.dimension_pairs,
+    OCR-fed) for sheets whose lettering is outlined and whose live text is
+    therefore empty. Without it the live-text reader below is used, exactly as
+    before."""
     import re
     import statistics
     import fitz
@@ -552,29 +557,45 @@ def _room_dim_scale(page, drawings, warnings):
         _DIMPAIR = re.compile(r"(\d+)'(\d+)?\"?[xX×](\d+)'(\d+)?\"?")
     mat = page.rotation_matrix
     toks = []                             # (cx, cy, w_ft, h_ft) in points
-    for w in page.get_text("words"):
-        m = _DIMPAIR.search((w[4] or "").replace(" ", ""))
-        if not m:
-            continue
-        wf = int(m.group(1)) + int(m.group(2) or 0) / 12.0
-        hf = int(m.group(3)) + int(m.group(4) or 0) / 12.0
-        if not (3 <= wf <= 60 and 3 <= hf <= 60):
-            continue
-        r = (fitz.Rect(w[:4]) * mat).normalize()
-        toks.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, wf, hf))
+    if pairs:
+        toks = [(p["x"], p["y"], p["w_ft"], p["h_ft"]) for p in pairs
+                if 3 <= p["w_ft"] <= 60 and 3 <= p["h_ft"] <= 60]
+    else:
+        for w in page.get_text("words"):
+            m = _DIMPAIR.search((w[4] or "").replace(" ", ""))
+            if not m:
+                continue
+            wf = int(m.group(1)) + int(m.group(2) or 0) / 12.0
+            hf = int(m.group(3)) + int(m.group(4) or 0) / 12.0
+            if not (3 <= wf <= 60 and 3 <= hf <= 60):
+                continue
+            r = (fitz.Rect(w[:4]) * mat).normalize()
+            toks.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, wf, hf))
     if len(toks) < 2:
         return None
 
     H, V = [], []                         # H: (y, x0, x1); V: (x, y0, y1)
-    for d in drawings:
-        for it in d["items"]:
-            if it[0] != "l":
-                continue
-            a, b = it[1], it[2]
-            if abs(a.y - b.y) < 1.5 and abs(a.x - b.x) > 3:
-                H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
-            elif abs(a.x - b.x) < 1.5 and abs(a.y - b.y) > 3:
-                V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
+    if wall_segs:
+        # A room's extent must be measured between WALLS. Scanning every drawn
+        # line works on a live-text sheet, but on an outlined-lettering sheet
+        # the nearest line above a label is a stroke of the label's own
+        # letters: FLOOR PLAN.pdf voted 17.97 pt/ft that way against a true
+        # ~28. Given the wall faces, use only those.
+        for ax, ay, bx, by in wall_segs:
+            if abs(ay - by) < 1.5 and abs(ax - bx) > 3:
+                H.append(((ay + by) / 2, min(ax, bx), max(ax, bx)))
+            elif abs(ax - bx) < 1.5 and abs(ay - by) > 3:
+                V.append(((ax + bx) / 2, min(ay, by), max(ay, by)))
+    else:
+        for d in drawings:
+            for it in d["items"]:
+                if it[0] != "l":
+                    continue
+                a, b = it[1], it[2]
+                if abs(a.y - b.y) < 1.5 and abs(a.x - b.x) > 3:
+                    H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
+                elif abs(a.x - b.x) < 1.5 and abs(a.y - b.y) > 3:
+                    V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
 
     votes = []
     for cx, cy, wf, hf in toks:
@@ -1028,6 +1049,74 @@ def _ocr_refine_numbers(img, tokens, dpi, pad=8.0, scale=4):
     return out
 
 
+_OCR_DIMISH_RE = None
+# Inch marks are deliberately absent from the whitelist: pytesseract shlex-splits
+# its config, so a bare `"` breaks it, and _PAIR_RE treats the inch mark as
+# optional anyway ("13'6X10'3" parses exactly like `13'6" X 10'3"`).
+_OCR_DIM_CFG = '--psm 7 -c tessedit_char_whitelist="0123456789\'Xx"'
+
+
+def _dimension_ish(text):
+    """Could this token be part of a printed dimension? Strip digits and the
+    marks a dimension is made of; a real dimension leaves nothing behind (or
+    one stray letter, e.g. OCR's 8'o" for 8'0"), while a word like 'FLAT-1'
+    leaves plenty. Pure."""
+    rest = "".join(c for c in (text or "")
+                   if not (c.isdigit() or c in "'\"’”°`!|Xx -"))
+    return any(c.isdigit() for c in (text or "")) and len(rest) <= 1
+
+
+def _digits_compatible(a, b):
+    """May a re-read replace the original? Only if it fixed PUNCTUATION, not
+    digits: one digit string must be a subsequence of the other. The re-read
+    legitimately turns 17111" into 17'11 (a dropped stroke) but it also turned
+    11'6" into 17'6 — a different room. Subsequence keeps the first and
+    rejects the second. Pure."""
+    da = "".join(c for c in (a or "") if c.isdigit())
+    db = "".join(c for c in (b or "") if c.isdigit())
+
+    def sub(small, big):
+        it = iter(big)
+        return all(c in it for c in small)
+
+    return sub(da, db) or sub(db, da)
+
+
+def _ocr_dimension_tokens(page, tokens, dpi=150, pad=8.0, scale=4):
+    """A SEPARATE token list with dimension-like tokens re-read at higher
+    resolution, digits-and-quotes only.
+
+    Kept separate on purpose: this pass recovers 11°6" -> 11'6 and 8'o" -> 8'0,
+    but it also mangles anything it is pointed at that is not a dimension
+    ('FLAT-1' -> '1'), and the shared token list feeds the area statement,
+    the schedule and the room labels. Never mutate that one."""
+    try:
+        import pytesseract
+        from PIL import Image as _Img
+        z = dpi / 72.0
+        pix = page.get_pixmap(dpi=dpi)
+        img = _Img.frombytes("RGB", (pix.width, pix.height), pix.samples)
+    except Exception:
+        return tokens
+    out, done = [], 0
+    for t in tokens:
+        if done >= 60 or not _dimension_ish(t["text"]):
+            out.append(t)
+            continue
+        try:
+            box = (int((t["x0"] - pad) * z), int((t["y0"] - pad) * z),
+                   int((t["x1"] + pad) * z), int((t["y1"] + pad) * z))
+            c = img.crop(box)
+            c = c.resize((c.width * scale, c.height * scale), _Img.LANCZOS)
+            fixed = pytesseract.image_to_string(c, config=_OCR_DIM_CFG).strip()
+            done += 1
+        except Exception:
+            fixed = ""
+        keep = fixed and _digits_compatible(t["text"], fixed)
+        out.append({**t, "text": fixed} if keep else t)
+    return out
+
+
 def _ocr_page_tokens(page, dpi=150, refine_numbers=False):
     """OCR the rendered page -> [{text, x0, y0, x1, y1, conf}] in POINT
     coordinates of the ROTATED page (the frame tp() works in).
@@ -1185,6 +1274,73 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         raise ValueError(f"could not open PDF: {type(e).__name__}: {e}")
     drawings = _page_drawings(page)
 
+    # ONE OCR pass per parse, shared by every text-dependent consumer: the
+    # SCALE (dimension text, R-2 room dimensions), room labels (G2), opening
+    # tags + schedule (TG-5) and the printed area statement (R-8). Defined up
+    # here because scale is decided first and, on a sheet whose lettering is
+    # outlined line-art, the scale is exactly what OCR has to rescue.
+    # Lazy: nothing renders until the first consumer actually asks.
+    _ocr_on = os.getenv("DRISHTI_OCR", "auto").lower() not in ("0", "off", "false")
+    _ocr_cache = {}
+
+    def ocr_words():
+        if "t" not in _ocr_cache:
+            _ocr_cache["t"] = (_ocr_page_tokens(page, refine_numbers=True)
+                               if _ocr_on else [])
+        return _ocr_cache["t"]
+
+    def live_words():
+        """Live PDF text in the same token shape as ocr_words()."""
+        if "live" not in _ocr_cache:
+            out = []
+            for wd in page.get_text("words"):
+                r = (fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
+                out.append({"text": wd[4], "x0": r.x0, "y0": r.y0,
+                            "x1": r.x1, "y1": r.y1, "conf": 100})
+            _ocr_cache["live"] = out
+        return _ocr_cache["live"]
+
+    def dim_words():
+        """Tokens for reading printed DIMENSIONS only (see
+        _ocr_dimension_tokens): digits and feet/inch marks re-read per crop."""
+        if "dim" not in _ocr_cache:
+            _ocr_cache["dim"] = (
+                _ocr_dimension_tokens(page, ocr_words()) if _ocr_on else [])
+        return _ocr_cache["dim"]
+
+    def printed_dim_pairs():
+        """Printed W x H room dimensions (R-2). Live text first; on an
+        outlined-text sheet, the union of the plain OCR pass and the dimension
+        re-read (they fail on different labels)."""
+        if "pairs" not in _ocr_cache:
+            import opening_schedule as _os
+            import room_dims as _rd
+            src = live_words()
+            pairs = _rd.dimension_pairs(src)
+            if not pairs and _ocr_on:
+                src = ocr_words()
+                pairs = _rd.merge_pairs(_rd.dimension_pairs(src),
+                                        _rd.dimension_pairs(dim_words()))
+            # An opening SCHEDULE's dimension column is full of `3'9" X 7'0"`
+            # pairs that are door sizes, not room sizes. Voting a scale off
+            # them put BRICK WORK 4.3x out. Exclude the table's own box.
+            reg = None
+            try:
+                reg = _os.schedule_region(src)
+            except Exception:
+                reg = None
+            if reg:
+                x0_, y0_, x1_, y1_ = reg
+                dropped = [p for p in pairs
+                           if x0_ <= p["x"] <= x1_ and y0_ <= p["y"] <= y1_]
+                pairs = [p for p in pairs if p not in dropped]
+                if dropped:
+                    warnings.append(
+                        f"{len(dropped)} dimension(s) ignored for scale: they "
+                        "are rows of the opening schedule, not room sizes")
+            _ocr_cache["pairs"] = pairs
+        return _ocr_cache["pairs"]
+
     warnings = []
     wall_segs, skipped = _filter_text_layers(drawings, _is_wall_layer, warnings)
     win_segs, skipped_w = _filter_text_layers(drawings, _is_window_layer, warnings)
@@ -1206,6 +1362,21 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     room_ppf = None
     if not ppf_hint and not text_ppf:
         room_ppf = _room_dim_scale(page, drawings, warnings)
+        # §0.1 + R-2: the dimensions the architect PRINTED inside each room are
+        # ground truth, and they outrank the column-width assumption (C-6,
+        # which is explicitly a weak anchor). On an outlined-text sheet they
+        # are invisible to get_text, so read them by OCR rather than falling
+        # through to the column guess.
+        if room_ppf is None:
+            _p = printed_dim_pairs()
+            if _p:
+                room_ppf = _room_dim_scale(page, drawings, warnings, pairs=_p,
+                                           wall_segs=struct)
+                if room_ppf:
+                    warnings.append(
+                        f"scale from PRINTED room dimensions read by OCR "
+                        f"({len(_p)} label(s)) — outlined lettering on this "
+                        "sheet; this outranks the column-width assumption")
 
     mode = "layers"
     if len(struct) < 30:            # no usable wall layer -> geometry detection
@@ -1629,16 +1800,6 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # gets the rest via OCR. OCR NEVER overwrites a live label. Pixmap pixels
     # are already in rotated page space, matching tp()'s frame. Optional dep:
     # skipped silently if tesseract absent; DRISHTI_OCR=0 disables.
-    # ONE OCR pass per parse, shared by room labels (G2) and the printed area
-    # statement (R-8) below — the render+recognize is the expensive part.
-    _ocr_on = os.getenv("DRISHTI_OCR", "auto").lower() not in ("0", "off", "false")
-    _ocr_cache = {}
-
-    def ocr_words():
-        if "t" not in _ocr_cache:
-            _ocr_cache["t"] = (_ocr_page_tokens(page, refine_numbers=True)
-                               if _ocr_on else [])
-        return _ocr_cache["t"]
 
     untyped = [r for r in rooms if not r.get("type")]
     if untyped and _ocr_on:
@@ -1661,6 +1822,35 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                                 "(outlined text on this sheet)")
         except Exception:
             pass                          # OCR unavailable/failed -> untyped rooms
+
+    # --- R-2: the sheet PRINTS each room's size ("BEDROOM 13'6" X 10'3"").
+    # That is the architect's own statement, so per §0.1 it CHECKS the room we
+    # measured. Strictly additive: area_sqft is never touched — the printed
+    # figure and the match sit beside it so the two can be compared. ---
+    try:
+        import room_dims as _rdims
+        _pairs = _rdims.dimension_pairs(live_words())
+        if not _pairs:
+            # the plain OCR pass and the dimension re-read fail on different
+            # labels, so read with both and take the union (see merge_pairs)
+            _pairs = _rdims.merge_pairs(_rdims.dimension_pairs(ocr_words()),
+                                        _rdims.dimension_pairs(dim_words()))
+        _located = []
+        for _p in _pairs:
+            _cxp, _cyp = tp(_p["x"], _p["y"])
+            if 0 <= _cyp < Hpx and 0 <= _cxp < Wpx:
+                _p["lab"] = int(rlab[_cyp, _cxp])
+                _p["fx"], _p["fy"] = fx(_cxp), fy(_cyp)
+                _located.append(_p)
+        _n = _rdims.attach_printed_dims(rooms, _located)
+        if _n:
+            _s = _rdims.summary(rooms) or {}
+            warnings.append(
+                f"printed room dimensions read for {_n} room(s) — median match "
+                f"with our measurement {_s.get('median_match_pct')}% "
+                f"({_s.get('rooms_off')} room(s) off by more than 20%)")
+    except Exception:
+        pass                              # R-2 is a check, never a blocker
 
     def ft_rect(r):
         return [round((r.x0 - x0) / ppf, 3), round(d_ft - (r.y1 - y0) / ppf, 3),

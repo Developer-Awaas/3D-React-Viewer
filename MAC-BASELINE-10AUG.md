@@ -5,20 +5,29 @@ Python 3.12.13 · Node 24.15.0 · torch 2.13.0 · Mac (no CUDA)
 
 ## Must not move without a written reason
 
-Backend:  333 passed, 1 skipped, 0 failed
+Backend:  367 passed, 1 skipped, 0 failed
 Frontend: 29 passed
 Build:    clean
 
 batch_eval (run from repo root: python server/batch_eval.py)
 
 plan                                          envelope  dr  wn  rm  ty
-BRICK WORK LAYOUT.pdf                          30x49ft   9  14  11   9
-FLOOR PLAN.pdf                                114x36ft  12   1   9   8
+BRICK WORK LAYOUT.pdf                          30x49ft  11  20  11   9
+FLOOR PLAN.pdf                                 95x30ft  12   1   9   9
 NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf     80x48ft  27  42   9   9
 neelachala FIRST FLOOR.pdf                     38x64ft  16  19   7   7
 4/4 clean, no health flags
 
 ## Notes
+- FLOOR PLAN 114x36 -> 95x30 (11 Aug): golden RE-BASELINED, not a regression.
+  The sheet's own printed room dimensions disproved the old envelope six times
+  (R-2 median match 61.5% -> 96.4%); evidence + superseded value in
+  plans/ground_truth.json -> envelope_rebaseline. BRICK WORK dr/wn 9/14 ->
+  11/20: opening tags now read by OCR (Stage A) at the sheet's own schedule
+  sizes (TG-5).
+- R-8 (printed vs parsed built-up) is KNOWINGLY RED on FLOOR PLAN: 1161 parsed
+  vs 1705 printed = 68.1%. Room COVERAGE is the open gap (9 pockets of ~16
+  rooms); sizes are now right. It must RISE, never silently fall.
 - ty 0->9 / 0->8: tesseract installed 10 Aug switched ON the G2 OCR room-label
   path (dormant since 22 Jul). Feature, not regression — `DRISHTI_OCR=0`
   reproduces the old 0/0/9/7, every other column unchanged.

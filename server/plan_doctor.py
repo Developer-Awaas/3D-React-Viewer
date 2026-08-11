@@ -30,6 +30,7 @@ EFF_LO, EFF_HI = 55.0, 90.0          # healthy carpet/super band for Indian flat
 ENV_LO, ENV_HI = 12.0, 400.0         # plausible building side, ft
 DOOR_LO, DOOR_HI = 2.0, 4.5          # plausible door leaf width, ft
 TINY_ROOM_SQFT = 15.0
+ROOM_DIM_OK, ROOM_DIM_FAIL = 90.0, 75.0   # R-2 median match bands
 
 TRUSTED_SCALES = {"dimension_text", "cad_units", "room_dim_text"}
 
@@ -110,6 +111,34 @@ def diagnose(scene):
             _issue(issues, "ok", "printed_area_verified",
                    f"Confirmed against the sheet's own printed area statement — "
                    f"{detail}. This is the strongest accuracy check available.")
+
+    # --- R-2: the sheet PRINTS each room's size. Same authority as the printed
+    # area statement above (§0.1) but room by room, so it localises the error:
+    # a single bad room reads differently from every room being off together.
+    try:
+        import room_dims
+        rsum = room_dims.summary(rooms)
+    except Exception:
+        rsum = None
+    if rsum:
+        med = float(rsum["median_match_pct"])
+        n, off = rsum["rooms_checked"], rsum["rooms_off"]
+        if med < ROOM_DIM_FAIL:
+            _issue(issues, "fail", "room_dims_mismatch",
+                   f"The sheet prints each room's size, and our measured rooms "
+                   f"disagree: median match only {med:.0f}% across {n} room(s) "
+                   f"({off} off by more than 20%). Either the scale is wrong or "
+                   "rooms are merging into each other — room areas, carpet and "
+                   "₹ cost are all affected.")
+        elif med < ROOM_DIM_OK:
+            _issue(issues, "warn", "room_dims_close",
+                   f"Measured rooms are within {100 - med:.0f}% of the sizes "
+                   f"printed on the sheet ({n} checked, {off} off by more than "
+                   "20%) — close, but check the odd ones before quoting areas.")
+        else:
+            _issue(issues, "ok", "room_dims_verified",
+                   f"Room sizes confirmed against the dimensions printed on the "
+                   f"sheet: median match {med:.0f}% across {n} room(s).")
 
     # --- scale trust (every ft/sqft/₹ number scales with this) ---
     ssrc = scale_meta.get("source", "")

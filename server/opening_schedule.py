@@ -19,7 +19,7 @@ Token format is area_compare's: {"text", "x0", "y0", "x1", "y1"}.
 """
 import re
 
-from area_compare import _cx, _rows
+from area_compare import center_x, text_rows
 
 _FTIN_RE = re.compile(r"^(\d+)['’]\s*(\d+)?[\"”]?$")
 _TAG_RE = re.compile(r"^(SD|D\d?|W\d?|V\d?)$")
@@ -78,9 +78,25 @@ def parse_opening_schedule(tokens):
     """Tokens (whole sheet) -> {tag: {w_ft, h_ft, sill_ft, head_ft}}, or None
     when the sheet carries no schedule. Only fully-read rows are returned —
     a row missing its width is dropped rather than half-guessed. Pure."""
-    rows = _rows(tokens or [])
+    return _parse(tokens)[0]
+
+
+def schedule_region(tokens):
+    """Bounding box (x0, y0, x1, y1) of the schedule TABLE, or None.
+
+    The table's DIMENSION column is full of `3'9" X 7'0"` pairs that look
+    exactly like printed ROOM dimensions but are door and window sizes. Read
+    as room sizes they wreck the scale (BRICK WORK LAYOUT.pdf: the six
+    schedule rows voted a scale 4.3x too small). Callers reading room
+    dimensions must exclude anything inside this box. Pure."""
+    return _parse(tokens)[1]
+
+
+def _parse(tokens):
+    """-> (schedule dict or None, table bbox or None)."""
+    rows = text_rows(tokens or [])
     if not rows:
-        return None
+        return None, None
     hdr = hi = None
     for i, row in enumerate(rows):
         up = " ".join((t["text"] or "").upper() for t in row)
@@ -89,10 +105,10 @@ def parse_opening_schedule(tokens):
             hdr, hi = row, i
             break
     if hdr is None:
-        return None
+        return None, None
     col = _columns(hdr)
     if "name" not in col or "dimension" not in col:
-        return None
+        return None, None
     cxs = sorted(col.values())
     pitch = min((b - a for a, b in zip(cxs, cxs[1:])), default=60.0)
     reach = 0.6 * pitch
@@ -101,9 +117,9 @@ def parse_opening_schedule(tokens):
         x = col.get(key)
         if x is None:
             return []
-        return [t for t in row if abs(_cx(t) - x) <= reach]
+        return [t for t in row if abs(center_x(t) - x) <= reach]
 
-    out = {}
+    out, used_rows = {}, [hdr]
     for row in rows[hi + 1:]:
         name = next((normalize_tag(t["text"]) for t in _cell(row, "name")
                      if normalize_tag(t["text"])), None)
@@ -115,10 +131,10 @@ def parse_opening_schedule(tokens):
         # we cannot read whole is dropped, never half-guessed.
         cell = _cell(row, "dimension")
         seps = [t for t in cell if (t["text"] or "").strip().upper() in ("X", "×")]
-        vals = [(_cx(t), ft_in(t["text"])) for t in cell]
+        vals = [(center_x(t), ft_in(t["text"])) for t in cell]
         vals = [(cx, v) for cx, v in vals if v is not None]
         if seps:
-            xmid = _cx(seps[0])
+            xmid = center_x(seps[0])
             left = [v for cx, v in vals if cx < xmid]
             right = [v for cx, v in vals if cx > xmid]
             if not left or left[0] <= 0:
@@ -142,7 +158,19 @@ def parse_opening_schedule(tokens):
         if "head_ft" not in rec and "h_ft" in rec:
             rec["head_ft"] = rec.get("sill_ft", 0.0) + rec["h_ft"]
         out[name] = rec
-    return out or None
+        used_rows.append(row)
+    if not out:
+        return None, None
+    # The table's own box: its COLUMNS horizontally (rows come from sheet-wide
+    # clustering, so their x-extent would swallow half the drawing) and header
+    # top to last data row vertically.
+    flat = [t for row in used_rows for t in row
+            if min(col.values()) - pitch <= center_x(t) <= max(col.values()) + pitch]
+    if not flat:
+        return out, None
+    region = (min(t["x0"] for t in flat), min(t["y0"] for t in flat),
+              max(t["x1"] for t in flat), max(t["y1"] for t in flat))
+    return out, region
 
 
 def window_size(schedule, tag, default):
