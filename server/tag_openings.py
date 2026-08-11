@@ -26,6 +26,34 @@ DOOR_HEAD_FT = 7.0
 _THICK = 0.6          # opening footprint thickness across the wall, ft
 
 
+# words that mark an opening SCHEDULE / legend table on the sheet
+SCHEDULE_WORDS = ("SCHEDULE", "LINTEL", "SILL")
+
+
+def drop_legend_tags(tokens, schedule_y=None, x_tol=8.0, min_stack=4):
+    """Remove the tags that are SCHEDULE TABLE ROWS, not placements.
+
+    A sheet's real tags sit at their openings and are scattered all over the
+    drawing; a schedule lists the same names stacked in one narrow column
+    (BRICK WORK LAYOUT.pdf: D / D1 / D2 / D3 / SD / W1 at x=216, six deep).
+    Placing openings from those rows would invent six doors in the title
+    block. Conservative by design: with no schedule keyword on the sheet
+    (schedule_y=None) nothing is dropped, and a stack must be at least
+    min_stack deep — the tightest real-tag alignment on the corpus is 2.
+
+    tokens: [(x, y, text)] in ANY consistent unit; x_tol is in that unit.
+    Pure -> unit-tested."""
+    if schedule_y is None or len(tokens) < min_stack:
+        return list(tokens)
+    below = [t for t in tokens if t[1] >= schedule_y]
+    drop = set()
+    for i, a in enumerate(below):
+        col = [b for b in below if abs(b[0] - a[0]) <= x_tol]
+        if len(col) >= min_stack:
+            drop.update(id(c) for c in col)
+    return [t for t in tokens if id(t) not in drop]
+
+
 def classify_tag(text):
     """Token text -> ('door'|'window', tag) or None. Pure."""
     t = (text or "").strip().upper().rstrip(".")
@@ -48,7 +76,7 @@ def _nearest_on_seg(px, py, seg):
 
 
 def detect_tag_openings(tokens, wall_segs, existing_centers,
-                        max_wall_dist=4.0, dedupe_dist=3.0):
+                        max_wall_dist=4.0, dedupe_dist=3.0, schedule=None):
     """tokens: [(x_ft, y_ft, text)] · wall_segs: [(x0,y0,x1,y1)] ft ·
     existing_centers: [(x_ft, y_ft)] of already-detected openings.
     Returns opening dicts {type, tag, footprint[x0,y0,x1,y1], z[lo,hi]} placed on
@@ -71,11 +99,15 @@ def detect_tag_openings(tokens, wall_segs, existing_centers,
         _, qx, qy, dx, dy = best
         if any(math.hypot(qx - ex, qy - ey) <= dedupe_dist for ex, ey in placed):
             continue
+        # TG-5: the sheet's own schedule outranks these defaults
+        import opening_schedule as _sched
         if kind == "door":
-            w = DOOR_W_FT.get(tag, 3.0)
-            z = [0.0, DOOR_HEAD_FT]
+            w = _sched.door_width(schedule, tag, DOOR_W_FT.get(tag, 3.0))
+            head = (schedule or {}).get(tag, {}).get("head_ft", DOOR_HEAD_FT)
+            z = [0.0, head]
         else:
-            w, sill, head = WIN_FT.get(tag, (4.0, 2.5, 7.0))
+            w, sill, head = _sched.window_size(
+                schedule, tag, WIN_FT.get(tag, (4.0, 2.5, 7.0)))
             z = [sill, head]
         horiz = abs(dx) >= abs(dy)          # wall runs along X?
         if horiz:

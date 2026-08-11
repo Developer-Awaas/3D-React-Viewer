@@ -946,6 +946,7 @@ def _furniture_items(drawings, ppf):
     return kept
 
 
+OCR_TAG_MIN_CONF = 40            # OCR tags below this are noise, not tags
 NOMINAL_DOOR_FT = 3.0            # 2'6"-3'6" band centre (Indian residential)
 GUESSED_SCALES = ("column_box_12in", "assumed_width", "env_ppf")
 
@@ -1750,16 +1751,78 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     LEGEND = {"W1": (5.0, 3.0, 7.0), "W2": (4.0, 3.0, 7.0), "W3": (3.0, 3.5, 6.5),
               "W": (4.0, 3.0, 7.0), "V": (2.0, 5.5, 7.0), "V1": (2.0, 5.5, 7.0)}
     import re as _re
-    tags = []
-    for wd in page.get_text("words"):
-        t = wd[4].strip().upper()
-        if t in LEGEND:
-            import fitz as _fitz
+    import tag_openings as _tags
+
+    # --- opening TAGS (D/D1/W1/V…), ONE token source for both consumers: the
+    # W/V legend just below and the schedule-tag reader further down.
+    #
+    # LIVE text wins whenever the sheet has any tags in it — that path is the
+    # frozen baseline and must not shift. OCR is the fallback for sheets whose
+    # lettering is outlined line-art, where live text carries no tags at all
+    # (BRICK WORK LAYOUT: 0 live words; FLOOR PLAN: 24, none of them tags).
+    # Two guards apply to the OCR path ONLY, because inventing an opening is
+    # worse than missing one (WN-4): a confidence floor (FLOOR PLAN's lone
+    # 'v' reads at conf 0 — pure noise), and the legend-column filter that
+    # keeps a schedule TABLE from being placed as six doors.
+    def _is_tag_text(s):
+        return (_tags.classify_tag(s) is not None
+                or (s or "").strip().upper() in LEGEND)
+
+    def _tag_words():
+        """[(cx_pt, cy_pt, text)] for opening tags, + the source name."""
+        import fitz as _fitz
+        live = []
+        for wd in page.get_text("words"):
+            if not _is_tag_text(wd[4]):
+                continue
             r = (_fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
-            tags.append((t, (r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2))
+            live.append(((r.x0 + r.x1) / 2, (r.y0 + r.y1) / 2, wd[4]))
+        if live:
+            return live, "live"
+        out, sched_y = [], None
+        for w in ocr_words():
+            up = w["text"].upper()
+            if any(k in up for k in _tags.SCHEDULE_WORDS):
+                sched_y = w["y0"] if sched_y is None else min(sched_y, w["y0"])
+            if w["conf"] >= OCR_TAG_MIN_CONF and _is_tag_text(w["text"]):
+                out.append(((w["x0"] + w["x1"]) / 2, (w["y0"] + w["y1"]) / 2,
+                            w["text"]))
+        kept = _tags.drop_legend_tags(out, sched_y)
+        if kept:
+            warnings.append(f"{len(kept)} opening tag(s) read by OCR "
+                            f"(outlined lettering; {len(out) - len(kept)} "
+                            "schedule-table row(s) excluded)")
+        return kept, "ocr"
+
+    tag_words, _tag_src = _tag_words()
+
+    # --- TG-5: the sheet's OWN opening schedule overrides every default size
+    # below. Same live-first / OCR-fallback source as the tags. Absent
+    # schedule -> `sched` is None and behaviour is exactly as before. ---
+    import opening_schedule as _osched
+    sched = None
+    try:
+        _live_all = []
+        for wd in page.get_text("words"):
+            _rr = (fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
+            _live_all.append({"text": wd[4], "x0": _rr.x0, "y0": _rr.y0,
+                              "x1": _rr.x1, "y1": _rr.y1})
+        sched = _osched.parse_opening_schedule(_live_all)
+        if not sched and (len(_live_all) < 50 or "t" in _ocr_cache):
+            sched = _osched.parse_opening_schedule(ocr_words())
+        if sched:
+            warnings.append(
+                "opening schedule read from the sheet — sizes now come from it, "
+                "not from defaults: "
+                + ", ".join(f"{k} {v['w_ft']:.2f}ft" for k, v in sorted(sched.items())))
+    except Exception:
+        sched = None
+
+    tags = [((t or "").strip().upper(), cx, cy) for cx, cy, t in tag_words
+            if (t or "").strip().upper() in LEGEND]
     tadd = 0
     for t, cx, cy in tags:
-        wft, sill, head = LEGEND[t]
+        wft, sill, head = _osched.window_size(sched, t, LEGEND[t])  # TG-5
         pxc = tp(cx, cy)
         if not (0 <= pxc[1] < m.shape[0] and 0 <= pxc[0] < m.shape[1]):
             continue
@@ -1833,16 +1896,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # openings with TEXT TAGS instead of symbols/layers. Additive-only: a tag
     # adds an opening ONLY where none was detected nearby, so existing
     # detection can never get worse. Sizes from the standard schedule. ---
-    import tag_openings as _tags
     tag_toks = []
-    for wd in page.get_text("words"):
-        if _tags.classify_tag(wd[4]) is None:
+    for cx_pt, cy_pt, text in tag_words:      # live text, or OCR (see above)
+        if _tags.classify_tag(text) is None:
             continue
-        rr = (fitz.Rect(wd[:4]) * page.rotation_matrix).normalize()
-        txp, typ_ = tp((rr.x0 + rr.x1) / 2, (rr.y0 + rr.y1) / 2)
+        txp, typ_ = tp(cx_pt, cy_pt)
         tfx, tfy = fx(txp), fy(typ_)
         if _in_wing(tfx, tfy):
-            tag_toks.append((tfx, tfy, wd[4]))
+            tag_toks.append((tfx, tfy, text))
     if tag_toks:
         segs_ft = [((ax - x0) / ppf, d_ft - (ay - y0) / ppf,
                     (bx - x0) / ppf, d_ft - (by - y0) / ppf)
@@ -1852,7 +1913,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             fp = o.get("footprint")
             if fp:
                 centers.append(((fp[0] + fp[2]) / 2, (fp[1] + fp[3]) / 2))
-        added = _tags.detect_tag_openings(tag_toks, segs_ft, centers)
+        added = _tags.detect_tag_openings(tag_toks, segs_ft, centers,
+                                          schedule=sched)      # TG-5
         for rec in added:
             rec["id"] = f"o{len(openings)}"
             openings.append(rec)

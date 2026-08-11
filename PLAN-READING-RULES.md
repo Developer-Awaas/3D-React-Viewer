@@ -215,6 +215,8 @@ Before anything else, these must be excluded from geometry, area and 3D.
 3. **TG-3** — Link each tag to the nearest matching element along the leader / along that wall.
 4. **TG-4** — If two openings sit close together, there will be two tags. Match count to count; if they do not match, flag rather than guess.
 5. **TG-5** — Letter + number: **D** = door, **W** = window, **V** = ventilator. The number is a size variant defined in the sheet's opening schedule when one exists — **read that schedule first** if present; it overrides all defaults above.
+   - **BUILT** (11 Aug 2026) — `server/opening_schedule.py`, verified on BRICK WORK LAYOUT.pdf ("SCHEDULE OF DOOR & WINDOW", 8 rows, read via OCR). Its W is 6'0" × 4'6" sill 2'6", where our default said 4'0" sill 3'0" — the sheet now wins. No schedule on the sheet ⇒ the defaults above still apply.
+   - A row that cannot be read WHOLE is dropped, never half-read: width and height are taken positionally from either side of the `X`, so an unreadable width can never be filled by the height.
 
 ---
 
@@ -267,3 +269,4 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | 10 Aug 2026 | **W-6 corrected** — wall height default is 3.0 m (9.843 ft), matching the code; the 10 ft figure is removed. Certainty mark changed `ELEVATION` → `ASK` (user entry or elevation upload overrides) | Rahul |
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
+| 11 Aug 2026 | **TG-5 BUILT, out of §11 deferred** — `opening_schedule.py` reads the sheet's own schedule and overrides `DOOR_W_FT` / `WIN_FT` / `LEGEND`. Verified on BRICK WORK LAYOUT.pdf: W now 6'0" sill 2'6" (was 4'0" sill 3'0"). Rows that cannot be read whole are dropped, never half-read | Rahul |

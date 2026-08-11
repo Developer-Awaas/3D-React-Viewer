@@ -47,3 +47,36 @@ def test_dedupe_against_existing_openings():
 def test_two_tags_do_not_stack_on_same_spot():
     ops = T.detect_tag_openings([(10, 1.0, "D2"), (10.5, 1.2, "D2")], WALLS, [])
     assert len(ops) == 1                      # second dedupes against the first
+
+
+# --- schedule/legend column filter (Stage A: OCR-read tags) -----------------
+# A sheet's real tags sit at their openings, scattered. A SCHEDULE table lists
+# the same names stacked in one column — placing those would invent openings in
+# the title block. BRICK WORK LAYOUT.pdf: D/D1/D2/D3/SD/W1 stacked at x=216,
+# under a "SCHEDULE OF DOOR & WINDOW" heading at y=2730.
+SCHED_COL = [(216, 2838, "D"), (216, 2872, "D1"), (216, 2906, "D2"),
+             (216, 2941, "D3"), (216, 2975, "SD"), (219, 3077, "W1")]
+REAL_TAGS = [(1716, 461, "D3"), (956, 696, "D1"), (1397, 1232, "D"),
+             (1398, 2158, "D1"), (1226, 2345, "SD")]
+
+
+def test_legend_column_is_dropped():
+    kept = T.drop_legend_tags(REAL_TAGS + SCHED_COL, schedule_y=2730)
+    assert kept == REAL_TAGS
+
+
+def test_real_tags_are_never_dropped():
+    """The tightest real alignment on the corpus is two tags (x=1397/1398);
+    a stack must be at least 4 deep to count as a legend column."""
+    kept = T.drop_legend_tags(REAL_TAGS, schedule_y=400)
+    assert kept == REAL_TAGS
+
+
+def test_no_schedule_keyword_drops_nothing():
+    """Conservative: without a schedule heading on the sheet, keep everything."""
+    assert T.drop_legend_tags(REAL_TAGS + SCHED_COL) == REAL_TAGS + SCHED_COL
+
+
+def test_tags_above_the_schedule_heading_are_kept():
+    kept = T.drop_legend_tags(SCHED_COL + [(216, 200, "D1")], schedule_y=2730)
+    assert kept == [(216, 200, "D1")]
