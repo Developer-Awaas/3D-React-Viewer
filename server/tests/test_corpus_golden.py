@@ -91,3 +91,50 @@ def test_first_floor_wing1_matches_confirmed_envelope():
     assert abs(c["w"] - 38.25) / 38.25 < 0.025
     assert abs(c["d"] - 64.167) / 64.167 < 0.035   # depth incl. chhajja ~65.5
     assert c["snapped"] >= 4           # golden: 4/12 on this wing
+
+
+# --- COLUMNS (12 Aug 2026) ---------------------------------------------------
+# Pinned because they moved UNSEEN: the 11 Aug scale correction (23.80 -> 28.47
+# pt/ft) left behind a fixed 0.6 POINT match tolerance in _column_rects, and
+# FLOOR PLAN went 26 columns -> 0 with every test and every batch_eval column
+# still green. The wall overlay found it. The band is now derived from ppf
+# (C-4: 8-48 in on the SHORT side), and these numbers guard it.
+def test_floor_plan_columns():
+    from pdf_vector import parse
+    scene = parse(_load("FLOOR PLAN.pdf"), None)
+    cols = scene["columns"]
+    assert len(cols) == 26                       # was 0 while the bug was live
+    short = min(min(c["w"], c["d"]) for c in cols)
+    long_ = max(max(c["w"], c["d"]) for c in cols)
+    assert 8 / 12 * 0.9 <= short and long_ <= 4.0    # C-4 band, in feet
+
+
+def test_first_floor_has_no_column_layer():
+    """0 here is CORRECT, not the bug: this sheet carries no column layer at
+    all, so there is nothing to find. Pinned so the two cases stay distinct."""
+    from pdf_vector import parse
+    import fitz
+    import pdf_vector as pv
+    raw = _load("neelachala FIRST FLOOR.pdf")
+    page = fitz.open(stream=raw, filetype="pdf")[0]
+    assert pv._column_rects(pv._page_drawings(page)) == []
+    assert parse(raw, None)["columns"] == []
+
+
+def test_columns_survive_a_scale_change():
+    """The regression in one line: the same drawing at a different scale must
+    still yield columns. A tolerance in page units cannot do this."""
+    from pdf_vector import parse
+    a = parse(_load("BRICK WORK LAYOUT.pdf"), None)
+    b = parse(_load("BRICK WORK LAYOUT.pdf"), 30.0)      # forces a rescale path
+    assert len(a["columns"]) > 0 and len(b["columns"]) > 0
+
+
+def test_ghatikia_columns():
+    """40 columns, held by a 10% margin under C-4's 8 in floor: this sheet's
+    columns measure 7.0-8.4 in on the short side, so a hard floor takes all 40
+    to zero. Pinned because that margin is the only thing keeping them."""
+    from pdf_vector import parse
+    cols = parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None)["columns"]
+    assert len(cols) == 40
+    assert all(min(c["w"], c["d"]) >= 0.9 * 8 / 12 for c in cols)

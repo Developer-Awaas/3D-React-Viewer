@@ -29,6 +29,7 @@ import cad_vector
 import corrections
 import db
 import opening_fusion
+import overlay
 import pipeline
 import plan_doctor
 import plan_health
@@ -772,6 +773,69 @@ async def recompute(payload: dict = Body(...)):
     scene = _reanalyze(scene, loading, north)
     scene.setdefault("meta", {})["correction_info"] = info
     return JSONResponse(scene)
+
+
+@app.post("/overlay")
+async def overlay_endpoint(payload: dict = Body(...)):
+    """PHASE 0 instrument: the parsed geometry, registered onto the original
+    drawing, layer by layer — including the line work we DISCARDED.
+
+    Body: {scene: <scene.json>, dpi?: 60..200}. The scene is posted (like
+    /recompute) so looking at the overlay costs nothing: re-parsing
+    FLOOR PLAN.pdf takes ~11 s with OCR, and this is a thing to stare at
+    dozens of times. Returns the page as a PNG plus every layer in page
+    pixels; the client draws and toggles them.
+
+    Read-only: it computes no geometry and changes no number."""
+    scene = payload.get("scene")
+    if not isinstance(scene, dict) or "meta" not in scene:
+        raise HTTPException(422, "body.scene must be a parsed scene object")
+    try:
+        dpi = float(payload.get("dpi", 110))
+    except (TypeError, ValueError):
+        raise HTTPException(422, "dpi must be a number")
+    if not (60 <= dpi <= 200):
+        raise HTTPException(422, "dpi must be between 60 and 200")
+    out = overlay.build_overlay(scene, dpi)
+    if out is None:
+        raise HTTPException(422, "scene has no meta.page_registration — "
+                                 "re-parse it with the current parser")
+    src = payload.get("pdf_b64")
+    out["page"] = None
+    if src:
+        try:
+            import base64
+            import fitz
+            raw = base64.b64decode(src)
+            page = fitz.open(stream=raw, filetype="pdf")[0]
+            pix = page.get_pixmap(dpi=int(dpi))
+            out["page"] = {"png_b64": base64.b64encode(pix.tobytes("png")).decode(),
+                           "w": pix.width, "h": pix.height}
+            # the DISCARD PILE is derived here rather than shipped in every
+            # scene (~200 KB); it is the layer where a MISSING wall shows up
+            reg = (scene.get("meta") or {}).get("page_registration")
+            rej, summary = pdf_vector.rejected_lines_ft(raw, reg)
+            out["layers"]["rejected"] = [
+                [overlay.page_transform(reg, dpi)(s[0], s[1]),
+                 overlay.page_transform(reg, dpi)(s[2], s[3])] for s in rej]
+            out["counts"]["rejected"] = len(out["layers"]["rejected"])
+            out["rejected_summary"] = summary
+            # W-2: every wall pair, coloured by measured gap, so a histogram
+            # cluster can be located on the sheet before anything classifies it
+            pg2 = fitz.open(stream=raw, filetype="pdf")[0]
+            dr2 = pdf_vector._page_drawings(pg2)
+            k = dpi / 72.0
+            for pair in pdf_vector.wall_gap_pairs(dr2, float(reg["ppf"])):
+                a, b, c2, d2 = pair["seg_pt"]
+                out["layers"][overlay.gap_class(pair["gap_in"])].append(
+                    [[round(a * k, 1), round(b * k, 1)],
+                     [round(c2 * k, 1), round(d2 * k, 1)]])
+            for name in ("gap_1_3in", "gap_4_5in", "gap_9_11in", "gap_12in",
+                         "gap_other"):
+                out["counts"][name] = len(out["layers"][name])
+        except Exception as e:
+            log.warning("overlay extras skipped: %s: %s", type(e).__name__, e)
+    return JSONResponse(out)
 
 
 @app.post("/area-statement.xlsx")

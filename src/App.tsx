@@ -12,6 +12,7 @@ import { ContactModal } from './components/AppSections'
 import VisualizeButton from './components/VisualizeButton'
 import GBufferBridge from './components/GBufferBridge'
 import MeasureTool from './components/MeasureTool'
+import WallOverlay from './components/WallOverlay'
 import ErrorBoundary from './components/ErrorBoundary'
 import CameraMarker from './components/CameraMarker'
 import CameraRig, { View } from './components/CameraRig'
@@ -23,7 +24,7 @@ import { FLOOR_MATERIALS, FloorKey } from './materials'
 import { MARKERS } from './scene'
 import { PRESETS } from './cameraPresets'
 import { Button } from './components/ui/Button'
-import { buildPlan, downloadAreaStatement, recomputePlan, type BuiltPlan } from './api/scene'
+import { buildPlan, downloadAreaStatement, fetchOverlay, recomputePlan, type BuiltPlan, type Overlay } from './api/scene'
 import { roomView, roomWorldPoint, type FrameInfo } from './three/roomPoints'
 import { CONTACT_SHADOW_Y, GROUND_Y, GROUND_DEPTH_BIAS, MIN_DEPTH_GAP } from './three/depthLayers'
 import LoadingScreen from './components/LoadingScreen'
@@ -316,6 +317,9 @@ export default function App() {
   const [areaBusy, setAreaBusy] = useState(false)
   const [currentRoomType, setCurrentRoomType] = useState<string | undefined>(undefined)
   const [measureOn, setMeasureOn] = useState(false)   // M: click-to-measure
+  // PHASE 0 wall-overlay instrument (parsed geometry over the original sheet)
+  const [overlay, setOverlay] = useState<Overlay | null>(null)
+  const [overlayBusy, setOverlayBusy] = useState(false)
   const [pNorthDeg, setPNorthDeg] = useState(0)       // Vastu compass: sheet-North
   // G7 user corrections: fix a room's type / drop a phantom room, then let the
   // backend recompute area/vastu/boq instantly (no re-parse, no GPU)
@@ -598,6 +602,7 @@ export default function App() {
         </div>
       </aside>
 
+      {overlay && <WallOverlay data={overlay} onClose={() => setOverlay(null)} />}
       <ContactModal open={contactOpen} onClose={() => setContactOpen(false)} />
 
       {/* ─────────── 3D scene ─────────── */}
@@ -862,6 +867,23 @@ export default function App() {
                        text-white hover:border-neon/70 hover:bg-neon/20 disabled:opacity-50"
           >
             {areaBusy ? 'Preparing…' : '⬇ Download Excel'}
+          </button>
+
+          {/* PHASE 0 instrument: the parsed geometry over the drawing itself.
+              Areas can look healthy while a wall sits in the wrong place —
+              this is the only way to see that. */}
+          <button
+            disabled={overlayBusy || !pPlan.raw}
+            onClick={async () => {
+              setOverlayBusy(true)
+              try { setOverlay(await fetchOverlay(pPlan, pFile ?? undefined)) }
+              catch (e: any) { setPStatus(`⚠ overlay: ${e?.message ?? e}`) }
+              finally { setOverlayBusy(false) }
+            }}
+            className="mt-2 w-full rounded-lg border border-white/20 py-2 text-xs font-medium
+                       text-white/80 hover:border-white/50 disabled:opacity-50"
+          >
+            {overlayBusy ? 'Rendering…' : '▦ Wall overlay'}
           </button>
 
           {/* G7: correct a wrong room type or drop a phantom room -> instant

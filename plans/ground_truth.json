@@ -289,7 +289,16 @@
     "STRETCHER LIFT 9'6\"x6'0\""
    ],
    "doors_expected": "~20 door tags (D/D1/D2/D3/SD) on sheet",
-   "notes": "slab projection marked; site boundary slanted at bottom-left"
+   "notes": "slab projection marked; site boundary slanted at bottom-left",
+   "instrumentation_2026_08_12": {
+    "verdict": "UNINSTRUMENTED - this sheet cannot validate any change",
+    "printed_area_statement": "NONE - the sheet carries a door/window schedule but no area statement, so R-8 (printed vs parsed built-up) is blind here",
+    "printed_room_dimensions": "NONE - rooms are labelled by name only (BEDROOM, KITCHEN...) with dimension LINES around them, not 'W x H' inside them, so R-2 (printed vs measured room size) is blind here",
+    "printed_plot_area": "NONE - so the footprint<=plot physics check is skipped",
+    "consequence": "Any parser change that moves BRICK WORK's numbers cannot be judged right or wrong from this sheet. Movements here must be reported and ruled on by Rahul, never self-accepted.",
+    "corpus_gap": "We have 4 corpus plans and only ONE (FLOOR PLAN.pdf) carries all three printed instruments. GHATIKIA and FIRST FLOOR fail R-2; BRICK WORK has no instruments at all. A second fully-instrumented sheet is the single highest-value corpus addition.",
+    "moved_uninstrumented_2026_08_12": "BORDER_MAXLEN_PT fix moved it: rooms 11->10, carpet 606.7->502.0, footprint 1244->1128, envelope 30.4x48.7->29.6x48.7. PARKED, not accepted."
+   }
   },
   "plan1.dwg": {
    "source": "user upload 2026-07-19",

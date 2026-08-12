@@ -15,6 +15,22 @@
 - npm run test
 - npm run build
 
+## Dry run — after building, before reporting (every task)
+
+Run what you just wrote against the rest of the system and the remaining phase
+plan, and report it as a short section, one line per finding:
+- **Collisions** — does this break, or get broken by, another component or a
+  later phase (0-7)?
+- **Contradictions** — does it conflict with any rule in PLAN-READING-RULES.md?
+- **Silent movement** — what totals, buckets or golden numbers could this move
+  without a test noticing?
+- **Assumptions** — what did you assume that the drawing or the spec does not
+  actually state?
+
+**Every finding carries a DATA POINT** — a number, a file:line, a measured
+value. A verdict without one is an opinion and cannot be re-checked. A serious
+collision means STOP and report, not work around.
+
 ## The corpus is the proof
 - Any batch_eval number that moves must be explained in feet or rupees
   before the change is accepted.

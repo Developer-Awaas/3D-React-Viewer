@@ -105,7 +105,7 @@ WALL_MINKEEP = 8             # need this many long lines to treat a hatch-heavy
                              # layer as walls (else it is genuinely just text)
 
 
-def _filter_text_layers(drawings, want, warnings):
+def _filter_text_layers(drawings, want, warnings, maxlen=None):
     """Segments from layers matching `want`, minus text-like decoy layers.
 
     Outlined lettering (e.g. a title block on a layer literally named 'wall',
@@ -122,7 +122,7 @@ def _filter_text_layers(drawings, want, warnings):
     # Pass 1: proper wall layers (median line is feet-long = real walls).
     short = []
     for name, ds in sorted(by_layer.items()):
-        ls = _segs(ds, lambda n: True)
+        ls = _segs(ds, lambda n: True, maxlen=maxlen or BORDER_MAXLEN_PT)
         if not ls:
             continue
         med = statistics.median(math.hypot(x2 - x1, y2 - y1) for x1, y1, x2, y2 in ls)
@@ -152,6 +152,69 @@ def _filter_text_layers(drawings, want, warnings):
 
 GEOM_SKIP = ("door", "dim", "text", "furn", "sanitary", "kitchen", "stair",
              "elev", "chhaja", "boundary")   # layers that never carry wall lines
+
+
+def keep_structural_lines(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+    """Drop page borders and site boundaries by WHAT THE LINE IS, not by how
+    long it is (§1's actual intent).
+
+    A wall line has a parallel partner one wall thickness away (W-1, W-3:
+    3-18 in). A page border, a title-block rule and a site boundary do not.
+    That is the discriminator; length is only a backstop for UNPAIRED lines,
+    and it is derived from the extent of the paired ones — never from points.
+
+    This replaces `BORDER_MAXLEN_PT = 900`, a page-unit constant that meant
+    31.6 ft on FLOOR PLAN (where it silently deleted the 54 ft south external
+    wall, and with it the whole south side of the building), 17 ft on
+    BRICK WORK and 158 ft on FIRST FLOOR — the same threshold meaning four
+    different things. Pure -> unit-tested."""
+    if not segs:
+        return segs, {"paired": 0, "unpaired_kept": 0, "dropped": 0}
+    lo, hi = (min_in / 12.0) * ppf, (max_in / 12.0) * ppf
+    H, V, other = [], [], []
+    for k, (x0, y0, x1, y1) in enumerate(segs):
+        if abs(y1 - y0) < 0.5:
+            H.append((k, (y0 + y1) / 2, min(x0, x1), max(x0, x1)))
+        elif abs(x1 - x0) < 0.5:
+            V.append((k, (x0 + x1) / 2, min(y0, y1), max(y0, y1)))
+        else:
+            other.append(k)
+    paired = set()
+    for runs in (H, V):
+        runs.sort(key=lambda r: r[1])
+        for i in range(len(runs)):
+            ki, pi, ai, bi = runs[i]
+            for j in range(i + 1, len(runs)):
+                kj, pj, aj, bj = runs[j]
+                if pj - pi > hi:
+                    break
+                if pj - pi < lo:
+                    continue
+                if min(bi, bj) - max(ai, aj) >= min_ovl_ft * ppf:
+                    paired.add(ki)
+                    paired.add(kj)
+    if not paired:                       # nothing pairs: keep everything
+        return segs, {"paired": 0, "unpaired_kept": len(segs), "dropped": 0}
+    # The PAIRED lines are the building. An unpaired line is kept only if it
+    # lies inside their extent: a site boundary or page border reaches outside
+    # it by definition, whatever its length. BRICK WORK's site boundary is a
+    # 39 ft DIAGONAL on a layer called 'wall' — shorter than the building, so
+    # no length rule can catch it, but it runs clean outside the paired box.
+    xs = [v for k in paired for v in (segs[k][0], segs[k][2])]
+    ys = [v for k in paired for v in (segs[k][1], segs[k][3])]
+    bx0, by0, bx1, by1 = min(xs), min(ys), max(xs), max(ys)
+    m = 0.02 * max(bx1 - bx0, by1 - by0)        # 2% of the building, not points
+    out, kept_unpaired = [], 0
+    for k, s in enumerate(segs):
+        if k in paired:
+            out.append(s)
+            continue
+        if (bx0 - m <= min(s[0], s[2]) and max(s[0], s[2]) <= bx1 + m
+                and by0 - m <= min(s[1], s[3]) and max(s[1], s[3]) <= by1 + m):
+            out.append(s)
+            kept_unpaired += 1
+    return out, {"paired": len(paired), "unpaired_kept": kept_unpaired,
+                 "dropped": len(segs) - len(out)}
 
 
 def _text_scale(page, drawings, warnings):
@@ -854,6 +917,158 @@ def _footprint_from_walls(wall_mask, seg_px=None, norm_ppx=NORM_PPX,
     return foot, bridges, rejected, foot_ext, rejected_lines
 
 
+def wall_gap_pairs(drawings, ppf, max_in=24.0, min_ovl_ft=1.5):
+    """Every parallel line PAIR with its measured gap AND its position.
+
+    The histogram says a cluster exists; it cannot say what the cluster IS.
+    This returns the same pairs with geometry attached — the centre line over
+    the overlap, in page POINTS — so a cluster can be located on the drawing
+    (outer envelope? at a column? one wall run?) before anything is classified.
+    Measurement only: nothing in the parser reads it. Pure."""
+    H, V = [], []
+    skip = tuple(GEOM_SKIP) + ("column",)
+    for d in drawings:
+        if any(k in d["lname"] for k in skip):
+            continue
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            L = math.hypot(b.x - a.x, b.y - a.y)
+            if L < min_ovl_ft * ppf or L > BORDER_MAXLEN_PT:
+                continue
+            if abs(a.y - b.y) < 0.5:
+                H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
+            elif abs(a.x - b.x) < 0.5:
+                V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
+    out = []
+    lim = (max_in / 12.0) * ppf
+    for runs, horiz in ((H, True), (V, False)):
+        runs.sort()
+        for i in range(len(runs)):
+            p1, a1, b1 = runs[i]
+            for j in range(i + 1, len(runs)):
+                p2, a2, b2 = runs[j]
+                if p2 - p1 > lim:
+                    break
+                if p2 - p1 <= 0.01:
+                    continue
+                lo, hi = max(a1, a2), min(b1, b2)
+                if hi - lo < min_ovl_ft * ppf:
+                    continue
+                mid = (p1 + p2) / 2.0
+                seg = (lo, mid, hi, mid) if horiz else (mid, lo, mid, hi)
+                out.append({"gap_in": round((p2 - p1) / ppf * 12.0, 2),
+                            "seg_pt": [round(v, 2) for v in seg],
+                            "orient": "h" if horiz else "v"})
+                break
+    return out
+
+
+def wall_gap_distribution(drawings, ppf, max_in=24.0, min_ovl_ft=1.5):
+    """MEASUREMENT ONLY (W-2): the gap of every parallel line pair on the
+    sheet, in inches, as a histogram.
+
+    Deliberately UNFILTERED — no 3-18 in sanity band — because the point is to
+    see the real clusters, including the thin railing/chhajja lines that the
+    band would hide. Nothing in the parser reads this; it exists so the wall
+    classification can be designed against measured reality instead of the
+    10 in / 5 in assumption in the rules. Pure -> unit-tested."""
+    H, V = [], []
+    # COLUMNS ARE NOT WALL PAIRS. A column box's two sides are parallel lines a
+    # column-width apart, so the column layer contributed the largest cluster in
+    # the first measurement (24 pairs at 12 in on FLOOR PLAN — larger than
+    # either real wall cluster) and would have been inherited by the wall
+    # classification. Excluded here only; GEOM_SKIP is left alone because the
+    # parser's geometry path reads it and must not change.
+    skip = tuple(GEOM_SKIP) + ("column",)
+    for d in drawings:
+        if any(k in d["lname"] for k in skip):
+            continue
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            L = math.hypot(b.x - a.x, b.y - a.y)
+            if L < min_ovl_ft * ppf or L > BORDER_MAXLEN_PT:
+                continue
+            if abs(a.y - b.y) < 0.5:
+                H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
+            elif abs(a.x - b.x) < 0.5:
+                V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
+    hist, gaps = {}, []
+    lim = (max_in / 12.0) * ppf
+    for runs in (H, V):
+        runs.sort()
+        for i in range(len(runs)):
+            p1, a1, b1 = runs[i]
+            for j in range(i + 1, len(runs)):
+                p2, a2, b2 = runs[j]
+                if p2 - p1 > lim:
+                    break
+                if p2 - p1 <= 0.01:
+                    continue
+                if min(b1, b2) - max(a1, a2) < min_ovl_ft * ppf:
+                    continue
+                inches = (p2 - p1) / ppf * 12.0
+                gaps.append(round(inches, 2))
+                hist[int(inches)] = hist.get(int(inches), 0) + 1
+                break            # nearest partner only: one gap per line
+    return {"histogram_in": dict(sorted(hist.items())),
+            "count": len(gaps),
+            "median_in": round(sorted(gaps)[len(gaps) // 2], 2) if gaps else None}
+
+
+def rejected_lines_ft(raw, reg, max_keep=2500):
+    """The discard pile in SCENE FEET, derived from the PDF on demand.
+
+    Deliberately not stored in the scene: 2,500 segments is ~200 KB on every
+    /scene response and every logged parse, for something only the overlay
+    looks at. Needs just the page drawings (no OCR, no raster), so it is cheap
+    to recompute where it is actually used."""
+    import fitz
+    page = fitz.open(stream=raw, filetype="pdf")[0]
+    drawings = _page_drawings(page)
+    _segs, skipped = _filter_text_layers(drawings, _is_wall_layer, [])
+    _w2, skipped_w = _filter_text_layers(drawings, _is_window_layer, [])
+    skipped |= skipped_w
+    rj, summary = _rejected_linework(drawings, skipped, max_keep=max_keep)
+    x0, y0 = float(reg["x0_pt"]), float(reg["y0_pt"])
+    ppf, d_ft = float(reg["ppf"]), float(reg["d_ft"])
+    sx, sy = (list(reg.get("shift_ft") or [0.0, 0.0]) + [0.0, 0.0])[:2]
+    out = [[round((ax - x0) / ppf - sx, 2), round(d_ft - (ay - y0) / ppf - sy, 2),
+            round((bx - x0) / ppf - sx, 2), round(d_ft - (by - y0) / ppf - sy, 2)]
+           for ax, ay, bx, by in rj]
+    return out, summary
+
+
+def _rejected_linework(drawings, skipped, max_keep=2500, min_len_pt=6.0):
+    """The DISCARD PILE: line work the parser did not use as structure.
+
+    An overlay that draws only what was found cannot show a MISSING wall —
+    the wall we failed to read is, by definition, in here. Longest first,
+    because a missed wall is long and hatch noise is short. Returns
+    ([(x0, y0, x1, y1)], {layer: dropped_count})."""
+    out, per_layer = [], {}
+    for d in drawings:
+        name = d["lname"]
+        used = ((_is_wall_layer(name) or _is_window_layer(name))
+                and name not in skipped)
+        if used:
+            continue
+        for it in d["items"]:
+            if it[0] != "l":
+                continue
+            a, b = it[1], it[2]
+            L = math.hypot(b.x - a.x, b.y - a.y)
+            if L < min_len_pt or L > BORDER_MAXLEN_PT:
+                continue
+            out.append((L, a.x, a.y, b.x, b.y))
+            per_layer[name] = per_layer.get(name, 0) + 1
+    out.sort(key=lambda s: -s[0])
+    return [s[1:] for s in out[:max_keep]], per_layer
+
+
 def _footprint_free_mask(wall_mask, seal_ft, norm_ppx=NORM_PPX):
     """G1 wall-gap healing: interior free-space BOUNDED by the building
     footprint. Closes the wall blob (bridges outer-wall gaps up to seal_ft),
@@ -1512,8 +1727,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         return _ocr_cache["pairs"]
 
     warnings = []
-    wall_segs, skipped = _filter_text_layers(drawings, _is_wall_layer, warnings)
-    win_segs, skipped_w = _filter_text_layers(drawings, _is_window_layer, warnings)
+    # NO page-unit length cap here: a "mega-line" is decided by whether it has
+    # a parallel partner at wall thickness (keep_structural_lines), because 900
+    # pt meant 31.6 ft on this sheet and deleted its 54 ft south wall.
+    _NOCAP = 10 ** 9
+    wall_segs, skipped = _filter_text_layers(drawings, _is_wall_layer, warnings,
+                                             maxlen=_NOCAP)
+    win_segs, skipped_w = _filter_text_layers(drawings, _is_window_layer,
+                                              warnings, maxlen=_NOCAP)
     skipped |= skipped_w
     struct = wall_segs + win_segs
     if force_geometry:
@@ -1627,6 +1848,22 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
     w_ft = (x1 - x0) / ppf
     d_ft = (y1 - y0) / ppf
+
+    # STRUCTURAL TEST (replaces the page-unit length cap): a line survives if
+    # it has a parallel partner at wall thickness, or if it is no longer than
+    # the paired extent. Runs once the scale is known, then the extent is
+    # recomputed from what survived.
+    struct, _keep_info = keep_structural_lines(struct, ppf)
+    if _keep_info["dropped"]:
+        warnings.append(
+            f"{_keep_info['dropped']} unpaired mega-line(s) dropped as page "
+            f"border / site boundary ({_keep_info['paired']} wall lines have a "
+            "parallel partner at wall thickness and are kept at any length)")
+        xs = [s_[0] for s_ in struct] + [s_[2] for s_ in struct]
+        ys = [s_[1] for s_ in struct] + [s_[3] for s_ in struct]
+        x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
+        w_ft = (x1 - x0) / ppf
+        d_ft = (y1 - y0) / ppf
 
     # --- normalized raster -> solid wall bands ---
     sc = NORM_PPX / ppf
@@ -1947,8 +2184,19 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             comp = (rlab == i)
             d = np.where(comp, ndt, 0)
             py_, px_ = np.unravel_index(int(d.argmax()), d.shape)
+            # the room's real OUTLINE, not just its bbox: an L-shaped room's
+            # bbox covers space that is not the room, and a wall overlay drawn
+            # from bboxes cannot tell a real error from a bbox artefact
+            _c, _hh = cv2.findContours(comp.astype(np.uint8), cv2.RETR_EXTERNAL,
+                                       cv2.CHAIN_APPROX_SIMPLE)
+            poly = []
+            if _c:
+                big = max(_c, key=cv2.contourArea)
+                pts = cv2.approxPolyDP(big, 1.5, True).reshape(-1, 2)
+                poly = [[fx(int(p[0])), fy(int(p[1]))] for p in pts]
             out.append({"x": fx(px_), "y": fy(py_),
                         "area_sqft": round(rarea / (NORM_PPX ** 2), 1),
+                        "polygon_ft": poly,
                         "_lab": int(i),
                         "_bbox_ft": (fx(rx), fy(ry + rh), fx(rx + rw), fy(ry))})
         return out, rlab
@@ -1959,10 +2207,16 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # FLOOR PLAN.pdf, because the balconies' open faces chain interior ->
     # balcony -> outside. See _footprint_from_walls for why the ring is bridged
     # rather than dilated.
-    footprint_sqft = None
+    footprint_sqft, footprint_poly = None, []
     _seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
     _foot, _bridges, _rejected, _foot_ext, _rej_lines = _footprint_from_walls(
         m_env, seg_px=_seg_px)
+    if _foot is not None:                     # outline, for the wall overlay
+        _fc, _fh = cv2.findContours(_foot, cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE)
+        if _fc:
+            _fp = cv2.approxPolyDP(max(_fc, key=cv2.contourArea), 2.0, True)
+            footprint_poly = [[fx(int(p[0][0])), fy(int(p[0][1]))] for p in _fp]
     rooms, rlab = [], None
     if _foot is not None:
         footprint_sqft = round(float((_foot > 0).sum()) / (NORM_PPX ** 2), 1)
@@ -2395,17 +2649,31 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # --- columns (dominant-size boxes only, deduplicated by cluster) ---
     columns = []
     if col_rects:
-        if scale_src == "cad_units":
-            # real units known - accept any plausible column size (9x9..24x24 in)
-            dom_candidates = [max(r.width, r.height) for r in col_rects
-                              if 0.5 * ppf <= max(r.width, r.height) <= 2.2 * ppf]
-        else:
-            dom_candidates = [max(r.width, r.height) for r in col_rects
-                              if abs(max(r.width, r.height) - ppf * COL_FT) < 0.6]
-        if dom_candidates:
-            dom = max(dom_candidates)
-            uniq = _cluster_rects([r for r in col_rects
-                                   if abs(max(r.width, r.height) - dom) < 0.6], gap=1.0)
+        # C-4: the acceptance band is 8-48 INCHES on the SHORT side (C-6: the
+        # 12 in assumption is about the short side, since that is the dimension
+        # the reference bands constrain). Everything here is derived from ppf.
+        #
+        # It used to be `abs(max(w, h) - ppf * 1ft) < 0.6` — a tolerance of 0.6
+        # POINTS, which only ever worked while ppf happened to equal the column
+        # box. When the scale moved on 11 Aug (23.80 -> 28.47 pt/ft) the boxes
+        # stopped matching and FLOOR PLAN went 26 columns -> 0, silently,
+        # because nothing reported columns. Any tolerance in page units must be
+        # derived from scale (§12, 12 Aug).
+        # C-4's floor is 8 in, applied with a 10% margin because OUR SCALE
+        # itself carries a known open question (C-6: the 12 in assumption is
+        # pinned to the long side, still unfixed). GHATIKIA's columns measure
+        # 7.0-8.4 in short side at its current ppf; a hard 8 in floor cuts one
+        # real cluster in half, which is a measurement artefact, not a rule.
+        lo, hi = 0.9 * (8.0 / 12.0) * ppf, (48.0 / 12.0) * ppf
+        band = [r for r in col_rects if lo <= min(r.width, r.height) <= hi]
+        if band:
+            # dominant short side, to a proportional (not fixed) tolerance
+            tol = max(0.15 * ppf, 0.5)          # ~1.8 in at any scale
+            sides = sorted(min(r.width, r.height) for r in band)
+            dom = sides[len(sides) // 2]        # median: robust to stray boxes
+            uniq = _cluster_rects([r for r in band
+                                   if abs(min(r.width, r.height) - dom) <= tol],
+                                  gap=1.0)
             for r in uniq:
                 _cx = ((r.x0 + r.x1) / 2 - x0) / ppf
                 _cy = d_ft - ((r.y0 + r.y1) / 2 - y0) / ppf
@@ -2494,11 +2762,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         for r in rooms:
             r["x"] = round(r["x"] - sx, 3)
             r["y"] = round(r["y"] - sy, 3)
+            if r.get("polygon_ft"):
+                r["polygon_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
+                                   for p in r["polygon_ft"]]
         for f in furniture:
             f["x"] = round(f["x"] - sx, 3)
             f["y"] = round(f["y"] - sy, 3)
     else:
         out_w, out_d = w_ft, d_ft
+        sx = sy = 0.0
 
     # --- envelope truth: prefer the architect's VERIFIED overall dimension
     # over the raw linework extent. The extent includes chhajja/balcony
@@ -2552,6 +2824,16 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         printed_areas = None
 
+    # --- INSTRUMENT data (Phase 0). Measurement only: the wall-gap
+    # distribution and the discard pile. Guarded so an instrument can never
+    # break a parse. ---
+    _gap_dist, _rej_summary = None, {}
+    try:
+        _gap_dist = wall_gap_distribution(drawings, ppf)
+        _rj, _rej_summary = _rejected_linework(drawings, skipped)
+    except Exception:
+        _gap_dist, _rej_summary = None, {}
+
     _plot_sqft = None
     if printed_areas and printed_areas.get("plot_area_sqft"):
         _plot_sqft = round(float(printed_areas["plot_area_sqft"]), 1)
@@ -2573,6 +2855,25 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # and then the check is skipped rather than guessed.
             "footprint_sqft": footprint_sqft,
             "plot_sqft": _plot_sqft,
+            # REGISTRATION for the wall overlay (instrument, Phase 0): how to
+            # put a scene coordinate (FEET, origin bottom-left) back onto the
+            # rendered page. page_px = (x0_pt + (X_ft + shift) * ppf) * dpi/72,
+            # y measured down from the top: (y0_pt + (d_ft - (Y_ft + shift)) *
+            # ppf). Points are in ROTATED page space, which is what
+            # page.get_pixmap() renders. Nothing in the parser reads this.
+            "page_registration": {
+                "x0_pt": round(float(x0), 3), "y0_pt": round(float(y0), 3),
+                "ppf": round(float(ppf), 4), "d_ft": round(float(d_ft), 4),
+                "shift_ft": [round(float(sx), 3), round(float(sy), 3)],
+                "rotation": int(getattr(page, "rotation", 0) or 0),
+                "page_w_pt": round(float(page.rect.width), 2),
+                "page_h_pt": round(float(page.rect.height), 2),
+            },
+            # W-2 MEASUREMENT (not used by the parser): the real distribution
+            # of parallel-line gaps on this sheet, so wall classification can
+            # be designed against measured clusters, not the 10"/5" assumption
+            "wall_line_thicknesses": _gap_dist,
+            "rejected_summary": _rej_summary,
             "wing": {"count": wing_count, "index": w_idx,
                      "bbox_ft": [round(v, 3) for v in wbox_ft] if wbox_ft else None},
             "warnings": warnings,
@@ -2587,6 +2888,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     }
     if printed_areas:
         scene["printed_areas"] = printed_areas
+    # NB: the discard pile itself is NOT put in the scene — 2,500 segments is
+    # ~200 KB on every /scene response and every Supabase log. /overlay derives
+    # it from the PDF on demand (rejected_lines_ft), which is where it is used.
+    if footprint_poly:
+        scene["footprint_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
+                                 for p in footprint_poly]
     # G3: cross-check a GUESSED scale against snapped-door widths; flag (default)
     # or auto-correct (DRISHTI_AUTOSCALE=1). No-op on verified scales.
     return _apply_scale_correction(scene)

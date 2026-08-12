@@ -192,3 +192,44 @@ export async function downloadAreaStatement(
   a.click()
   URL.revokeObjectURL(url)
 }
+
+// ── PHASE 0: wall overlay instrument ────────────────────────────────────────
+// The parsed geometry drawn over the original drawing. R-8 and R-2 measure
+// areas; neither can tell us a wall is in the WRONG PLACE. The scene is posted
+// rather than re-parsed (re-parsing FLOOR PLAN.pdf costs ~11 s with OCR) and
+// the PDF rides along so the server can render the page underneath.
+export type OverlayLayer = number[][][]
+export type Overlay = {
+  dpi: number
+  layers: Record<string, OverlayLayer>
+  style: Record<string, { colour: string; kind: string; width: number }>
+  counts: Record<string, number>
+  not_yet_detected: string[]
+  wall_line_thicknesses?: { histogram_in: Record<string, number>; count: number; median_in: number | null }
+  rejected_summary?: Record<string, number>
+  page: { png_b64: string; w: number; h: number } | null
+}
+
+export async function fetchOverlay(
+  plan: BuiltPlan, pdf?: File, dpi = 110,
+): Promise<Overlay> {
+  let pdf_b64: string | undefined
+  if (pdf) {
+    const buf = new Uint8Array(await pdf.arrayBuffer())
+    let s = ''
+    for (let i = 0; i < buf.length; i += 8192) {
+      s += String.fromCharCode(...buf.subarray(i, i + 8192))
+    }
+    pdf_b64 = btoa(s)
+  }
+  const res = await fetch(`${apiBase()}/overlay`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ scene: plan.raw, dpi, pdf_b64 }),
+    signal: AbortSignal.timeout(60_000),
+  })
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '')
+    throw new Error(`overlay failed (${res.status}): ${detail.slice(0, 200)}`)
+  }
+  return res.json()
+}

@@ -65,6 +65,11 @@ def parse_metrics(scene):
         "windows": sum(1 for o in ops if o.get("type") == "window"),
         "rooms": len(scene.get("rooms", [])),
         "typed_rooms": sum(1 for r in scene.get("rooms", []) if r.get("type")),
+        # columns + footprint are REPORTED because they moved unseen: a scale
+        # change on 11 Aug silently took FLOOR PLAN from 26 columns to 0 and
+        # nothing here would have shown it (12 Aug)
+        "columns": len(scene.get("columns", [])),
+        "footprint_sqft": m.get("footprint_sqft"),
         "furniture": len(scene.get("furniture", [])),
         "wings": m.get("wing", {}).get("count", 1),
         "scale": m.get("scale", {}).get("source"),
@@ -97,8 +102,9 @@ def evaluate(plans_dir, ground_truth=None):
 
 
 def _print(results):
-    print(f"\n{'plan':<42} {'envelope':>14} {'dr':>3} {'wn':>3} {'rm':>3} {'ty':>3} flags")
-    print("-" * 92)
+    print(f"\n{'plan':<42} {'envelope':>14} {'dr':>3} {'wn':>3} {'rm':>3} {'ty':>3} "
+          f"{'col':>4} {'foot':>6} flags")
+    print("-" * 104)
     healthy = 0
     for r in results:
         if not r.get("ok"):
@@ -108,9 +114,11 @@ def _print(results):
         flags = ",".join(r["flags"]) or "ok"
         if flags == "ok":
             healthy += 1
+        foot = f"{r['footprint_sqft']:.0f}" if r.get("footprint_sqft") else "-"
         print(f"{r['plan']:<42} {env:>14} {r['doors']:>3} {r['windows']:>3} "
-              f"{r['rooms']:>3} {r['typed_rooms']:>3} {flags}")
-    print("-" * 92)
+              f"{r['rooms']:>3} {r['typed_rooms']:>3} {r.get('columns', 0):>4} "
+              f"{foot:>6} {flags}")
+    print("-" * 104)
     print(f"{healthy}/{len(results)} plans clean (no health flags)\n")
 
 
