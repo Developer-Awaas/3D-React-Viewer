@@ -2211,12 +2211,23 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     _seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
     _foot, _bridges, _rejected, _foot_ext, _rej_lines = _footprint_from_walls(
         m_env, seg_px=_seg_px)
+    footprint_ext_poly = []
     if _foot is not None:                     # outline, for the wall overlay
         _fc, _fh = cv2.findContours(_foot, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
         if _fc:
             _fp = cv2.approxPolyDP(max(_fc, key=cv2.contourArea), 2.0, True)
             footprint_poly = [[fx(int(p[0][0])), fy(int(p[0][1]))] for p in _fp]
+    # INSTRUMENT (measurement only): the EXTENDED ring — the ring closed across
+    # the rejected open faces. Balcony area is currently `ext MINUS foot`, so
+    # seeing both contours is the only way to see what that subtraction really
+    # measures (PLAN-READING-RULES §0.1: a mask difference is not a measurement).
+    if _foot_ext is not None:
+        _ec, _eh = cv2.findContours(_foot_ext, cv2.RETR_EXTERNAL,
+                                    cv2.CHAIN_APPROX_SIMPLE)
+        if _ec:
+            _ep = cv2.approxPolyDP(max(_ec, key=cv2.contourArea), 2.0, True)
+            footprint_ext_poly = [[fx(int(q[0][0])), fy(int(q[0][1]))] for q in _ep]
     rooms, rlab = [], None
     if _foot is not None:
         footprint_sqft = round(float((_foot > 0).sum()) / (NORM_PPX ** 2), 1)
@@ -2894,6 +2905,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     if footprint_poly:
         scene["footprint_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
                                  for p in footprint_poly]
+    if footprint_ext_poly:
+        scene["footprint_ext_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
+                                     for p in footprint_ext_poly]
     # G3: cross-check a GUESSED scale against snapped-door widths; flag (default)
     # or auto-correct (DRISHTI_AUTOSCALE=1). No-op on verified scales.
     return _apply_scale_correction(scene)

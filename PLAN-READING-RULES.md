@@ -68,6 +68,18 @@ skipped: an unknown plot is not evidence of anything. (This is the check that
 disqualified the fixed-kernel footprint: at a 14 ft seal, neelachala FIRST
 FLOOR computed 2,563 sqft of building on a 2,455 sqft plot.)
 
+**A quantity derived from the difference between two intermediate masks is
+NOT a measurement of the thing it is named after.** Drishti's balcony line is
+computed as `foot_ext MINUS foot` — the gap between two internal footprint
+masks — so it does not measure balconies at all; it measures how much those two
+masks happen to disagree. One eligibility change to the wall ring took it from
+42.7 sqft to 0.0 while no balcony on the drawing changed. Any such quantity is
+hostage to every upstream change and cannot be ratcheted, because a genuine
+improvement upstream destroys it. **Balcony must eventually come from what is
+DRAWN** — reading the open edge itself per B-1/B-4 — not from a mask
+subtraction. The same test applies to any future figure: name the drawn thing
+it measures, or it is not a measurement.
+
 `plans/ground_truth.json` is mode **444 (read-only) on purpose** — the guard
 that makes an edit to it a deliberate act rather than an accident. Unlock it
 only for an authorised re-baseline, and **restore 444 immediately afterwards**.
@@ -282,6 +294,38 @@ Before anything else, these must be excluded from geometry, area and 3D.
 
 ---
 
+## 10.1 Covered but not enclosed
+
+**A space can be part of the building without being enclosed by walls.** A
+lobby open to the street, a balcony open on its outer face, a porch or portico
+— all are roofed, all sit inside the building line, all are counted by the
+architect, and none of them close a wall loop. Geometry alone cannot decide
+them: **geometry says outside, the architect says inside.**
+
+FLOOR PLAN.pdf is the worked case. The sheet prints `LOBBY 15'8" X 6'2"`
+(96.6 sqft) and counts it inside its printed 246 sqft common area, yet the
+lobby has **no wall on its south side (a 15.7 ft entrance) and none on its
+east**, so the footprint contour correctly traces around it and every
+enclosure-based rule discards it.
+
+1. **CE-1** — Such a space IS part of the building for area purposes. It counts
+   in built-up, and per its type in carpet (never), common (lobby, porch) or
+   the balcony line (B-5).
+2. **CE-2** — It is identified by being **inside the building line AND carrying
+   a printed label or dimension** — never by wall enclosure. A printed
+   `LOBBY 15'8" X 6'2"` is the architect stating that this space exists and how
+   big it is (§0.1: printed data is ground truth).
+3. **CE-3** — It must NOT be built as an enclosed volume in 3D, and its open
+   side must never become a wall (B-4 generalised).
+4. **CE-4 — OPEN QUESTION, awaiting ruling.** *What makes a space "inside the
+   building line" when it has no wall on two sides?* Candidates seen but not
+   chosen: the slab/roof edge; the column grid; the outermost paired wall runs
+   projected across the opening; the printed label's own position. No answer is
+   recorded here on purpose — an invented rule would be a guess, and this
+   category exists precisely because geometry under-determines it.
+
+---
+
 ## 11. Deferred — to be written
 
 - Diagonal hatch marking open terrace on a typical floor plan (§1) — awaiting the full sheet
@@ -309,6 +353,8 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
 | 11 Aug 2026 | **R-5 / L-5 / S-5 BUILT** — lift, staircase and lobby are split out of carpet into a separate `common_area` line (`area_statement.COMMON_TYPES`); built-up covers carpet + common, so the split never deducts common area from the plate. Tiny-room floor lowered 28 → 18 sqft ONLY for spaces fully ringed by wall (L-4), which recovers FLOOR PLAN's 5'x5' lift. FLOOR PLAN: carpet 1032.6 → 842.9 (expected dip), common 213.4 vs printed 246, R-8 79.2% → 80.6% | Rahul |
+| 12 Aug 2026 | **§10.1 COVERED BUT NOT ENCLOSED added** — a new category for spaces that are roofed and inside the building line but open on one or more sides (lobby, balcony, porch). They are part of the building for area purposes, identified by printed label/dimension rather than by wall enclosure, and never built as enclosed volumes. Prompted by FLOOR PLAN's lobby: printed `15'8" X 6'2"` = 96.6 sqft and counted in the sheet's 246 sqft common area, but open on its south (15.7 ft entrance) and east sides, so the footprint contour correctly excludes it. **CE-4 left OPEN for Rahul's ruling**: what makes such a space "inside the building line" | Rahul |
+| 12 Aug 2026 | **NAMED PATTERN — "a mask difference is not a measurement".** Balcony area = `foot_ext - foot`, the difference between two intermediate footprint masks. It is named for balconies but measures mask disagreement: one wall-ring eligibility change moved it 42.7 -> 0.0 sqft with no balcony on the drawing changing, and it silently took 400 sqft of built-up with it (R-8 97.0 -> 73.4). **Design flaw, not tuning**: such a quantity cannot be ratcheted, since improving the ring destroys it. Balcony must come from the DRAWN open edge (B-1/B-4). Recorded in §0.1 | Rahul |
 | 12 Aug 2026 | **NAMED PATTERN — "a tolerance in page units dies when the scale moves".** `_column_rects` matched column boxes with `abs(max(w,h) - ppf*1ft) < 0.6` — 0.6 POINTS, which only worked while ppf happened to equal the box. The 11 Aug scale correction (23.80 -> 28.47 pt/ft) left it behind and FLOOR PLAN went **26 columns -> 0**, silently: no test asserted columns and batch_eval did not print them. **Rule: any tolerance expressed in page units must be DERIVED from scale, never hardcoded.** Fixed to C-4's 8-48 in band on the SHORT side (C-6), all ppf-derived; columns + footprint_sqft now printed by batch_eval; pinned by `test_corpus_golden.py::test_floor_plan_columns`. Found by the Phase 0 wall overlay on its first run | Rahul |
 | 12 Aug 2026 | **C-4 floor applied with a 10% margin** — GHATIKIA's columns measure 7.0-8.4 in on the short side, so a hard 8 in floor cut one real cluster in half (40 columns -> 0). The margin exists because OUR SCALE is itself uncertain there (C-6 unfixed), not because the rule is wrong | Rahul |
 | 12 Aug 2026 | **Columns excluded from the wall-gap distribution** — a column box is two parallel lines a column apart, and it produced the LARGEST cluster in the first W-2 measurement (24 of 79 pairs at 12 in on FLOOR PLAN), which the wall classification would have inherited. Excluded in `wall_gap_distribution` only; `GEOM_SKIP` untouched because the parser's geometry path reads it | Rahul |

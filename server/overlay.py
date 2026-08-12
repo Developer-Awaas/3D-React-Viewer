@@ -29,6 +29,9 @@ LAYER_STYLE = {
     "windows":        {"colour": "#3b82f6", "kind": "rect", "width": 2.0},
     "rooms":          {"colour": "#e879f9", "kind": "polygon", "width": 1.2},
     "footprint":      {"colour": "#facc15", "kind": "polygon", "width": 2.5},
+    # the EXTENDED ring (closed across rejected open faces). Balcony = the area
+    # between this and `footprint` — see §0.1 on mask differences.
+    "footprint_ext":  {"colour": "#fb923c", "kind": "polygon", "width": 2.0},
     "plot_boundary":  {"colour": "#f43f5e", "kind": "line", "width": 2.0},
     "setback":        {"colour": "#fb7185", "kind": "line", "width": 1.5},
     "rejected":       {"colour": "#94a3b8", "kind": "line", "width": 0.8},
@@ -122,6 +125,9 @@ def build_layers(scene, dpi=110.0):
 
     if scene.get("footprint_ft"):
         out["footprint"].append([f(p[0], p[1]) for p in scene["footprint_ft"]])
+    if scene.get("footprint_ext_ft"):
+        out["footprint_ext"].append([f(p[0], p[1])
+                                     for p in scene["footprint_ext_ft"]])
 
     for seg in scene.get("rejected_lines_ft") or []:
         out["rejected"].append([f(seg[0], seg[1]), f(seg[2], seg[3])])
