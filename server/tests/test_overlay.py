@@ -124,3 +124,23 @@ def test_floor_plan_geometry_lands_inside_the_page():
            for shape in out["layers"][name] for p in shape]
     assert pts, "the overlay must have geometry to draw"
     assert all(-2 <= p[0] <= w + 2 and -2 <= p[1] <= h + 2 for p in pts)
+
+
+# --- REGISTRATION ASSERTION (14 Aug 2026) -----------------------------------
+# The overlay is our only GEOMETRIC instrument, and nothing tested that it kept
+# pointing at the same place. Without this, a parser change that shifts the
+# linework origin would move every drawn shape, and the overlay would go on
+# looking plausible while quietly lying — we would read a registration drift as
+# a geometry move. Anchor: FLOOR PLAN's south wall east jamb, the feature the
+# whole lobby investigation turned on.
+@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
+                    reason="confidential corpus not present")
+def test_registration_anchor_does_not_drift():
+    import pdf_vector
+    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+        reg = pdf_vector.parse(f.read())["meta"]["page_registration"]
+    px, py = overlay.page_transform(reg, 110.0)(41.24, 0.0)
+    # measured 14 Aug 2026; a real geometry change may move this, but it must
+    # be an EXPLAINED move, never a silent one
+    assert px == pytest.approx(2497.2, abs=2.0)
+    assert py == pytest.approx(2600.3, abs=2.0)

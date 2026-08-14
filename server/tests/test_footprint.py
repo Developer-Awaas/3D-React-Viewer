@@ -147,3 +147,44 @@ def test_doctor_skips_the_check_when_the_plot_is_unknown():
         "area_statement": {"efficiency_pct": 70.0, "carpet_source": "rooms"},
         "vastu": {}, "boq": {}})
     assert not any(i["tag"] == "footprint_exceeds_plot" for i in d["issues"])
+
+
+# --- POSITION GATE (14 Aug 2026) --------------------------------------------
+# The gate must be computed from the TRUSTED walls ALONE. Computing it from a
+# set that already contains the candidates lets them vouch for themselves:
+# FLOOR PLAN's 13 lines on layer `0` at y -13.0..-7.9 ft pair with each other,
+# extend the "building", and then pass the gate meant to reject them.
+def test_extent_comes_from_paired_lines_only():
+    ppf = 50.0
+    walls = [(0, 0, 1000, 0), (0, 40, 1000, 40)]          # a 10 in pair
+    stray = [(0, -600, 300, -600)]                         # far below, unpaired
+    ext = pdf_vector.paired_extent(walls + stray, ppf)
+    assert ext[1] >= -1 and ext[3] <= 41                   # stray excluded
+
+
+def test_a_self_pairing_candidate_cannot_extend_the_building():
+    """Two candidate lines that pair with EACH OTHER must not enlarge the
+    extent when the extent is computed from the trusted set."""
+    ppf = 50.0
+    trusted = [(0, 0, 1000, 0), (0, 40, 1000, 40)]
+    candidates = [(0, -600, 400, -600), (0, -560, 400, -560)]   # a pair, below
+    ext = pdf_vector.paired_extent(trusted, ppf)                # trusted ONLY
+    margin = 0.02 * max(ext[2] - ext[0], ext[3] - ext[1])
+    assert not pdf_vector.inside_extent(candidates[0], ext, margin)
+    assert not pdf_vector.inside_extent(candidates[1], ext, margin)
+
+
+def test_gate_passes_a_line_inside_the_building():
+    ppf = 50.0
+    trusted = [(0, 0, 1000, 0), (0, 40, 1000, 40)]
+    ext = pdf_vector.paired_extent(trusted, ppf)
+    margin = 0.02 * max(ext[2] - ext[0], ext[3] - ext[1])
+    assert pdf_vector.inside_extent((100, 5, 400, 5), ext, margin)
+
+
+def test_no_trusted_walls_means_no_gate():
+    """Structural limit, recorded: with no trusted paired walls there is
+    nothing to gate against, and everything passes. That is exactly how
+    neelachala FIRST FLOOR inflated to 47.6 x 185.3 ft."""
+    assert pdf_vector.paired_extent([(0, 0, 100, 0)], 50.0) is None
+    assert pdf_vector.inside_extent((0, -9999, 10, -9999), None, 5.0) is True

@@ -17,8 +17,17 @@ Every rule below carries a certainty mark:
 | **CERTAIN** | The drawing states it unambiguously | Use it. No prompt. |
 | **ASK** | The drawing is silent or ambiguous | Use a stated default, flag it, offer the user a correction |
 | **ELEVATION** | Cannot be known from a floor plan at all | Flag it; offer elevation upload |
+| **CONTRADICTS** | The drawing states something a building cannot be — a DRAFTING ERROR, not a parsing gap | **FLAG and ASK.** Show the user what was read and why it is implausible. **NEVER auto-correct** (deferred until 3D generation is reliable) |
 
 A number the tool cannot justify must never be presented as fact.
+
+**CONTRADICTS — worked example (14 Aug 2026, confirmed by Rahul).** FLOOR PLAN's
+lobby reads as a **15.7 ft opening in an external wall on a FIRST FLOOR plan**,
+on a floor with no street entrance. In reality that is a wall with a window;
+the thin line drawn across the opening is a drafting error. **No reading rule
+can reach that truth, because the drawing is wrong.** Catching a drafting error
+before site is the tool's highest-value moment for a builder — treat this as a
+FEATURE, not an edge case.
 
 ---
 
@@ -107,6 +116,11 @@ Before anything else, these must be excluded from geometry, area and 3D.
 | Grid/centre lines | Long thin dashed lines crossing the whole sheet | Ignore. | CERTAIN |
 | Diagonal hatch outside the building | Repeating parallel diagonal strokes over open ground | Not building. Marks open terrace/open space. | ASK — full rule deferred, see §11 |
 | Title block, legends, tables, north mark, signatures | Text boxes and tables, usually a corner or edge band | Ignore entirely as geometry. | CERTAIN |
+
+**BOUNDARY HIERARCHY (ruling, 14 Aug 2026).**
+1. **Plot boundary** = the **OUTERMOST** line. Usually dash-dot black, but *outermost* is the reliable test and dash-dot only the usual form. Measured signature on FLOOR PLAN: **11 collinear strokes of 6.3–6.7 ft at a constant 3.1 ft gap** — a repeating dash pattern. A railing, by contrast, is a **single unbroken stroke** per line. That gap structure separates them where length and position both failed.
+2. **Setback** = an inward OFFSET of the plot boundary — 2 / 3 / 4.5 / 6 m depending on building height.
+3. **Building edges** sit inside the setback, though real drawings show projections crossing it.
 
 **Consequence:** the building envelope is the outermost extent of WALLS, never the plot boundary.
 
@@ -287,7 +301,12 @@ Before anything else, these must be excluded from geometry, area and 3D.
 ## 10. Balconies
 
 1. **B-1** — A balcony is enclosed on 3 sides and open on 1 (the outer face).
-2. **B-2** — The open face has either a **railing/grill** or a **parapet wall 3–4 ft high**. The floor plan usually cannot tell you which. `ELEVATION`
+2. **B-2** — The open face has either a **railing/grill** or a **parapet wall 3–4 ft high**. The floor plan usually cannot tell you which. `ELEVATION` / `ASK`
+   - **RULING (14 Aug 2026).** Railings in these buildings are **2–3 in steel**. The 1.9 in vs 3.0 in difference measured on FLOOR PLAN's two balconies is **sloppy drafting, not different construction** — both are railings.
+   - **Resolution path: USER ENTRY.** The tool ASKS which the open face is (railing or parapet, and its height) before building it in 3D, alongside the elevation upload of §11. It must never decide silently.
+   - **POSITION IS NOT PART OF THE RULE (ruling, 14 Aug 2026).** A balcony is not always on the outer edge — it can face an internal open space. The measured data agrees independently: the position gate REJECTS flat-1's genuine railing (x −4..−2, outside the trusted wall extent) and PASSES 12 of 14 plot-boundary strokes. Wrong in both directions; dropped.
+   - **B-2a RAILING CONTINUITY (ruling, 14 Aug 2026) — replaces per-edge classification.** Follow the thin double line as a connected RUN, tracing in every direction as walls are traced, not as separate pairs. If the run turns and rejoins the building wall at both ends, the balcony has railing on **3 sides**; if it only spans the front, **1 side**. The shape comes from the trace. This dissolves the balcony-end problem: an end is never detected separately, it is part of one run. Measured on FLOOR PLAN: flat-1's balcony is 13.0 ft + 3.8 ft + 3.8 ft = **20.6 ft in one run with 2 turns**, both ends landing on the building wall at x = 0.
+   - **Signature (measured, FLOOR PLAN):** a railing is a thin double line, gap 1.9–3.0 in, **9.5–15.2 ft long**, with **no third parallel line** within a wall thickness. A door leaf mispaired against a wall face looks similar on gap but is **~2.5 ft long and always has that third line** (8 of 8 measured). Length and the third-line test separate them; overlap fraction does NOT (1.00 for every class).
 3. **B-3** — Default: parapet 3'6" if unknown, flagged, user-correctable.
 4. **B-4** — Do not build the open face as a full-height wall.
 5. **B-5** — Balcony area is usually counted separately from carpet in Indian practice. Report it separately. `ASK`
@@ -317,7 +336,8 @@ enclosure-based rule discards it.
    big it is (§0.1: printed data is ground truth).
 3. **CE-3** — It must NOT be built as an enclosed volume in 3D, and its open
    side must never become a wall (B-4 generalised).
-4. **CE-4 — OPEN QUESTION, awaiting ruling.** *What makes a space "inside the
+4. **CE-4 — STILL OPEN, but narrowed (14 Aug 2026).** Rahul's ruling: **the lobby is enclosed on all four sides in reality** — CE-4 was partly chasing a DRAFTING ERROR (see CONTRADICTS in §0). **Balconies remain the genuine case** for this category. Do not close CE-4.
+5. **CE-4 (original wording) — OPEN QUESTION, awaiting ruling.** *What makes a space "inside the
    building line" when it has no wall on two sides?* Candidates seen but not
    chosen: the slab/roof edge; the column grid; the outermost paired wall runs
    projected across the opening; the printed label's own position. No answer is
@@ -353,6 +373,16 @@ enclosure-based rule discards it.
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
 | 11 Aug 2026 | **R-5 / L-5 / S-5 BUILT** — lift, staircase and lobby are split out of carpet into a separate `common_area` line (`area_statement.COMMON_TYPES`); built-up covers carpet + common, so the split never deducts common area from the plate. Tiny-room floor lowered 28 → 18 sqft ONLY for spaces fully ringed by wall (L-4), which recovers FLOOR PLAN's 5'x5' lift. FLOOR PLAN: carpet 1032.6 → 842.9 (expected dip), common 213.4 vs printed 246, R-8 79.2% → 80.6% | Rahul |
+| 14 Aug 2026 | **ROOT BLOCKER, now confirmed across THREE features — "no trusted wall, no anchor".** The position gate (GHATIKIA 744/779 real lines rejected, FIRST FLOOR gate uncomputable), Phase 1 admission (both sheets collapsed or inflated past their plot), and now railing classification (**0 of 38 GHATIKIA, 0 of 50 FIRST FLOOR** — `ends_on_wall` is always 0) all fail on the same two sheets for the same reason. It is not a per-feature problem: **every feature that needs to know where the building is inherits it.** Nothing keyed on trusted walls will work on those sheets until they get a signature-derived anchor | Rahul |
+| 14 Aug 2026 | **Railing feed-in ATTEMPTED and REVERTED** — railing runs as room-mask boundaries + balcony measured as the pocket behind them. FLOOR PLAN degraded: balcony 42.7 -> **0.0**, built-up 1654.6 -> 1251.8, R-8 97.0 -> ~73. Cause: flat-1's balcony sits at **x -4..0 ft, WEST of the linework origin x0**, so it is outside the raster entirely and can never be measured as a pocket in that mask. The mask-subtraction balcony survives only because `foot_ext` is built from bridges that reach outside the extent. **Direct balcony measurement needs the raster to cover the balcony first** — a canvas/extent problem, not a tracer problem | Rahul |
+| 14 Aug 2026 | **RULING 1 — B-2a railing CONTINUITY** replaces per-edge classification: trace the thin double line as a connected run; ends rejoining the wall = railing on 3 sides. Measured: flat-1's balcony is one 20.6 ft run (13.0+3.8+3.8) with 2 turns | Rahul |
+| 14 Aug 2026 | **RULING 2 — §1 boundary hierarchy**: plot boundary = OUTERMOST line (dash-dot usual, outermost reliable); setback = inward offset 2/3/4.5/6 m by height; building edges inside the setback, projections may cross. Measured dash-dot signature: 11 collinear strokes, 6.3-6.7 ft, constant 3.1 ft gaps vs a railing's single unbroken stroke | Rahul |
+| 14 Aug 2026 | **RULING 3 — new certainty mark CONTRADICTS**: the drawing states something a building cannot be. A drafting error, not a parsing gap. FLAG and ASK, showing what was read and why it is implausible; NEVER auto-correct. Worked example: FLOOR PLAN's lobby as a 15.7 ft opening in an external wall on a first floor with no street entrance | Rahul |
+| 14 Aug 2026 | **RULING 4 — CE-4 narrowed**: the lobby is enclosed in reality, so CE-4 was partly chasing a drafting error. Balconies remain the genuine covered-but-not-enclosed case. CE-4 stays open | Rahul |
+| 14 Aug 2026 | **NAMED CONSTRAINT — "bootstrapping from named layers cannot work where the named layers are empty".** The position gate that admits candidate geometry needs a trusted building extent to gate against, and that extent comes from the named wall layers. On GHATIKIA the named layers yield a 0.3 ft sliver (x 1.4-50.5, y 13.1-13.4) which rejects 744 of 779 real lines; on neelachala FIRST FLOOR they yield NOTHING, so the gate cannot be computed and everything passes (that is how it inflated to 47.6 x 185.3 ft). **The two sheets that most need admission — 97% and 100% of their wall geometry discarded by name — are exactly the two with no trusted base.** Any Phase 1 admission must therefore anchor on something derived from SIGNATURE (e.g. the geometry reader's own output), not on the named layers | Rahul |
+| 14 Aug 2026 | **NAMED METHOD RULE — "one variable per measurement, or the result attributes to nothing".** Phase 1 attempt 1 changed the admitted layers AND widened the wall band 3-11 -> 3-18 in, in one step. FLOOR PLAN's R-8 fell 97.0 -> 78.6 and two sheets collapsed, and nothing in the result says which change did it. A measurement over two variables is not a measurement | Rahul |
+| 14 Aug 2026 | **The footprint<=plot check earned its keep** — Phase 1 attempt 1 produced neelachala FIRST FLOOR at 7,614 sqft of building on a 2,455 sqft plot, and the physics check caught it automatically with no human looking. First time a §0.1 rule stopped a bad build on its own | Rahul |
+| 14 Aug 2026 | **NAMED PATTERN — "a physically impossible result disqualifies the instrument, not the world".** The connectivity test for W-7 returned **100% of external walls with ZERO ends touching the wall network** — walls meet at corners, so that cannot be true of the building; it is true only of the measurement. Likely causes, both flagged at the time: a 0.35 ft point-to-segment tolerance applied to raw un-extended line ends, and an ad-hoc pairing that found 2 tile pairs where `wall_gap_pairs` finds 28. **Connectivity is therefore UNDEMONSTRATED, not ruled out** — it remains the most promising untested signal for W-7 and must be remeasured with the real pairing and a corner-aware tolerance. Rule: when a measurement contradicts physics, fix the instrument before drawing any conclusion from it, in either direction | Rahul |
 | 12 Aug 2026 | **§10.1 COVERED BUT NOT ENCLOSED added** — a new category for spaces that are roofed and inside the building line but open on one or more sides (lobby, balcony, porch). They are part of the building for area purposes, identified by printed label/dimension rather than by wall enclosure, and never built as enclosed volumes. Prompted by FLOOR PLAN's lobby: printed `15'8" X 6'2"` = 96.6 sqft and counted in the sheet's 246 sqft common area, but open on its south (15.7 ft entrance) and east sides, so the footprint contour correctly excludes it. **CE-4 left OPEN for Rahul's ruling**: what makes such a space "inside the building line" | Rahul |
 | 12 Aug 2026 | **NAMED PATTERN — "a mask difference is not a measurement".** Balcony area = `foot_ext - foot`, the difference between two intermediate footprint masks. It is named for balconies but measures mask disagreement: one wall-ring eligibility change moved it 42.7 -> 0.0 sqft with no balcony on the drawing changing, and it silently took 400 sqft of built-up with it (R-8 97.0 -> 73.4). **Design flaw, not tuning**: such a quantity cannot be ratcheted, since improving the ring destroys it. Balcony must come from the DRAWN open edge (B-1/B-4). Recorded in §0.1 | Rahul |
 | 12 Aug 2026 | **NAMED PATTERN — "a tolerance in page units dies when the scale moves".** `_column_rects` matched column boxes with `abs(max(w,h) - ppf*1ft) < 0.6` — 0.6 POINTS, which only worked while ppf happened to equal the box. The 11 Aug scale correction (23.80 -> 28.47 pt/ft) left it behind and FLOOR PLAN went **26 columns -> 0**, silently: no test asserted columns and batch_eval did not print them. **Rule: any tolerance expressed in page units must be DERIVED from scale, never hardcoded.** Fixed to C-4's 8-48 in band on the SHORT side (C-6), all ppf-derived; columns + footprint_sqft now printed by batch_eval; pinned by `test_corpus_golden.py::test_floor_plan_columns`. Found by the Phase 0 wall overlay on its first run | Rahul |

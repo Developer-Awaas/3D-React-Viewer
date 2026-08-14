@@ -154,6 +154,60 @@ GEOM_SKIP = ("door", "dim", "text", "furn", "sanitary", "kitchen", "stair",
              "elev", "chhaja", "boundary")   # layers that never carry wall lines
 
 
+def paired_extent(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+    """Bounding box of the lines that PAIR into walls — i.e. the building.
+
+    Split out so the extent can be computed from the TRUSTED walls ALONE,
+    before any candidate line is considered. Computing it from a set that
+    already contains the candidates lets them vouch for themselves: on
+    FLOOR PLAN, 13 lines on layer `0` at y -13.0..-7.9 ft (below the building)
+    pair with each other, extend the "building", and then pass the position
+    gate that was supposed to reject them. Same self-vouching error as
+    measuring connectivity against a network containing the tile grid.
+    Returns (x0, y0, x1, y1) or None. Pure."""
+    paired = _paired_indices(segs, ppf, min_in, max_in, min_ovl_ft)
+    if not paired:
+        return None
+    xs = [v for k in paired for v in (segs[k][0], segs[k][2])]
+    ys = [v for k in paired for v in (segs[k][1], segs[k][3])]
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def inside_extent(seg, extent, margin):
+    """Does a candidate line lie inside the building extent? Pure."""
+    if extent is None:
+        return True
+    bx0, by0, bx1, by1 = extent
+    return (bx0 - margin <= min(seg[0], seg[2]) and max(seg[0], seg[2]) <= bx1 + margin
+            and by0 - margin <= min(seg[1], seg[3]) and max(seg[1], seg[3]) <= by1 + margin)
+
+
+def _paired_indices(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+    """Indices of segments that have a parallel partner at wall thickness."""
+    lo, hi = (min_in / 12.0) * ppf, (max_in / 12.0) * ppf
+    H, V = [], []
+    for k, (x0, y0, x1, y1) in enumerate(segs):
+        if abs(y1 - y0) < 0.5:
+            H.append((k, (y0 + y1) / 2, min(x0, x1), max(x0, x1)))
+        elif abs(x1 - x0) < 0.5:
+            V.append((k, (x0 + x1) / 2, min(y0, y1), max(y0, y1)))
+    paired = set()
+    for runs in (H, V):
+        runs.sort(key=lambda r: r[1])
+        for i in range(len(runs)):
+            ki, pi, ai, bi = runs[i]
+            for j in range(i + 1, len(runs)):
+                kj, pj, aj, bj = runs[j]
+                if pj - pi > hi:
+                    break
+                if pj - pi < lo:
+                    continue
+                if min(bi, bj) - max(ai, aj) >= min_ovl_ft * ppf:
+                    paired.add(ki)
+                    paired.add(kj)
+    return paired
+
+
 def keep_structural_lines(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
     """Drop page borders and site boundaries by WHAT THE LINE IS, not by how
     long it is (§1's actual intent).
@@ -2845,6 +2899,38 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         _gap_dist, _rej_summary = None, {}
 
+    # --- B-2a RAILING TRACER (additive instrument, 14 Aug 2026). Thin double
+    # lines followed as connected RUNS; dash-dot families (the plot boundary)
+    # removed first. Emitted for inspection ONLY — nothing downstream reads it,
+    # so no area, room or ring number can move. Runs that fail the railing test
+    # are still emitted, TAGGED, so the consumer can never assume every run is
+    # a balcony: on FLOOR PLAN one run is stair linework and another is the
+    # 15.2 ft line across the lobby entrance, which is the drafting error
+    # itself (§0 CONTRADICTS). ---
+    _railings = None
+    try:
+        import railings as _rail
+        _ftp = lambda X, Y: ((X - x0) / ppf - sx, d_ft - (Y - y0) / ppf - sy)
+        _lines = [(_ftp(it[1].x, it[1].y), _ftp(it[2].x, it[2].y))
+                  for d in drawings for it in d["items"]
+                  if it[0] == "l"
+                  and math.hypot(it[2].x - it[1].x, it[2].y - it[1].y) / ppf >= 0.8]
+        _wl = [(_ftp(g[0], g[1]), _ftp(g[2], g[3])) for g in struct]
+        _railings = _rail.trace(_lines, _wl)
+        for _r in _railings["runs"]:
+            _r["classification"] = ("railing"
+                                    if _r["ends_on_wall"] >= 2 and _r["turns"] >= 1
+                                    else "unclassified")
+        _n = sum(1 for _r in _railings["runs"] if _r["classification"] == "railing")
+        if _railings["runs"]:
+            warnings.append(
+                f"railing tracer: {len(_railings['runs'])} thin-line run(s), "
+                f"{_n} classified as railing, "
+                f"{_railings['dash_dot_strokes_dropped']} dash-dot stroke(s) "
+                "dropped as plot boundary (instrument only — feeds nothing)")
+    except Exception:
+        _railings = None
+
     _plot_sqft = None
     if printed_areas and printed_areas.get("plot_area_sqft"):
         _plot_sqft = round(float(printed_areas["plot_area_sqft"]), 1)
@@ -2905,6 +2991,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     if footprint_poly:
         scene["footprint_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
                                  for p in footprint_poly]
+    if _railings:
+        scene["railings"] = _railings
     if footprint_ext_poly:
         scene["footprint_ext_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
                                      for p in footprint_ext_poly]
