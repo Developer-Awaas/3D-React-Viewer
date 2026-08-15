@@ -2374,15 +2374,18 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         for _r in _rail_runs_raw:
             if _rail0.classify(_r, _pw0) != "railing":
                 continue
-            _pts = [(int(u * NORM_PPX) + pad_x, int(v * NORM_PPX) + pad_y)
-                    for u, v in _r["polyline_ft"]]
-            # the run's BBOX is the pocket: a balcony run is axis-aligned and
-            # 3-sided, and the 4th side is the building wall it returns to. A
-            # convex hull is wrong here — flat-2's run is an L (2 segments), so
-            # its hull is a triangle and loses the whole balcony.
+            # the POCKET the run encloses (railings.pocket_ft): a 3-sided run
+            # encloses its own bbox; a 1-sided run encloses the strip between
+            # it and the wall behind, which is nothing at all without that
+            # extension — FIRST FLOOR's two balconies are both 1-sided.
+            _pk = _r.get("pocket_ft")
+            if not _pk:
+                continue
             _bm = np.zeros_like(m_env)
-            cv2.rectangle(_bm, (min(q[0] for q in _pts), min(q[1] for q in _pts)),
-                          (max(q[0] for q in _pts), max(q[1] for q in _pts)), 255, -1)
+            cv2.rectangle(_bm, (int(_pk[0] * NORM_PPX) + pad_x,
+                                int(_pk[1] * NORM_PPX) + pad_y),
+                          (int(_pk[2] * NORM_PPX) + pad_x,
+                           int(_pk[3] * NORM_PPX) + pad_y), 255, -1)
             # subtract the UNSEALED wall mask: `m_env` is sealed with a 4 ft
             # kernel, which fills a 3.37 ft balcony solid and loses it entirely
             # (flat-2 measured 0 sqft against a printed 3'6"). The seal is a
@@ -2987,7 +2990,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _pw = printed_balcony_widths()
         _railings["printed_widths_ft"] = _pw
         for _r in _railings["runs"]:
-            _r["depth_ft"] = _rail.enclosed_depth_ft(_r)
+            # depth_ft already comes from describe_run, WITH the wall lines —
+            # recomputing it here without them returns None for every straight
+            # (1-sided) run and silently unclassifies all of them.
             _r["classification"] = _rail.classify(_r, _pw)
         _n = sum(1 for _r in _railings["runs"] if _r["classification"] == "railing")
         if _railings["runs"]:

@@ -217,14 +217,30 @@
     "10'-0\" X 13'-5\""
    ],
    "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
-   "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive",
-   "r2_finding_2026_08_11": {
-    "verdict": "FAILS R-2 - room detection on this sheet is NOT trustworthy",
-    "r2_median_match_pct": 31.1,
-    "rooms_checked": 1,
-    "rooms_off_by_over_20pct": 1,
-    "different_from_ghatikia": "YES - probably a DIFFERENT disease. GHATIKIA fails across 14 matched rooms with a consistent ~57% shortfall (systematic under-segmentation). Here only ONE printed dimension matched a room at all (r1: measured 164.2 vs printed 97.2, 31.1%), so the headline is a single sample: the primary failure is that R-2 cannot MATCH this sheet's printed dimensions to rooms, and r1 reading 1.7x its label suggests merging. NOT INVESTIGATED - flag only.",
-    "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80% across several rooms"
+   "parsing_strategy": "CORRECTED 2026-08-15: this sheet is TWO COMPLETE COPIES OF THE SAME PLAN stacked vertically - NOT wings, NOT sections. An 8 ft empty band at y 98-108 ft separates blocks at 0-98 and 108-182 ft; 38'-3\" overall is printed twice (y 97.4 and 109.4); both halves carry full room labels and dimensions; FIRST FLOOR PLAN titles the lower block at y 185.9. Both draw on the SAME layers (0, chhaja, a-text), so only POSITION can separate them. Fix = a VIEW SPLITTER, not wing-splitting. (previous wording: 'split the layout sheet into individual flat/wing modules' - wrong diagnosis)",
+   "two_plans_finding_2026_08_15": {
+    "what": "the 177 ft raster depth is two buildings, not one deep building",
+    "evidence": "8 ft band with zero wall-pair endpoints at y 98-108 ft; blocks 0-98 and 108-182; 38'-3\" printed twice; both halves fully labelled",
+    "consequence": "every extent-based instrument on this sheet spans two plans, which is why the position gate is uncomputable and the footprint inflated to 7614 sqft on a 2455 sqft plot in Phase 1 attempt 1",
+    "do_not": "do not treat this as a wing or section problem; do not gate anything against this sheet's extent until a view splitter runs"
+   },
+   "r2_2026_08_15_INSTRUMENTED": {
+    "status": "PROMOTED TO INSTRUMENTED - the 31.1% verdict of 11 Aug is WITHDRAWN",
+    "r2_median_match_pct": 96.8,
+    "rooms_checked": 8,
+    "cause_of_the_old_failure": "NOT structural. `room_dims._PAIR_RE` could not read the hyphen form `11'-5\"` - this sheet uses it everywhere, FLOOR PLAN uses it nowhere - so 4 dimension pairs were read from 359 tokens and exactly ONE room ever matched. Fixed 15 Aug by making the foot-inch separator optional. The rooms were never wrong; the reader could not read the sheet's notation.",
+    "guard_removed": "the 'no improvements accepted below 80%' guard is LIFTED. R-2 96.8 is now a RATCHET, pinned by tests/test_room_dims.py::test_first_floor_r2_ratchet",
+    "instruments_live": "R-2 (printed room dims, 8 matched) + printed balcony widths [3.5, 4.0, 4.5, 4.917] ft",
+    "R8_STILL_BLIND": "this sheet prints NO area statement, so R-8 cannot be computed here. Coverage is unmeasured; only room SIZES are checked.",
+    "caveat_two_plans": "its 2 reported balconies (34.2 and 33.7 sqft) both sit in the LOWER plan block (y 110 and 148 ft). This sheet carries TWO COMPLETE COPIES of the same plan - see two_plans_finding_2026_08_15 - so the view splitter WILL change that count.",
+    "superseded": {
+     "verdict": "FAILS R-2 - room detection on this sheet is NOT trustworthy",
+     "r2_median_match_pct": 31.1,
+     "rooms_checked": 1,
+     "rooms_off_by_over_20pct": 1,
+     "different_from_ghatikia": "YES - probably a DIFFERENT disease. GHATIKIA fails across 14 matched rooms with a consistent ~57% shortfall (systematic under-segmentation). Here only ONE printed dimension matched a room at all (r1: measured 164.2 vs printed 97.2, 31.1%), so the headline is a single sample: the primary failure is that R-2 cannot MATCH this sheet's printed dimensions to rooms, and r1 reading 1.7x its label suggests merging. NOT INVESTIGATED - flag only.",
+     "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80% across several rooms"
+    }
    }
   },
   "BRICK WORK LAYOUT.pdf": {

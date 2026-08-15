@@ -168,3 +168,28 @@ class TestPrintedWidths:
     def test_utility_uses_the_same_reader(self):
         toks = self._label("UTILITY", "4'6\"", 1239, 1089)
         assert R.printed_widths(toks, "UTI") == [4.5]
+
+
+# --- RATCHET (15 Aug 2026): neelachala FIRST FLOOR is now INSTRUMENTED ------
+# It read 31.1% over ONE matched room and was recorded as a failing sheet for
+# four days. The rooms were never wrong: `_PAIR_RE` could not read the hyphen
+# form `11'-5"`, which this sheet uses everywhere and FLOOR PLAN uses nowhere,
+# so 4 pairs were read from 359 tokens. R-2 is the second instrumented plan
+# and must not silently fall back.
+import os
+
+import pytest
+
+import pdf_vector
+
+_PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf")),
+                    reason="confidential corpus not present")
+def test_first_floor_r2_ratchet():
+    with open(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf"), "rb") as f:
+        rooms = pdf_vector.parse(f.read())["rooms"]
+    s = R.summary(rooms)
+    assert s and s["rooms_checked"] >= 8
+    assert s["median_match_pct"] >= 96.8, s

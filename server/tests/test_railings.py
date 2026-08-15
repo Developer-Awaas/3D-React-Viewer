@@ -78,3 +78,48 @@ def test_floor_plan_balcony_is_measured_from_its_drawn_edge():
     assert s["meta"]["canvas"]["railing_bound_ft"][0] < -3.5   # canvas reaches it
     assert not any(r.get("depth_ft") == pytest.approx(4.91, abs=0.05)
                    for r in s["rooms"])                        # lobby not a balcony
+
+
+# --- ONE-SIDED balconies (15 Aug 2026) --------------------------------------
+# §10/B-2a always defined a 1-sided balcony — railing across the front only —
+# and the classifier was rejecting the case its own spec describes. 47 of 50
+# runs on neelachala FIRST FLOOR and 38 of 38 on GHATIKIA have zero turns.
+STRAIGHT = {"ends_on_wall": 2, "turns": 0, "polyline_ft": [[0, 0], [9.6, 0]]}
+WALL_BEHIND = [((0, 3.37), (9.6, 3.37)), ((0, 40.0), (9.6, 40.0))]
+
+
+class TestOneSided:
+    def test_a_straight_run_measures_depth_to_the_wall_behind_it(self):
+        """Its bbox short side is 0.00, so depth has to come from the wall."""
+        assert railings.enclosed_depth_ft(STRAIGHT, WALL_BEHIND) == 3.37
+
+    def test_no_wall_behind_means_no_depth_and_no_claim(self):
+        assert railings.enclosed_depth_ft(STRAIGHT, []) is None
+        assert railings.classify(dict(STRAIGHT, depth_ft=None), [3.5]) \
+            == "unclassified"
+
+    def test_a_one_sided_run_at_a_printed_width_is_a_balcony(self):
+        assert railings.classify(dict(STRAIGHT, depth_ft=3.37), [3.5]) == "railing"
+
+    def test_a_one_sided_run_at_no_printed_width_is_not(self):
+        assert railings.classify(dict(STRAIGHT, depth_ft=3.37), [6.0]) \
+            == "unclassified"
+
+    def test_the_pocket_extends_to_the_wall(self):
+        """Without the extension the rectangle is degenerate and no area can
+        ever form — FIRST FLOOR's two balconies are both this shape."""
+        assert railings.pocket_ft(STRAIGHT, WALL_BEHIND) == [0, 0, 9.6, 3.37]
+
+    def test_a_turning_run_still_encloses_its_own_bbox(self):
+        assert railings.pocket_ft(FLAT1, WALL_BEHIND) == [-3.92, 0.08, 0.0, 13.23]
+
+
+def test_printed_widths_reads_a_labelled_dimension_pair():
+    """`balcony` over `9'-7" X 3'-6"` — the width is the SHORT side. Only the
+    `<ft-in> WIDE` form was read before, so FIRST FLOOR yielded [] on a sheet
+    that prints three balcony widths."""
+    import room_dims
+    toks = [{"text": "balcony", "x0": 100, "y0": 100, "x1": 130, "y1": 105},
+            {"text": "9'-7\"", "x0": 100, "y0": 106, "x1": 118, "y1": 111},
+            {"text": "X3'-6\"", "x0": 118, "y0": 106, "x1": 140, "y1": 111}]
+    assert room_dims.printed_widths(toks, "BALCON") == [3.5]

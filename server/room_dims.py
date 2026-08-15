@@ -22,7 +22,10 @@ from area_compare import center_x, center_y, text_rows
 # "13'6"X10'3"" once the tokens are joined and spaces stripped. Both sides must
 # be well-formed: OCR that drops an apostrophe ("13'6"X121"") is unreadable,
 # and an unreadable dimension is skipped, never repaired by guesswork.
-_PAIR_RE = re.compile(r"(\d{1,2})'(\d{1,2})?\"?[X](\d{1,2})'(\d{1,2})?\"?")
+# The foot-inch separator varies by drafter: FLOOR PLAN prints `13'6"`,
+# neelachala FIRST FLOOR prints `11'-5"`. The hyphen made that whole sheet
+# unreadable — 4 pairs found in 359 tokens — so it is optional here.
+_PAIR_RE = re.compile(r"(\d{1,2})'-?(\d{1,2})?\"?[X](\d{1,2})'-?(\d{1,2})?\"?")
 
 # METRES. Indian sheets use both systems, sometimes across one project
 # (GHATIKIA prints `3.43x4.04`, neelachala FIRST FLOOR prints `13'6" X 10'3"`).
@@ -156,16 +159,17 @@ def merge_pairs(*sets, tol=15.0):
     return [p for p in out if not p.get("_conflict")]
 
 
-_WIDE_RE = re.compile(r"^(\d{1,2})'(\d{1,2})?\"?$")
+_WIDE_RE = re.compile(r"^(\d{1,2})'-?(\d{1,2})?\"?$")
 
 
-def printed_widths(tokens, keyword, max_join=6):
+def printed_widths(tokens, keyword, max_join=6, pairs=None):
     """Single-dimension labels: `BALCONY 4' WIDE`, `3'6" WIDE BALCONY`.
 
-    A balcony is a strip, so the sheet gives its WIDTH, not a W x H pair —
-    B-5's depth bound has to come from these. Returns the feet values from
-    every `<ft-in> WIDE` label whose local text also contains `keyword`.
-    Pure -> unit-tested."""
+    A balcony is a strip, so SOME sheets give its WIDTH alone. Others name the
+    space and print BOTH sides — neelachala FIRST FLOOR draws `balcony` over
+    `9'-7" X 3'-6"` — and there the width is the SHORT side. Both forms are
+    read: the WIDE form first, then labelled dimension pairs. Returns feet
+    values, deduped. Pure -> unit-tested."""
     key = keyword.upper()
     toks = sorted(tokens or [], key=lambda t: (t["x0"], t["y0"]))
     out = []
@@ -187,7 +191,22 @@ def printed_widths(tokens, keyword, max_join=6):
                and abs(center_x(t) - cx0) <= 8 * h
                and abs(center_y(t) - cy0) <= 4 * h for t in toks):
             out.append(round(v, 3))
-    return out
+
+    # SECOND FORM: `<label>` with a `W x H` pair under it. The label names the
+    # space, the pair gives both sides, and a balcony's WIDTH is its short
+    # side. FIRST FLOOR prints three of these (3'-6", 4'-0", 4'-11") and read
+    # only the WIDE form, so B-5 was blind on a sheet that states its widths.
+    hs = [t["y1"] - t["y0"] for t in toks if t["y1"] > t["y0"]]
+    hm = (sorted(hs)[len(hs) // 2] if hs else 1.0) or 1.0
+    for pr in (pairs if pairs is not None else dimension_pairs(tokens)):
+        v = min(pr["w_ft"], pr["h_ft"])
+        if not (1.0 <= v <= 12.0):
+            continue
+        if any(key in (t["text"] or "").upper()
+               and abs(center_x(t) - pr["x"]) <= 8 * hm
+               and abs(center_y(t) - pr["y"]) <= 4 * hm for t in toks):
+            out.append(round(v, 3))
+    return sorted(set(out))
 
 
 def match_pct(measured_sqft, printed_sqft):

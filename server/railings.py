@@ -194,7 +194,10 @@ def describe_run(run, wall_lines, join_tol=JOIN_TOL_FT, wall_tol=WALL_TOL_FT):
 
     anchored = sum(1 for P in open_ends if on_wall(P))
     sides = len(run)
+    poly = [[round(p[0], 2), round(p[1], 2)] for s in run for p in s[:2]]
     return {
+        "depth_ft": enclosed_depth_ft({"polyline_ft": poly}, wall_lines),
+        "pocket_ft": pocket_ft({"polyline_ft": poly}, wall_lines),
         "length_ft": round(total, 2),
         "turns": turns,
         "segments": sides,
@@ -222,7 +225,66 @@ def trace(lines, wall_lines, **kw):
 DEPTH_TOL_FT = 0.25          # measured error against printed: 0.08 and 0.13 ft
 
 
-def enclosed_depth_ft(run):
+def _straight_depth_ft(run, wall_lines, min_ft=1.0, max_ft=12.0):
+    """Depth of a ONE-SIDED balcony: railing to the wall behind it.
+
+    A straight run encloses nothing by itself — its bbox short side is 0.00,
+    which is why every 0-turn run scored a depth of zero and could never match
+    a printed width. The space is between the railing and the building, so the
+    depth is the perpendicular distance to the nearest PARALLEL wall that the
+    run actually runs alongside (>= half its length of overlap). Pure."""
+    pts = run.get("polyline_ft") or []
+    if len(pts) < 2:
+        return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    horiz = (max(xs) - min(xs)) >= (max(ys) - min(ys))
+    ax = 1 if horiz else 0                       # the perpendicular axis
+    perp = (min(ys) + max(ys)) / 2 if horiz else (min(xs) + max(xs)) / 2
+    lo, hi = (min(xs), max(xs)) if horiz else (min(ys), max(ys))
+    need = 0.5 * (hi - lo)
+    best = None
+    for A, B in wall_lines or []:
+        if horiz and abs(B[1] - A[1]) > 0.08:
+            continue
+        if not horiz and abs(B[0] - A[0]) > 0.08:
+            continue
+        wp = (A[1] + B[1]) / 2 if horiz else (A[0] + B[0]) / 2
+        wlo, whi = sorted((A[1 - ax], B[1 - ax]))
+        if min(hi, whi) - max(lo, wlo) < need:
+            continue
+        d = abs(wp - perp)
+        if min_ft <= d <= max_ft and (best is None or d < best[0]):
+            best = (d, wp)
+    return best                      # (depth_ft, wall's perpendicular coord)
+
+
+def pocket_ft(run, wall_lines=None):
+    """The rectangle a run encloses, in feet: [x0, y0, x1, y1].
+
+    A turning run encloses its own bbox. A ONE-SIDED run encloses nothing by
+    itself — the space is the strip between it and the wall behind — so the
+    bbox is extended to that wall. Pure."""
+    pts = run.get("polyline_ft") or []
+    if len(pts) < 2:
+        return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    x0, x1, y0, y1 = min(xs), max(xs), min(ys), max(ys)
+    if min(x1 - x0, y1 - y0) >= 0.5:
+        return [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]
+    got = _straight_depth_ft(run, wall_lines)
+    if not got:
+        return None
+    _d, wp = got
+    if (x1 - x0) >= (y1 - y0):                      # horizontal run
+        y0, y1 = min(y0, wp), max(y1, wp)
+    else:
+        x0, x1 = min(x0, wp), max(x1, wp)
+    return [round(x0, 2), round(y0, 2), round(x1, 2), round(y1, 2)]
+
+
+def enclosed_depth_ft(run, wall_lines=None):
     """The SHORT side of the space a 3-sided run encloses against its wall.
 
     A balcony is a strip: the sheet prints its WIDTH, and that width is this
@@ -234,7 +296,11 @@ def enclosed_depth_ft(run):
         return None
     xs = [p[0] for p in pts]
     ys = [p[1] for p in pts]
-    return round(min(max(xs) - min(xs), max(ys) - min(ys)), 2)
+    d = round(min(max(xs) - min(xs), max(ys) - min(ys)), 2)
+    if d >= 0.5:                       # a run that turns encloses its own bbox
+        return d
+    got = _straight_depth_ft(run, wall_lines)    # 1-sided: measure to the wall
+    return round(got[0], 2) if got else None
 
 
 def classify(run, printed_widths_ft, tol=DEPTH_TOL_FT):
@@ -245,9 +311,17 @@ def classify(run, printed_widths_ft, tol=DEPTH_TOL_FT):
     FLOOR PLAN's 12.33 ft run at (25.58, 24.06) passes the first two and
     encloses 4.91 ft, which matches neither printed 4'0" nor 3'6": it is the
     lobby drafting error, not a balcony. Pure."""
-    if not (run["ends_on_wall"] >= 2 and run["turns"] >= 1):
+    # NO TURN REQUIRED (15 Aug 2026). §10/B-2a defines a ONE-SIDED balcony —
+    # railing across the front only — and the code was rejecting the case its
+    # own spec describes: 47 of 50 runs on neelachala FIRST FLOOR and 38 of 38
+    # on GHATIKIA have zero turns, so those sheets could never report a
+    # balcony however good the anchor got. Continuity still matters (it is what
+    # makes the run one thing), but the DEPTH test below is what keeps false
+    # positives out, and it uses the sheet's own printed widths.
+    if run["ends_on_wall"] < 2:
         return "unclassified"
-    d = enclosed_depth_ft(run)
+    d = run.get("depth_ft") if run.get("depth_ft") is not None \
+        else enclosed_depth_ft(run)
     if d is None or not printed_widths_ft:
         return "unclassified"
     return "railing" if any(abs(d - w) <= tol for w in printed_widths_ft) \
