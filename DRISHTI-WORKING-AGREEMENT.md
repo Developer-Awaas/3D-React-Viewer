@@ -42,6 +42,13 @@ collision means STOP and report, not work around.
 - General rules only — no per-plan hacks.
 - Report honestly what is proven vs assumed.
 - Browser check anything visual. Source-level proof is not enough.
+- **Never revert with a file-level checkout while accepted work sits
+  uncommitted in the same file.** `git checkout -- server/pdf_vector.py`
+  discarded an experiment AND the accepted position gate in one stroke (four
+  tests went red with `AttributeError: no attribute 'paired_extent'`; the
+  source had to be recovered from the session transcript). **Commit accepted
+  work before attempting anything that may need reverting** — an experiment on
+  top of a clean commit is revertible; one on top of unsaved work is not.
 
 ## Environment
 - Mac runs everything except AI renders (needs NVIDIA).

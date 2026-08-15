@@ -217,3 +217,38 @@ def trace(lines, wall_lines, **kw):
     runs = [r for r in runs if r["length_ft"] >= 3.0]
     runs.sort(key=lambda r: -r["length_ft"])
     return {"runs": runs, "dash_dot_strokes_dropped": n_dash}
+
+
+DEPTH_TOL_FT = 0.25          # measured error against printed: 0.08 and 0.13 ft
+
+
+def enclosed_depth_ft(run):
+    """The SHORT side of the space a 3-sided run encloses against its wall.
+
+    A balcony is a strip: the sheet prints its WIDTH, and that width is this
+    depth. Measured on FLOOR PLAN: 3.92 ft against a printed 4'0", 3.37 ft
+    against a printed 3'6". Pure."""
+    pts = [p for s in run["polyline_ft"] for p in ((s,) if isinstance(s[0], (int, float)) else s)] \
+        if run.get("polyline_ft") else []
+    if not pts:
+        return None
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    return round(min(max(xs) - min(xs), max(ys) - min(ys)), 2)
+
+
+def classify(run, printed_widths_ft, tol=DEPTH_TOL_FT):
+    """railing | unclassified. Three tests, all from the DRAWING:
+
+    ends on the building wall (>=2), turns (>=1), and — the one that kills the
+    false positive — its enclosed depth must match a width the sheet PRINTS.
+    FLOOR PLAN's 12.33 ft run at (25.58, 24.06) passes the first two and
+    encloses 4.91 ft, which matches neither printed 4'0" nor 3'6": it is the
+    lobby drafting error, not a balcony. Pure."""
+    if not (run["ends_on_wall"] >= 2 and run["turns"] >= 1):
+        return "unclassified"
+    d = enclosed_depth_ft(run)
+    if d is None or not printed_widths_ft:
+        return "unclassified"
+    return "railing" if any(abs(d - w) <= tol for w in printed_widths_ft) \
+        else "unclassified"

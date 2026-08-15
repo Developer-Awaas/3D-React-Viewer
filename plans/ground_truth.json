@@ -152,6 +152,14 @@
     "diagnosis": "UNDER-SEGMENTATION, not a scale error. 13 of 14 rooms measure ~57% of their printed size while r0 measures 3.2x (530.5 vs 163.7 printed) - a constant ratio would mean scale, this scatter means rooms are merging and leaking into each other.",
     "units": "sheet is in METRES (prints 3.43x4.04 etc); 44 metric pairs read. Feeding them to the scale voter derived 33.7 pt/ft against the column-box 8.8 - a 3.8x disagreement - which would have shipped a 2.75 ft building. The §0.1 consistency cross-check rejected OUR derivation and kept the column-box scale; sheet stays flagged NEEDS REVIEW.",
     "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80%"
+   },
+   "balcony_artefact_removed_2026_08_15": {
+    "status": "ARTEFACT REMOVED - UNVERIFIABLE, not an unexplained movement",
+    "what_moved": "balcony 354.5 -> 0.0 sqft, built-up 2571.2 -> 2216.7, rooms 16 -> 14",
+    "cause": "balcony was `foot_ext - foot`, a difference between two masks. It measured how far the ring bridging reached outside the raster, not a balcony. Deleted corpus-wide on 15 Aug when balcony became a direct measurement from the drawn railing edge (B-1/B-4).",
+    "why_the_same_as_FLOOR_PLAN": "FLOOR PLAN lost the identical artefact (42.7 sqft) for the identical reason, and there the replacement is CHECKED: flat-1 measures 3.92 ft against a printed 4'0\". Here there is no such check.",
+    "why_unverifiable": "this sheet prints no area statement (R-8 blind) and classifies 0 of 38 railing runs, because it has no trusted paired walls so `ends_on_wall` is always 0. Nothing on this sheet can confirm or refute the 354.5.",
+    "do_not": "do not treat this as evidence the new balcony rule is wrong OR right on this sheet; it is silent here. R-2 58.6 guard still stands."
    }
   },
   "neelachala FIRST FLOOR.pdf": {

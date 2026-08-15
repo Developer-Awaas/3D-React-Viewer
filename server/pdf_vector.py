@@ -891,7 +891,13 @@ def _footprint_from_walls(wall_mask, seg_px=None, norm_ppx=NORM_PPX,
     # Jamb bridges are bounded per-gap by the wall run they sit in (see
     # _free_ring_endpoints). COMPONENT bridges join separate wall blobs rather
     # than filling a hole in one wall, so they keep a building-relative bound.
-    max_bridge = float(min(wall_mask.shape))
+    # The cap is the building's SHORTER SIDE in feet, not the raster's shorter
+    # side in pixels. `min(wall_mask.shape)` was a CANVAS-unit constant — the
+    # same class as BORDER_MAXLEN_PT — and would have moved the footprint
+    # silently the moment the canvas grew in the short axis (§12).
+    _ys, _xs = np.nonzero(wall_mask)
+    max_bridge = (float(min(_xs.max() - _xs.min(), _ys.max() - _ys.min()))
+                  if len(_xs) else float(min(wall_mask.shape)))
     bridges, rejected, rejected_lines = [], [], []
     thick = max(3, int(0.5 * norm_ppx))
     for pa, pb, dist, bound in _free_ring_endpoints(seg_px or [],
@@ -1739,6 +1745,17 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _ocr_cache["live"] = out
         return _ocr_cache["live"]
 
+    def printed_balcony_widths():
+        """The balcony WIDTHS the sheet itself prints ("BALCONY 4' WIDE").
+        The only ground truth a railing run can be checked against."""
+        try:
+            import room_dims as _rdw
+            src = live_words() if _rdw.printed_widths(live_words(), "BALCON") \
+                else ocr_words()
+            return _rdw.printed_widths(src, "BALCON")
+        except Exception:
+            return []
+
     def dim_words():
         """Tokens for reading printed DIMENSIONS only (see
         _ocr_dimension_tokens): digits and feet/inch marks re-read per crop."""
@@ -1919,15 +1936,57 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         w_ft = (x1 - x0) / ppf
         d_ft = (y1 - y0) / ppf
 
+    # --- CANVAS EXTENSION (14 Aug 2026) -------------------------------------
+    # The raster used to be exactly the WALL extent, so anything drawn outside
+    # it was off-canvas and could never be measured: FLOOR PLAN's flat-1
+    # balcony sits at x -4.0..0.0 ft, west of the linework origin, and no
+    # pocket can form for a region that is not in the image. That is why
+    # `foot_ext - foot` was never measuring a balcony (§12).
+    # The bound comes from the traced RAILING RUNS and nothing else - never
+    # the page, never the plot. The plot boundary is dash-dot and is removed
+    # by the tracer before any run exists, so it cannot enlarge the canvas.
+    _canvas_ext, _rail_runs_raw, _pw0 = None, [], []
+    try:
+        assert os.getenv("DRISHTI_CANVAS_EXT", "1") != "0"
+        import railings as _rail0
+        _rf = lambda X, Y: ((X - x0) / ppf, (Y - y0) / ppf)   # translation only
+        _ln0 = [(_rf(it[1].x, it[1].y), _rf(it[2].x, it[2].y))
+                for d in drawings for it in d["items"] if it[0] == "l"
+                and math.hypot(it[2].x - it[1].x, it[2].y - it[1].y) / ppf >= 0.8]
+        _wl0 = [(_rf(g[0], g[1]), _rf(g[2], g[3])) for g in struct]
+        _runs0 = _rail0.trace(_ln0, _wl0)["runs"]
+        _rail_runs_raw = _runs0
+        _pw0 = printed_balcony_widths()
+        _pts0 = [q for r in _runs0
+                 if _rail0.classify(r, _pw0) == "railing"
+                 for q in r["polyline_ft"]]
+        if _pts0:
+            _canvas_ext = (round(min(q[0] for q in _pts0), 2),
+                           round(min(q[1] for q in _pts0), 2),
+                           round(max(q[0] for q in _pts0), 2),
+                           round(max(q[1] for q in _pts0), 2))
+    except Exception:
+        _canvas_ext = None
+
     # --- normalized raster -> solid wall bands ---
     sc = NORM_PPX / ppf
-    W = int((x1 - x0) * sc) + 2 * PAD_PX
-    H = int((y1 - y0) * sc) + 2 * PAD_PX
+    # asymmetric pads: the FRAME is unchanged (x0/y0/d_ft and every ft value
+    # derived from them stay put) - only the canvas around it grows, so a
+    # feature outside the wall extent lands at a negative or over-length foot
+    # coordinate, which is exactly what it is.
+    pad_x = pad_y = pad_r = pad_b = PAD_PX
+    if _canvas_ext:
+        pad_x += max(0, int(-_canvas_ext[0] * NORM_PPX) + 1)
+        pad_y += max(0, int(-_canvas_ext[1] * NORM_PPX) + 1)
+        pad_r += max(0, int((_canvas_ext[2] - (x1 - x0) / ppf) * NORM_PPX) + 1)
+        pad_b += max(0, int((_canvas_ext[3] - (y1 - y0) / ppf) * NORM_PPX) + 1)
+    W = int((x1 - x0) * sc) + pad_x + pad_r
+    H = int((y1 - y0) * sc) + pad_y + pad_b
     if W * H > 6000 * 6000:
         raise ValueError(f"plan raster too large ({W}x{H}) - scale looks wrong")
 
     def tp(x, y):
-        return (int((x - x0) * sc) + PAD_PX, int((y - y0) * sc) + PAD_PX)
+        return (int((x - x0) * sc) + pad_x, int((y - y0) * sc) + pad_y)
 
     def _mask(shape_flag, dil, ero, seal_ft=0.0):
         """Rasterize struct -> solid wall bands. Two flavours are used:
@@ -1996,10 +2055,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     if wing_count > 1:
         if wing == "largest":
             def _ft_box(wb):
-                return ((wb[0] - PAD_PX) / NORM_PPX,
-                        d_ft - (wb[3] - PAD_PX) / NORM_PPX,
-                        (wb[2] - PAD_PX) / NORM_PPX,
-                        d_ft - (wb[1] - PAD_PX) / NORM_PPX)
+                return ((wb[0] - pad_x) / NORM_PPX,
+                        d_ft - (wb[3] - pad_y) / NORM_PPX,
+                        (wb[2] - pad_x) / NORM_PPX,
+                        d_ft - (wb[1] - pad_y) / NORM_PPX)
             # score every wing by (enclosed ROOMS, doors, area). Rooms are the
             # strongest 'this is the floor plan' signal — a section/detail block
             # or a door SCHEDULE (many door symbols, NO rooms) has none, so
@@ -2033,10 +2092,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _mm[wb[3]:, :] = 0
             _mm[:, :wb[0]] = 0
             _mm[:, wb[2]:] = 0
-        wx0 = (wb[0] - PAD_PX) / NORM_PPX
-        wx1 = (wb[2] - PAD_PX) / NORM_PPX
-        wy_top = d_ft - (wb[1] - PAD_PX) / NORM_PPX
-        wy_bot = d_ft - (wb[3] - PAD_PX) / NORM_PPX
+        wx0 = (wb[0] - pad_x) / NORM_PPX
+        wx1 = (wb[2] - pad_x) / NORM_PPX
+        wy_top = d_ft - (wb[1] - pad_y) / NORM_PPX
+        wy_bot = d_ft - (wb[3] - pad_y) / NORM_PPX
         wbox_ft = (wx0, wy_bot, wx1, wy_top)
         warnings.append(f"{wing_count} separate wings on this sheet - built wing "
                         f"{w_idx} ({(wx1-wx0):.1f} x {(wy_top-wy_bot):.1f} ft, "
@@ -2153,14 +2212,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 gy0, gy1 = int(cy - w / 2), int(cy + w / 2)
                 gx0, gx1 = int(cx - th / 2), int(cx + th / 2)
             gx0, gy0 = max(0, gx0), max(0, gy0)
-            fcx = (cx - PAD_PX) / NORM_PPX
-            fcy = d_ft - (cy - PAD_PX) / NORM_PPX
+            fcx = (cx - pad_x) / NORM_PPX
+            fcy = d_ft - (cy - pad_y) / NORM_PPX
             if not _in_wing(fcx, fcy):
                 continue
             for mm in (m, m_snap):        # seal the doorway, both masks
                 mm[gy0:gy1, gx0:gx1] = 255
-            px0, py0 = x0 + (gx0 - PAD_PX) / sc, y0 + (gy0 - PAD_PX) / sc
-            px1, py1 = x0 + (gx1 - PAD_PX) / sc, y0 + (gy1 - PAD_PX) / sc
+            px0, py0 = x0 + (gx0 - pad_x) / sc, y0 + (gy0 - pad_y) / sc
+            px1, py1 = x0 + (gx1 - pad_x) / sc, y0 + (gy1 - pad_y) / sc
             cl = _fitz.Rect(px0, py0, px1, py1).normalize()
             door_hits.append(((gx0, gy0, gx1, gy1), cl))
             placed += 1
@@ -2170,10 +2229,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
 
     # --- contours -> polygons in FEET (origin bottom-left, y up) ---
     def fx(px):
-        return round((px - PAD_PX) / NORM_PPX, 3)
+        return round((px - pad_x) / NORM_PPX, 3)
 
     def fy(py):
-        return round(d_ft - (py - PAD_PX) / NORM_PPX, 3)
+        return round(d_ft - (py - pad_y) / NORM_PPX, 3)
 
     def poly_pts(c):
         c = cv2.approxPolyDP(c, 1.2, True).reshape(-1, 2).astype(float)
@@ -2297,59 +2356,67 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                    f"building's shorter side "
                    f"({', '.join(f'{b:.0f}ft' for b in sorted(_rejected)[-3:])})"
                    if _rejected else ""))
-    # B-1 / B-5: a balcony is enclosed on 3 sides and open on 1, so it never
-    # forms an enclosed pocket and ring bridging cannot reach it (§0.1). It IS
-    # the space between the footprint and the ring closed across its open face.
-    # Closed as a SPACE here, reported on its own line, and its open face is
-    # never built as a wall — walls_poly comes from `m`, which is untouched.
-    if rooms and _foot is not None and _foot_ext is not None:
-        _bal_free = cv2.bitwise_and(
-            cv2.bitwise_and(_foot_ext, cv2.bitwise_not(m_env)),
-            cv2.bitwise_not(_foot))
-        # ONE OPEN FACE = ONE BALCONY, and a balcony is a STRIP: bound its depth
-        # by the widest balcony width the sheet itself prints ("BALCONY 4' WIDE"),
-        # never by a constant (B-5). Everything deeper than that is not balcony —
-        # it is interior space (the utility strip) or ground outside, and the two
-        # are told apart by how much wall rings them (B-1: enclosed on 3 sides).
-        _bal_ft = []
-        try:
-            import room_dims as _rd2
-            _src = live_words() if _rd2.printed_widths(live_words(), "BALCON") \
-                else ocr_words()
-            _bal_ft = _rd2.printed_widths(_src, "BALCON")
-        except Exception:
-            _bal_ft = []
-        # NOT YET SPLIT PER FACE. Banding the space within the printed balcony
-        # width of each rejected span was tried on 11 Aug and REJECTED: the long
-        # spurious spans (42 ft, 96 ft) sweep a 4 ft band along the whole south
-        # edge, so the "balcony" came out 208.9 sqft of outside ground at
-        # (85.9, 5.4) and built-up fell 98.8% -> 96.0%. The band is the wrong
-        # primitive; the depth bound belongs on the RESULTING region's short
-        # side, and the spurious spans need eliminating first. Kept as one
-        # region until that is built — an honest lump beats a confident
-        # mis-split. `room_dims.printed_widths` (4'0" / 3'6" here) is ready.
-        _bands = _bal_free.copy()
-        _bals, _ = _rooms_from_free(_bands, drop_border=False)
-        for _b in _bals:
-            _b["type"] = "balcony"
-            _b["open_side"] = True
-            _b["_lab"] = -1              # never matched to a printed room label
-        # what is left is too deep to be a balcony
-        _rest = cv2.bitwise_and(_bal_free, cv2.bitwise_not(_bands))
-        _deep, _ = _rooms_from_free(_rest, drop_border=False)
-        _kept_deep = []
-        for _d in _deep:
-            _d["_lab"] = -1
-            _kept_deep.append(_d)         # untyped -> counts as carpet
-        if _bals or _kept_deep:
-            rooms += _bals + _kept_deep
+    # B-1 / B-4 / B-5: THE BALCONY IS MEASURED FROM ITS DRAWN EDGE (§0.1).
+    #
+    # It used to be `foot_ext - foot` — a difference between two masks, which
+    # measures where the ring bridging reached, not where the balcony is. That
+    # was proved an ARTEFACT on 14 Aug: flat-1's balcony sits at x -3.92..0.00,
+    # west of the linework origin, so it was off-canvas entirely and the 42.7
+    # sqft it reported could not have been that balcony (§12).
+    #
+    # Now: each railing run classified `railing` (ends on wall, turns, and a
+    # depth matching a width the SHEET PRINTS) is closed back against the wall
+    # and filled. Wall pixels are subtracted so thickness is never counted as
+    # floor. The run is drawn on this scratch mask ONLY — walls_poly comes from
+    # `m` and is untouched, so the open face is still never built as a wall.
+    if rooms and _rail_runs_raw:
+        _bals = []
+        for _r in _rail_runs_raw:
+            if _rail0.classify(_r, _pw0) != "railing":
+                continue
+            _pts = [(int(u * NORM_PPX) + pad_x, int(v * NORM_PPX) + pad_y)
+                    for u, v in _r["polyline_ft"]]
+            # the run's BBOX is the pocket: a balcony run is axis-aligned and
+            # 3-sided, and the 4th side is the building wall it returns to. A
+            # convex hull is wrong here — flat-2's run is an L (2 segments), so
+            # its hull is a triangle and loses the whole balcony.
+            _bm = np.zeros_like(m_env)
+            cv2.rectangle(_bm, (min(q[0] for q in _pts), min(q[1] for q in _pts)),
+                          (max(q[0] for q in _pts), max(q[1] for q in _pts)), 255, -1)
+            # subtract the UNSEALED wall mask: `m_env` is sealed with a 4 ft
+            # kernel, which fills a 3.37 ft balcony solid and loses it entirely
+            # (flat-2 measured 0 sqft against a printed 3'6"). The seal is a
+            # gap-bridging artefact, not wall.
+            _bm = cv2.bitwise_and(_bm, cv2.bitwise_not(m))
+            # never count space already counted as a room (no double count)
+            for _rm in rooms:
+                if _rm.get("_lab", -1) > 0:
+                    _bm[rlab == _rm["_lab"]] = 0
+            _a = int((_bm > 0).sum())
+            if _a < small_room_px:
+                continue
+            _c2, _h2 = cv2.findContours(_bm, cv2.RETR_EXTERNAL,
+                                        cv2.CHAIN_APPROX_SIMPLE)
+            _big = max(_c2, key=cv2.contourArea)
+            _poly = [[fx(int(q[0][0])), fy(int(q[0][1]))]
+                     for q in cv2.approxPolyDP(_big, 1.5, True)]
+            _mx, _my = np.nonzero(_bm)
+            _bals.append({"x": fx(int(_my.mean())), "y": fy(int(_mx.mean())),
+                          "area_sqft": round(_a / (NORM_PPX ** 2), 1),
+                          "polygon_ft": _poly, "_lab": -1,
+                          "type": "balcony", "open_side": True,
+                          "depth_ft": _r["depth_ft"] if "depth_ft" in _r
+                          else _rail0.enclosed_depth_ft(_r),
+                          "_bbox_ft": (fx(_my.min()), fy(_mx.max()),
+                                       fx(_my.max()), fy(_mx.min()))})
+        if _bals:
+            rooms += _bals
             warnings.append(
-                f"{len(_bals)} balcony(s) ({sum(b['area_sqft'] for b in _bals):.0f} "
-                f"sqft, depth bounded by the sheet's own "
-                f"{max(_bal_ft) if _bal_ft else 0:.1f} ft balcony width) + "
-                f"{len(_kept_deep)} deeper space(s) "
-                f"({sum(d['area_sqft'] for d in _kept_deep):.0f} sqft) behind "
-                f"{len(_rej_lines)} open face(s)")
+                "%d balcony(s) measured from the DRAWN railing edge "
+                "(%.1f sqft; depths %s ft against the sheet's printed %s ft)"
+                % (len(_bals), sum(b["area_sqft"] for b in _bals),
+                   ", ".join("%.2f" % b["depth_ft"] for b in _bals),
+                   ", ".join("%.2f" % w for w in _pw0)))
     if not rooms:
         rooms, rlab = _rooms_from_free((m_env == 0).astype(np.uint8))
     if not rooms:
@@ -2632,8 +2699,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         wy = (ys.mean() + y0_)
         wx = (xs2.mean() + x0_)
         horiz = (xs2.max() - xs2.min()) >= (ys.max() - ys.min())
-        fcx = (wx - PAD_PX) / NORM_PPX
-        fcy = d_ft - (wy - PAD_PX) / NORM_PPX
+        fcx = (wx - pad_x) / NORM_PPX
+        fcy = d_ft - (wy - pad_y) / NORM_PPX
         if not _in_wing(fcx, fcy):
             continue
         if horiz:
@@ -2917,10 +2984,11 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                   and math.hypot(it[2].x - it[1].x, it[2].y - it[1].y) / ppf >= 0.8]
         _wl = [(_ftp(g[0], g[1]), _ftp(g[2], g[3])) for g in struct]
         _railings = _rail.trace(_lines, _wl)
+        _pw = printed_balcony_widths()
+        _railings["printed_widths_ft"] = _pw
         for _r in _railings["runs"]:
-            _r["classification"] = ("railing"
-                                    if _r["ends_on_wall"] >= 2 and _r["turns"] >= 1
-                                    else "unclassified")
+            _r["depth_ft"] = _rail.enclosed_depth_ft(_r)
+            _r["classification"] = _rail.classify(_r, _pw)
         _n = sum(1 for _r in _railings["runs"] if _r["classification"] == "railing")
         if _railings["runs"]:
             warnings.append(
@@ -2951,6 +3019,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # overall-dimension envelope; None when the sheet states neither,
             # and then the check is skipped rather than guessed.
             "footprint_sqft": footprint_sqft,
+            # canvas instrument: the wall extent, the railing-derived bound
+            # that grew it, and the resulting raster (px). Reporting only.
+            "canvas": {"wall_extent_ft": [0.0, 0.0, round(w_ft, 2), round(d_ft, 2)],
+                       "railing_bound_ft": list(_canvas_ext) if _canvas_ext else None,
+                       "raster_px": [W, H],
+                       "pads_px": [pad_x, pad_y, pad_r, pad_b]},
             "plot_sqft": _plot_sqft,
             # REGISTRATION for the wall overlay (instrument, Phase 0): how to
             # put a scene coordinate (FEET, origin bottom-left) back onto the
