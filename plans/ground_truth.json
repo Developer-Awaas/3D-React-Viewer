@@ -142,7 +142,7 @@
     "Balcony"
    ],
    "wd_legend": "use default_opening_legend (provided 2026-07-10)",
-   "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
+   "plot_envelope": "CORRECTED 2026-08-15 - the same wrong figure was carried here by copy: this sheet measures 80.0 x 47.8 ft, so 38.25 x 64.167 cannot be its plot either. Plot UNKNOWN on this sheet.",
    "parsing_strategy": "split the layout sheet into individual flat/wing modules (separate 3D outputs) to avoid spatial geometry overlap - user directive",
    "r2_finding_2026_08_11": {
     "verdict": "REJECTED - room detection on this sheet is NOT trustworthy",
@@ -160,6 +160,15 @@
     "why_the_same_as_FLOOR_PLAN": "FLOOR PLAN lost the identical artefact (42.7 sqft) for the identical reason, and there the replacement is CHECKED: flat-1 measures 3.92 ft against a printed 4'0\". Here there is no such check.",
     "why_unverifiable": "this sheet prints no area statement (R-8 blind) and classifies 0 of 38 railing runs, because it has no trusted paired walls so `ends_on_wall` is always 0. Nothing on this sheet can confirm or refute the 354.5.",
     "do_not": "do not treat this as evidence the new balcony rule is wrong OR right on this sheet; it is silent here. R-2 58.6 guard still stands."
+   },
+   "plot_envelope_superseded": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10 - WRONG: duplicated from the FIRST FLOOR entry, contradicts this sheet's own 80.0 x 47.8 ft extent",
+   "two_views_finding_2026_08_15": {
+    "what": "TWO PLANS SIDE BY SIDE on one sheet (Rahul, 15 Aug): FIRST FLOOR on the left, TYPICAL FLOOR (2nd/3rd/4th) on the right. They differ only in the top-left room - society room vs bedroom.",
+    "evidence": "vertical empty band at x 38-42 ft with ZERO lines crossing it (contrast neelachala FIRST FLOOR, whose horizontal band has 11 terrace-hatch lines spanning it and is therefore ONE building)",
+    "currently_parsed_as_one": "YES - every room appears TWICE at dx ~43.5 ft (dining 164.7/164.6, bedrooms 87.5/87.4, 84.6/84.4, kitchens 50.8/49.9)",
+    "explains": "the 80.0 x 47.8 ft extent = two ~40 ft plans side by side; and the 530.5 sqft blob that wrecks R-2 (3.24x its printed size) STRADDLES the band at x 35.1-61.1, merging rooms from both plans",
+    "does_NOT_explain": "the 19% scale error (printed room dims imply ppf 7.14 against the column-box 8.80). That scale is derived from column boxes, independent of the extent, so it is a SEPARATE defect.",
+    "do_not": "do not accept any area or room-count improvement here until the two views are separated; R-2 58.6 guard stands"
    }
   },
   "neelachala FIRST FLOOR.pdf": {
@@ -216,14 +225,8 @@
     "drg.room",
     "10'-0\" X 13'-5\""
    ],
-   "plot_envelope": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10",
+   "plot_envelope": "CORRECTED 2026-08-15 - NOT the plot. 64'-2\" is the BOTTOM BLOCK's vertical dimension only. This sheet is ONE floor plan of ONE building with TWO BLOCKS (towers) on one plot, separated by a real 8 ft gap: bottom block 2 flats, top block 3 flats, FIVE flats on one floor. Measured wall extent: top block 96.7 ft deep, bottom block 70.8 ft deep, full building 41.6 x 180.6 ft. The plot is UNKNOWN and must not be inferred from a block dimension.",
    "parsing_strategy": "CORRECTED 2026-08-15: this sheet is TWO COMPLETE COPIES OF THE SAME PLAN stacked vertically - NOT wings, NOT sections. An 8 ft empty band at y 98-108 ft separates blocks at 0-98 and 108-182 ft; 38'-3\" overall is printed twice (y 97.4 and 109.4); both halves carry full room labels and dimensions; FIRST FLOOR PLAN titles the lower block at y 185.9. Both draw on the SAME layers (0, chhaja, a-text), so only POSITION can separate them. Fix = a VIEW SPLITTER, not wing-splitting. (previous wording: 'split the layout sheet into individual flat/wing modules' - wrong diagnosis)",
-   "two_plans_finding_2026_08_15": {
-    "what": "the 177 ft raster depth is two buildings, not one deep building",
-    "evidence": "8 ft band with zero wall-pair endpoints at y 98-108 ft; blocks 0-98 and 108-182; 38'-3\" printed twice; both halves fully labelled",
-    "consequence": "every extent-based instrument on this sheet spans two plans, which is why the position gate is uncomputable and the footprint inflated to 7614 sqft on a 2455 sqft plot in Phase 1 attempt 1",
-    "do_not": "do not treat this as a wing or section problem; do not gate anything against this sheet's extent until a view splitter runs"
-   },
    "r2_2026_08_15_INSTRUMENTED": {
     "status": "PROMOTED TO INSTRUMENTED - the 31.1% verdict of 11 Aug is WITHDRAWN",
     "r2_median_match_pct": 96.8,
@@ -241,6 +244,14 @@
      "different_from_ghatikia": "YES - probably a DIFFERENT disease. GHATIKIA fails across 14 matched rooms with a consistent ~57% shortfall (systematic under-segmentation). Here only ONE printed dimension matched a room at all (r1: measured 164.2 vs printed 97.2, 31.1%), so the headline is a single sample: the primary failure is that R-2 cannot MATCH this sheet's printed dimensions to rooms, and r1 reading 1.7x its label suggests merging. NOT INVESTIGATED - flag only.",
      "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80% across several rooms"
     }
+   },
+   "plot_envelope_superseded": "38'-3\" W x 64'-2\" D (38.25 x 64.167 ft) - CONFIRMED 2026-07-10 - WRONG: read a block dimension as the plot (kept visible per the 0.1 re-baselining rule)",
+   "two_blocks_finding_2026_08_15": {
+    "CORRECTION": "the 15 Aug 'two complete plans on one sheet' reading is WRONG (Rahul, 15 Aug). It is ONE plan of ONE building with TWO BLOCKS on one plot.",
+    "evidence_they_are_one_building": "the diagonal TERRACE hatch bridges the gap: 20 lines cross the 98-108 ft band and 11 SPAN it fully, all on layer `0`. The first-floor slab bridges the gap as a private terrace and the hatch marks it around the flats.",
+    "blocks": "top block 39.0 x 96.7 ft (3 flats), bottom block 41.6 x 70.8 ft (2 flats, printed 64'-2\" vertical). Five flats, one floor.",
+    "current_bug": "the WING SPLITTER picks one block and drops the other: 'wing auto-pick: wing 1 is the floor plan (rooms=7, doors=12)'. The tool reports 38.25 x 64.17 ft and silently discards the top block - 3 of 5 flats.",
+    "do_not": "DO NOT build a view splitter. An empty band is not evidence of two drawings."
    }
   },
   "BRICK WORK LAYOUT.pdf": {

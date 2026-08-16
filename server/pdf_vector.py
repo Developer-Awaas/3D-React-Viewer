@@ -1968,6 +1968,63 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         _canvas_ext = None
 
+    # --- §10.2 DIMENSION ANCHORS (15 Aug 2026) — the FOURTH INSTRUMENT (D-7).
+    # An arrow that lands where no wall was detected proves the parse wrong.
+    # Additive: nothing downstream reads this, so no number can move. Two
+    # routes, because sheets differ — a `dim`/`dimension` LAYER where one
+    # exists (its long lines are the dimension lines, the short perpendicular
+    # ones touching their ends are the extension lines that reach the edge),
+    # otherwise the sheet's own dimension TEXT anchoring the nearest long line.
+    _dim_anchors = None
+    try:
+        import dimensions as _dim
+        _dl = [(_rf(it[1].x, it[1].y), _rf(it[2].x, it[2].y))
+               for d in drawings if "dim" in (d["lname"] or "")
+               for it in d["items"] if it[0] == "l"]
+        _texts = []
+        for _t in (live_words() or []) + (ocr_words() or []):
+            _v = _dim.parse_value_ft(_t.get("text"))
+            if _v:
+                _texts.append((_v, _rf((_t["x0"] + _t["x1"]) / 2.0,
+                                       (_t["y0"] + _t["y1"]) / 2.0)))
+        _long = [(a, b) for a, b in _dl if _dim._len(a, b) >= 1.0]
+        _short = [(a, b) for a, b in _dl
+                  if _dim.EXT_MIN_FT <= _dim._len(a, b) < _dim.EXT_MAX_FT]
+        _route = "dim_layer"
+        if len(_long) < 3:                      # no dim layer: text route
+            _route = "text"
+            _all = [(_rf(it[1].x, it[1].y), _rf(it[2].x, it[2].y))
+                    for d in drawings for it in d["items"] if it[0] == "l"]
+            _all = [(a, b) for a, b in _all if _dim._len(a, b) >= 1.0]
+            _long, _short, _seen = [], [], set()
+            for _v, _c in _texts:
+                _near = [(a, b) for a, b in _all
+                         if min(_dim._len(a, _c), _dim._len(b, _c))
+                         <= _dim.NEAR_TEXT_FT]
+                if not _near:
+                    continue
+                _best = min(_near, key=lambda ab: min(_dim._len(ab[0], _c),
+                                                      _dim._len(ab[1], _c)))
+                _k = (round(_best[0][0], 2), round(_best[0][1], 2),
+                      round(_best[1][0], 2), round(_best[1][1], 2))
+                if _k not in _seen:
+                    _seen.add(_k)
+                    _long.append(_best)
+        _wl_ft = [(_rf(g[0], g[1]), _rf(g[2], g[3])) for g in struct]
+        if _long:
+            _dim_anchors = _dim.anchors(_long, _short, _texts, _wl_ft)
+            _dim_anchors["route"] = _route
+            _sm = _dim_anchors["summary"]
+            warnings.append(
+                "dimension anchors (§10.2 instrument, %s route): %d dimension(s), "
+                "%d/%d endpoint(s) land within 0.5 ft of a detected wall face "
+                "(%.0f%%) — an arrow landing where no wall was detected means "
+                "the parse is wrong, not the drawing"
+                % (_route, _sm["dimensions"], _sm["within_0_5_ft"],
+                   _sm["endpoints"], _sm["pct_on_a_detected_face"] or 0))
+    except Exception:
+        _dim_anchors = None
+
     # --- normalized raster -> solid wall bands ---
     sc = NORM_PPX / ppf
     # asymmetric pads: the FRAME is unchanged (x0/y0/d_ft and every ft value
@@ -3026,6 +3083,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "footprint_sqft": footprint_sqft,
             # canvas instrument: the wall extent, the railing-derived bound
             # that grew it, and the resulting raster (px). Reporting only.
+            "dimension_anchors": _dim_anchors,
             "canvas": {"wall_extent_ft": [0.0, 0.0, round(w_ft, 2), round(d_ft, 2)],
                        "railing_bound_ft": list(_canvas_ext) if _canvas_ext else None,
                        "raster_px": [W, H],
