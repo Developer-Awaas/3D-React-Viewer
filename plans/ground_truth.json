@@ -25,6 +25,14 @@
     ],
     "known_open": "R-8 built-up knowingly RED at 68.1% (1161 parsed vs 1705 printed): room COVERAGE is short - 9 pockets found of ~16 rooms. Sizes are right; coverage is the next gap. R-8 must RISE as coverage improves, never silently fall.",
     "rule": "PLAN-READING-RULES 0.1: a golden may be re-baselined ONLY when the drawing's own printed data disproves it."
+   },
+   "r8_ratchet_2026_08_16": {
+    "raised_to": 99.4,
+    "actual": 99.8,
+    "previous": 98.8,
+    "cause": "NOT a tuning change (§0.1). Two spaces that were in NO bucket at all were admitted: the UTILITY under §10.1 CE-5 (36.1 sqft, measured from its drawn edge, depth 4.92 vs printed 4'6\") and the two DUCT voids under §4 D-5 (5.0 and 2.3 sqft, read from the drawn rectangle). Built-up 1658.8 -> 1694.9 -> 1702.2 against a printed 1705.",
+    "unchanged_by_it": "carpet 1203.5, R-2 97.0, footprint 1705.3, plot 3371",
+    "pin_vs_actual": "pinned at the authorised 99.4, not the achieved 99.8 - raising to 99.8 is Rahul's call"
    }
   },
   "attachment-1 FIRST FLOOR PLAN (photo, awaiting file)": {

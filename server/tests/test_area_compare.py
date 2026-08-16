@@ -200,5 +200,9 @@ def test_floor_plan_pdf_end_to_end():
     # human ruling: coverage improved (good — re-baseline this floor upward,
     # with the evidence, per §0.1) or something regressed (bad — investigate).
     # Do not delete the check, and do not relax it to make a change pass.
-    assert bu["match_pct"] >= 98.8
+    # RATCHET RAISED 98.8 -> 99.4 on 16 Aug 2026 (Rahul), per §0.1: the cause
+    # is the UTILITY admitted under §10.1 CE-5 — 36.1 sqft that was in no
+    # bucket at all — not a tuning change. Duct detection (§4 D-5) then took
+    # the actual to 99.8; the pin stays at the authorised 99.4.
+    assert bu["match_pct"] >= 99.4
     assert bu["printed_sqft"] == 1705.0       # the sheet's own figure, fixed

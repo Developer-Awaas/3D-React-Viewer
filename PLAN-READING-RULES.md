@@ -103,6 +103,21 @@ of geometric inference got backwards.
 
 ---
 
+### 0.1.9 GEOMETRY FIRST — the printed total is the CHECK, never the TARGET
+
+Ruling 15 Aug 2026 (Rahul). **Do not chase the printed total.** Architects
+count carpet differently — some include bathrooms, some do not — so printed
+totals vary by CONVENTION, not only by correctness. The method is:
+
+1. Measure every wall and its direction. Lay the walls correctly.
+2. Derive area from that geometry.
+3. THEN compare to the printed figure and **explain the difference**.
+
+The gap is information: it tells us what is missing, or which convention the
+architect used. A number tuned to hit a printed total has destroyed that
+information and can no longer be checked by anything. This is why R-8 is a
+ratchet on a DERIVED number and never an input to one.
+
 ## 1. What is NOT the building
 
 Before anything else, these must be excluded from geometry, area and 3D.
@@ -192,6 +207,32 @@ Before anything else, these must be excluded from geometry, area and 3D.
 
 ---
 
+**Worked case — FLOOR PLAN.pdf (re-measured 16 Aug 2026, correcting the same
+day's first reading).** Two ducts, stacked vertically, immediately LEFT of the
+lift, drawn as plain 4-line rectangles on the layer **`ar wall`**:
+
+| | extent (ft) | size | area |
+|---|---|---|---|
+| duct-1 | x 25.58-26.58, y 7.89-12.90 | **1.00 x 5.01 ft** | 5.0 sqft |
+| duct-2 | x 25.58-26.58, y 4.75-7.06 | **1.00 x 2.31 ft** | 2.3 sqft |
+| every column on the sheet | — | **0.83 x 1.33 ft** | 1.1 sqft |
+
+They match a column in NEITHER dimension and sit on a different layer, exactly
+as D-6 predicts. **They are NOT in the column set — the column count of 26 is
+correct and was never contaminated.** They are not detected as anything either:
+at 5.0 and 2.3 sqft both fall under the 18 sqft small-room floor. **The gap is
+DETECTION, not separation.** Position matches D-1 exactly: hard against the
+lift's west wall, with the toilet above and the lobby below.
+
+**D-6 SIZING RATIONALE (Rahul, 16 Aug 2026).** Duct size is driven by
+MAINTENANCE ACCESS: roughly two hands must fit, or the duct opens onto a common
+space so it can be reached. That is why a duct is narrow in one direction and
+free in the other — it is sized by reach, not by load. A column is sized by
+load and is therefore compact in BOTH directions. **A duct may share ONE
+dimension with a column; it will not share both.**
+
+**D-5 (§9): a duct is COMMON AREA**, alongside lift, staircase and lobby.
+
 ## 5. Lift
 
 **Signature:** a large box, usually with an X across it, with **LIFT** written inside or beside it.
@@ -204,6 +245,10 @@ Before anything else, these must be excluded from geometry, area and 3D.
 
 ---
 
+**L-6 (Rahul, 16 Aug 2026): build the lift as its own SHAFT** — walls, open
+shaft, NO floor. It is a void through the slab, not a room with a floor plate.
+*Future (not now): a lift door recessed into the wall for realism — see §11.*
+
 ## 6. Staircase
 
 **Signature:** a box containing many closely-spaced parallel lines (the treads), usually split by a partition separating the up-flight from the down-flight, with an **UP** arrow.
@@ -215,6 +260,10 @@ Before anything else, these must be excluded from geometry, area and 3D.
 5. **S-5** — Staircase is common area. Not carpet.
 
 ---
+
+**S-6 (Rahul, 16 Aug 2026): model the ACTUAL STEPS, not a solid block.** A
+staircase is treads and risers, and a solid extrusion is visibly wrong in the
+walkthrough as well as wrong for area.
 
 ## 7. Cupboard / wardrobe
 
@@ -380,8 +429,23 @@ POINTER, and what it points at is readable geometry.
   wrong.** It works on any sheet that prints dimensions — including BRICK WORK,
   which is blind on R-8, R-2 and the printed-widths check.
 
+**CE-5 (Rahul, 16 Aug 2026) — UTILITY IS A BALCONY-TYPE STRUCTURE, NOT A
+ROOM.** FLOOR PLAN's flat-1 utility (printed `UTILITY 4'6" WIDE`) has **two
+sides closed** — one coinciding with the kitchen wall, one with the building's
+external wall — and **two sides OPEN**, framed by thin gapped lines. It must be
+read by the B-2a railing tracer like a balcony, never as an enclosed room.
+**Measured 16 Aug: the tracer ALREADY SEES IT** — a 12.33 ft run, 1 turn, both
+ends on wall, enclosed depth **4.91 ft**, at x 25.6-33.2, y 19.1-24.1. It is
+rejected only because the printed-width list is balcony-only (4'0", 3'6"); the
+sheet prints 4'6" for it and `room_dims.printed_widths(toks, "UTI")` already
+reads that value. **This run was called a "false positive" in four reports and
+is not one.**
+
 ## 11. Deferred — to be written
 
+- **Ask the user for NUMBER OF FLOORS (G+n)** so the expected column-size band can be derived — C-4 already carries the G+n bands but nothing supplies n
+- **Structural logic for where a column MUST sit** (span rules, load paths) — a deeper enhancement, noted only
+- Lift door recessed into the shaft wall (§5 L-6) — realism, after the shaft
 - ~~Diagonal hatch marking open terrace on a typical floor plan (§1)~~ — **RESOLVED 15 Aug 2026**: the hatch marks FIRST-FLOOR TERRACE around the flats, INSIDE the building line. Written into §1. Not outside-ground, never discarded as such
 - 3-line window variant — awaiting an example
 - Chhajja / sunshade projections: currently read as floating wall fragments; must be treated as projections, not walls
@@ -407,6 +471,26 @@ POINTER, and what it points at is readable geometry.
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
 | 11 Aug 2026 | **R-5 / L-5 / S-5 BUILT** — lift, staircase and lobby are split out of carpet into a separate `common_area` line (`area_statement.COMMON_TYPES`); built-up covers carpet + common, so the split never deducts common area from the plate. Tiny-room floor lowered 28 → 18 sqft ONLY for spaces fully ringed by wall (L-4), which recovers FLOOR PLAN's 5'x5' lift. FLOOR PLAN: carpet 1032.6 → 842.9 (expected dip), common 213.4 vs printed 246, R-8 79.2% → 80.6% | Rahul |
+| 16 Aug 2026 | **AN IMPOSSIBLE INSTRUCTION IS MEASURED AND REPORTED, NEVER APPROXIMATED.** The specified duct fix — lower the small-space area floor — cannot work at any value: a 1.00 ft duct interior fills solid under the 0.88 ft wall-merge kernel, so no free-space component exists to admit. Measured, reported, reverted, and replaced with the right primitive: **read the rectangle the drafter drew.** Approximating the instruction (a lower floor plus ad-hoc filters) would have shipped noise and hidden the real reason | Rahul |
+| 16 Aug 2026 | **THE ZEROS ON GHATIKIA AND FIRST FLOOR ARE NOT THE THIN-WALL LIMIT.** Both rejected candidates were killed by the OVERHANG test and by a wide margin, not marginally: GHATIKIA **2.63 x 4.36 ft (11.5 sqft) overhanging 2.62 ft** against a 0.50 ft limit, FIRST FLOOR **3.47 x 3.47 ft (12.1 sqft) overhanging 1.66 ft**. Measured wall thickness is 0.52 ft and 0.42 ft against candidate widths of 2.63 and 3.47 ft, so the thickness guard never fired and the recorded limit is not what is happening. Their sides are shared with longer wall runs — a shaft carved into a corner rather than drawn as its own box. **Whether that shape should count as a duct is a RULING, not a threshold** | Rahul |
+| 16 Aug 2026 | **PHASE 1's BLOCKER IS GONE.** The 14 Aug ruling was "nothing can be admitted until balcony stops being `foot_ext - foot`", because every ring improvement collapsed the balcony to 0. Balcony has been measured from the DRAWN railing edge since 15 Aug and the mask subtraction is deleted; `foot_ext` now feeds the overlay only. **The `ar stairs` admission can be retried, and its old failure mode cannot recur by that mechanism.** The common-area gap needs it: 215.1 of the printed 246 sqft is still absent, and it is not one space but TWO — the lobby (96.6 printed) AND the staircase (~124 by subtraction), both in the same core zone, both dependent on reading walls by signature | Rahul |
+| 16 Aug 2026 | **STANDING RULE — BEFORE NAMING AN EXCEPTION, CHECK THE PROPERTY ACROSS THE WHOLE POPULATION.** Twice in one week: the 12.33 ft run called a "false positive" (it was the utility, a real element), and two columns called "ducts" (all 26 carry the same X). Both times a single object was named from its own appearance without asking whether the property that made it look exceptional is shared by everything around it. **The check is cheap and it is not optional** | Rahul |
+| 16 Aug 2026 | **R-8 RATCHET RAISED 98.8 -> 99.4** (actual 99.8), per §0.1 evidence: the cause is two spaces admitted that were in NO bucket at all — the UTILITY (36.1 sqft, §10.1 CE-5) and the two DUCT voids (5.0 + 2.3 sqft, §4 D-5) — not a tuning change. Carpet 1203.5, R-2 97.0 and footprint 1705.3 all unchanged through both | Rahul |
+| 16 Aug 2026 | **DUCTS DETECTED FROM THE DRAWN RECTANGLE — the raster route is IMPOSSIBLE, not merely hard.** Lowering the small-space floor to 2 sqft (the mechanism specified) cannot work: a duct interior is **1.00 ft across against a 0.88 ft wall-merge kernel plus dilation**, so it fills solid and no free-space component exists at ANY floor. It also admitted a 3.2 sqft false pocket in the plain test fixture. Reverted; `enclosed_boxes` reads the rectangle the drafter drew instead. FLOOR PLAN **2 ducts (5.0, 2.3 sqft), common 23.6 -> 30.9**; BRICK WORK 2 (3.7, 3.0), common 75.7 -> 82.4; the neelachala pair 0 | Rahul |
+| 16 Aug 2026 | **TWO SHAPES IMITATE A DUCT, and both are separable.** (a) A **WALL BODY** between two cross-walls closes into a rectangle — rejected because a wall's faces OVERHANG the box while a duct's sides begin and end at it. (b) A **DOOR OPENING drawn as its own rectangle** inside the wall band has no overhang either — rejected because it is exactly as narrow as the WALL (the 40x20 fixture draws 4.0 x 0.8 ft against 0.8 ft walls), while FLOOR PLAN's ducts are 1.00 ft against 0.83 ft walls. The wall thickness is MEASURED per sheet, never assumed. **Known limit: a sheet whose walls are as thick as its ducts would defeat test (b)** | Rahul |
+| 16 Aug 2026 | **THE X-IN-A-RECTANGLE RULE IS DEAD — it would have deleted every column on FLOOR PLAN.** Rahul's ruling: neelachala FIRST FLOOR draws columns as BOLD rectangles with a BOLD cross, BRICK WORK as a plain rectangle with a cross. Then measured here: **all 26 of FLOOR PLAN's columns carry a true corner-to-corner X** (and 41-44 hatch strokes each). So X-in-a-rectangle means COLUMN on this sheet, and the proposed test would have voided the entire column set on 3 of 4 sheets, not 2. **No shape rule can settle an ambiguous symbol** | Rahul |
+| 16 Aug 2026 | **I NAMED TWO COLUMNS AS DUCTS AND DID NOT CHECK THE POPULATION.** I saw two X-boxes near the lift, matched them to Rahul's description of where the ducts are, and reported "2 of 26 columns are ducts" — without asking whether the other 24 carried the same mark. They all do. Re-measured, the REAL ducts are 1.00 x 5.01 ft and 1.00 x 2.31 ft on layer `ar wall`, against columns at 0.83 x 1.33 ft on `column`: **they match in neither dimension and were never in the column set.** Second instance this week of naming a thing before checking the population (the first was the 12.33 ft "false positive"). **Check the population before naming the exception** | Rahul |
+| 16 Aug 2026 | **C-2 AND D-1 WERE MOOT HERE, AND THE REAL GAP IS DETECTION.** Measured anyway on FLOOR PLAN's 26 columns: same-size neighbours at 10-20 ft run 2-11 per column, and the two boxes I had mis-called ducts sit at 7 neighbours each, dead centre of the grid — C-2 would NOT have flagged them, nor would D-1 (they sit ON wall junctions, the column predicate). Neither test could have saved a mis-identification. The actual ducts are **invisible to the parser**: 5.0 and 2.3 sqft, both under the 18 sqft small-room floor | Rahul |
+| 16 Aug 2026 | **TOLERANCE: 10% PROPORTIONAL replaces the fixed +-0.25 ft** (Rahul). Printed dimensions are wall-to-wall while our depth runs to the DRAWN edge (§10.2 D-4), so a basis gap is expected; a proportion scales with the element instead of tuning a constant to whichever case was in front of us. **PROVISIONAL** — if the gap proves CONSISTENT rather than proportional, a basis correction replaces it and is the better fix: a tolerance hides the gap, a basis correction explains it. Admitted and rejected exactly as before on all four sheets; FLOOR PLAN's 4.91 ft run still rejected against 4'0"/3'6" | Rahul |
+| 16 Aug 2026 | **UTILITY ADMITTED AS ITS OWN LINE (CE-5).** It was in NO bucket — not a room, not carpet, not balcony: **36.1 sqft simply absent**. Now measured from its drawn edge (depth 4.92 vs printed 4'6"), typed `utility`, and given its own `utility_area` line: not carpet (Rahul: not a room), not balcony (different element), not common (private to the flat). Built-up **1658.8 -> 1694.9**, **R-8 97.3 -> 99.4**; carpet, common, balcony and R-2 all unchanged | Rahul |
+| 16 Aug 2026 | **STANDING METHOD RULE — DRAW IT BEFORE DIAGNOSING IT.** No arithmetic on FLOOR PLAN's 43.4% said "area-statement table, sheet frame and company logo"; one overlay did, in one look. When an instrument disagrees with expectation, RENDER the disagreement before theorising about it — and register the render correctly (`get_pixmap()` already applies page rotation; rotating again put the walls on the title block) | Rahul |
+| 16 Aug 2026 | **VALUE FILTER BUILT (D-3): a candidate line with no VALUE near its midpoint is not a dimension.** A dimension states a number; title-block artwork does not. Scores: **FLOOR PLAN 43.4 -> 79.4%** (38 candidates -> 17 dimensions), **BRICK WORK 65.5 -> 70.2%** (74 -> 47), GHATIKIA 55.8% and FIRST FLOOR 60.4% unchanged (the TEXT route is value-anchored by construction). Additive; no number moved | Rahul |
+| 16 Aug 2026 | **DUCTS ARE BEING COUNTED AS COLUMNS.** FLOOR PLAN's two ducts (10 x 16 in, X-marked, left of the lift) sit on the layer `column` and pass the C-4 8-48 in band, so **2 of its 26 "columns" are ducts**. A duct is a HOLE in the slab, a column is structure, and they are currently the same object to us. The X mark is the discriminator and is not read (§4) | Rahul |
+| 16 Aug 2026 | **THE "12.33 FT FALSE POSITIVE" WAS THE UTILITY, AND IT IS A REAL BALCONY-TYPE STRUCTURE (CE-5).** Reported as a false positive four times, including in the ruling that built the depth filter. It is a correctly traced 12.33 ft run around flat-1's utility (4.91 ft deep against a printed 4'6"), rejected only because the printed-width list is balcony-only. **A run that fails a filter is not thereby a false positive — check what it is before naming it one** | Rahul |
+| 16 Aug 2026 | **CHHAJA LOCATED — it is a LAYER NAME, not sheet text** (which is why it could not be found by reading the drawing). Exported `overlays/10-chhaja-only-FIRST-FLOOR.png` (403 lines) and `10-chhaja-only-GHATIKIA.png` (19). It draws as **groups of closely-spaced parallel lines forming hatched bands on the OUTER wall at window and opening positions** — sunshades in plan. **FLOOR PLAN and BRICK WORK carry NO chhaja layer at all**, so the requested BRICK WORK export is empty and the neelachala pair is where the ruling has to be made | Rahul |
+| 16 Aug 2026 | **THE 30 RED ANCHORS ARE SHEET FURNITURE, NOT MISSING WALLS — my 15 Aug reading was WRONG.** Located and attributed, all 29 (of 76 endpoints): **8 = AREA STATEMENT table rules, 8 = sheet frame corners, 12 = the ARCHITRAVE logo, 1 = a leader line pointing at the plot boundary** (seen in `overlays/9-dimension-anchor-red-zoom.png`). **Zero are missing wall faces.** All four sources are TITLE-BLOCK ARTWORK sitting on the `dim` layer, which the "long line on a dim layer = dimension line" rule cannot tell from a dimension. Excluding sheet furniture, FLOOR PLAN scores **33 of 45 = 73.3%**, in line with BRICK WORK's 66.4% and FIRST FLOOR's 57.5% | Rahul |
+| 16 Aug 2026 | **A LOW INSTRUMENT SCORE IS NOT EVIDENCE OF A BAD PARSE UNTIL THE EXTRACTION IS CLEARED.** The score is joint extraction-plus-detection (flagged 15 Aug as a collision, confirmed 16 Aug). The picture is what separates them: no amount of arithmetic on 43.4% said "logo and table", one overlay did. **Draw it before diagnosing it.** Obvious next filter, NOT built: only 17 of FLOOR PLAN's 38 candidate lines have a dimension VALUE near their midpoint, and all four artefact classes are valueless | Rahul |
+| 16 Aug 2026 | **THE OVERLAY MUST NOT BE RE-ROTATED.** `page.get_pixmap()` already applies page rotation, so rotating the render again misregisters every layer — walls landed on the area-statement table on the first attempt. Caught by eye in one look, invisible in the numbers. Rendering recipe for reference PNGs: `get_pixmap(dpi=110)` + `overlay.build_layers(scene, 110.0)`, no further transform | Rahul |
 | 15 Aug 2026 | **THE FOURTH INSTRUMENT IS BUILT (§10.2 D-7), additive only.** `server/dimensions.py` (pure) + `meta.dimension_anchors`: every dimension's value, both endpoints, the nearest detected wall face and the distance, plus the summary that IS the instrument. Two routes, decided per sheet: a `dim`/`dimension` LAYER (its long lines are dimension lines; short PERPENDICULAR lines touching their ends are extension lines, and the far end of an extension is the edge, D-2), else the sheet's own dimension TEXT anchoring the nearest long line. Endpoints landing within 0.5 ft of a detected face: **BRICK WORK 65.5% (97/148, 74 dimensions) — the sheet blind on R-8, R-2 and B-5**; FIRST FLOOR 60.4% (134/222); GHATIKIA 55.8%; **FLOOR PLAN 43.4%**. Feeds nothing | Rahul |
 | 15 Aug 2026 | **THE INSTRUMENT FIRED ON THE FLAGSHIP SHEET IMMEDIATELY.** FLOOR PLAN scores R-8 97.3 and R-2 97.0 and yet **30 of its 76 dimension endpoints land more than 5 ft from ANY detected wall** (BRICK WORK 1 of 148, GHATIKIA 0 of 52, FIRST FLOOR 7 of 222). Its dimensions point at faces we never detected — consistent with the layer-names-lie finding, since only 132 named wall segments survive there. **Coverage and room sizes can both be right while wall FACES are missing, and no existing instrument could see that** | Rahul |
 | 15 Aug 2026 | **GLYPH STROKES SEPARATE FROM GEOMETRY BY LENGTH.** FLOOR PLAN's `dim` layer carries 38 dimension lines and 202 short lines among **8,534 dead-text glyph strokes** (BRICK WORK: 74 / 780 / 69,289). Everything below 0.1 ft is lettering; an extension line is 0.1-1 ft AND perpendicular to a dimension line AND touching its end. That triple test found 24 extension lines on FLOOR PLAN and 102 on BRICK WORK, with no glyph contamination | Rahul |

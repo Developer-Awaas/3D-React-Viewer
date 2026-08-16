@@ -76,8 +76,15 @@ def test_floor_plan_balcony_is_measured_from_its_drawn_edge():
     assert bals, "flat-1's balcony must be found"
     assert any(b["depth_ft"] == pytest.approx(3.92, abs=0.15) for b in bals)
     assert s["meta"]["canvas"]["railing_bound_ft"][0] < -3.5   # canvas reaches it
+    # the 4.91 ft run must never be a BALCONY. Since 16 Aug it is admitted as
+    # the UTILITY (§10.1 CE-5) — a covered-but-not-enclosed strip on its own
+    # line — so the test is that it is not counted as balcony, not that it is
+    # absent. It was called a false positive for four reports and is not one.
     assert not any(r.get("depth_ft") == pytest.approx(4.91, abs=0.05)
-                   for r in s["rooms"])                        # lobby not a balcony
+                   for r in s["rooms"] if r.get("type") == "balcony")
+    assert any(r.get("type") == "utility"
+               and r.get("depth_ft") == pytest.approx(4.91, abs=0.05)
+               for r in s["rooms"])
 
 
 # --- ONE-SIDED balconies (15 Aug 2026) --------------------------------------

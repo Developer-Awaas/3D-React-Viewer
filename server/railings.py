@@ -222,7 +222,14 @@ def trace(lines, wall_lines, **kw):
     return {"runs": runs, "dash_dot_strokes_dropped": n_dash}
 
 
-DEPTH_TOL_FT = 0.25          # measured error against printed: 0.08 and 0.13 ft
+# TOLERANCE: 10% of the PRINTED width, proportional (Rahul, 16 Aug 2026),
+# replacing a fixed +-0.25 ft. Printed dimensions are wall-to-wall while our
+# depth runs to the DRAWN edge (§10.2 D-4), so a basis gap is expected, and
+# 10% scales with the element instead of tuning a constant to whichever case
+# was in front of us. PROVISIONAL: if the gap proves CONSISTENT rather than
+# proportional, a basis correction replaces this and is the better fix — a
+# tolerance hides the gap, a basis correction explains it.
+DEPTH_TOL_FRAC = 0.10
 
 
 def _straight_depth_ft(run, wall_lines, min_ft=1.0, max_ft=12.0):
@@ -303,7 +310,27 @@ def enclosed_depth_ft(run, wall_lines=None):
     return round(got[0], 2) if got else None
 
 
-def classify(run, printed_widths_ft, tol=DEPTH_TOL_FT):
+def matched_kind(run, widths_by_kind, tol_frac=DEPTH_TOL_FRAC):
+    """Which PRINTED element a run's depth matches: ("balcony", 4.0),
+    ("utility", 4.5), or (None, None).
+
+    A sheet prints more than one kind of open-edged strip. FLOOR PLAN prints
+    `BALCONY 4' WIDE`, `3'6" WIDE BALCONY` and `UTILITY 4'6" WIDE`, and the
+    utility is a covered-but-not-enclosed space too (§10.1 CE-5) — so the run
+    is admitted the same way, and the KIND comes from which width it matched.
+    Pure."""
+    d = run.get("depth_ft") if run.get("depth_ft") is not None \
+        else enclosed_depth_ft(run)
+    if d is None:
+        return None, None
+    best = None
+    for kind, w in widths_by_kind or []:
+        if abs(d - w) <= tol_frac * w and (best is None or abs(d - w) < best[2]):
+            best = (kind, w, abs(d - w))
+    return (best[0], best[1]) if best else (None, None)
+
+
+def classify(run, printed_widths_ft, tol_frac=DEPTH_TOL_FRAC):
     """railing | unclassified. Three tests, all from the DRAWING:
 
     ends on the building wall (>=2), turns (>=1), and — the one that kills the
@@ -324,5 +351,5 @@ def classify(run, printed_widths_ft, tol=DEPTH_TOL_FT):
         else enclosed_depth_ft(run)
     if d is None or not printed_widths_ft:
         return "unclassified"
-    return "railing" if any(abs(d - w) <= tol for w in printed_widths_ft) \
+    return "railing" if any(abs(d - w) <= tol_frac * w for w in printed_widths_ft) \
         else "unclassified"

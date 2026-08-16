@@ -188,3 +188,42 @@ def test_no_trusted_walls_means_no_gate():
     neelachala FIRST FLOOR inflated to 47.6 x 185.3 ft."""
     assert pdf_vector.paired_extent([(0, 0, 100, 0)], 50.0) is None
     assert pdf_vector.inside_extent((0, -9999, 10, -9999), None, 5.0) is True
+
+
+# --- §4 D-5 DUCTS (16 Aug 2026) ---------------------------------------------
+# A duct is a wall-ringed VOID of 2-18 sqft. It cannot be found as free space:
+# FLOOR PLAN's are 1.00 ft across and the wall-merge closing kernel is 0.88 ft,
+# so the interior fills solid and NO area floor can reach it. It is read from
+# the rectangle the drafter drew.
+def test_a_small_closed_rectangle_is_found():
+    segs = [(25.58, 7.89, 26.58, 7.89), (25.58, 12.90, 26.58, 12.90),
+            (25.58, 7.89, 25.58, 12.90), (26.58, 7.89, 26.58, 12.90)]
+    assert pdf_vector.enclosed_boxes(segs) == [(25.58, 7.89, 26.58, 12.90)]
+
+
+def test_an_open_rectangle_is_not_a_duct():
+    """Three sides is a recess, not a shaft."""
+    segs = [(25.58, 7.89, 26.58, 7.89), (25.58, 12.90, 26.58, 12.90),
+            (25.58, 7.89, 25.58, 12.90)]
+    assert pdf_vector.enclosed_boxes(segs) == []
+
+
+def test_a_room_sized_box_is_not_a_duct():
+    segs = [(0, 0, 10, 0), (0, 10, 10, 10), (0, 0, 0, 10), (10, 0, 10, 10)]
+    assert pdf_vector.enclosed_boxes(segs) == []
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
+                    reason="confidential corpus not present")
+def test_floor_plan_finds_both_ducts_and_they_are_common_area():
+    import area_statement
+    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+        s = pdf_vector.parse(f.read())
+    ducts = [r for r in s["rooms"] if r.get("type") == "duct"]
+    assert len(ducts) == 2
+    assert all(d["void"] for d in ducts)                  # never solid in 3D
+    assert sorted(round(d["area_sqft"], 1) for d in ducts) == [2.3, 5.0]
+    st = area_statement.compute_area_statement(s)
+    assert st["common_area"]["sqft"] == pytest.approx(30.9, abs=0.2)
+    carpet_types = {r.get("type") for r in s["rooms"]}
+    assert "duct" in carpet_types                          # counted, not dropped

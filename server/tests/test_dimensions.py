@@ -50,9 +50,24 @@ class TestAnchors:
         assert r["summary"]["pct_on_a_detected_face"] == 100.0
 
     def test_without_extensions_the_offset_is_reported_not_hidden(self):
-        r = D.anchors([(self.A, self.B)], [], [], self.WALL)
+        """No extension line to follow, so the dimension line's own endpoint is
+        measured — 2 ft off the wall, and it SAYS 2 ft rather than hiding it."""
+        r = D.anchors([(self.A, self.B)], [], [(10.0, (5.0, 2.2))], self.WALL)
         assert r["anchors"][0]["ends"][0]["wall_dist_ft"] == 2.0
         assert r["summary"]["within_0_5_ft"] == 0
+
+    def test_a_valueless_line_is_not_a_dimension(self):
+        """D-3, 16 Aug: title-block artwork shares the `dim` layer. All 29 of
+        FLOOR PLAN's arrows landing on nothing were the area-statement table,
+        the sheet frame, the company logo and a leader line — every one of them
+        valueless."""
+        r = D.anchors([(self.A, self.B)], self.SHORT, [], self.WALL)
+        assert r["summary"]["dimensions"] == 0
+        assert r["summary"]["dropped_no_value"] == 1
+        assert r["summary"]["candidates"] == 1
+        r2 = D.anchors([(self.A, self.B)], self.SHORT, [], self.WALL,
+                       require_value=False)
+        assert r2["summary"]["dimensions"] == 1
 
     def test_a_perpendicular_short_line_is_required(self):
         """A short line PARALLEL to the dimension line is a glyph stroke or a
@@ -85,4 +100,7 @@ def test_the_instrument_is_additive_only():
         s = pdf_vector.parse(f.read())
     assert s["meta"]["dimension_anchors"]["summary"]["dimensions"] > 0
     assert s["meta"]["plan_width_ft"] == pytest.approx(95.2, abs=0.1)
-    assert len(s["rooms"]) == 13
+    # 16 since 16 Aug: the utility (§10.1 CE-5) plus two duct voids (§4 D-5).
+    # The point of this test is that the DIMENSION instrument moves nothing —
+    # it does not, and the room count is pinned here to keep that visible.
+    assert len(s["rooms"]) == 16

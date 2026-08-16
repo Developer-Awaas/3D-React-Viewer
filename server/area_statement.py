@@ -23,11 +23,16 @@ SQFT_TO_SQM = 0.09290304
 
 # room types that are COMMON area, never carpet (R-5, L-5, S-5). "stairs" also
 # carries lifts — furnish.classify_room_type maps lift/elevator to it.
-COMMON_TYPES = frozenset({"stairs", "lobby"})
+COMMON_TYPES = frozenset({"stairs", "lobby", "duct"})   # §4 D-5: a duct is common area
 
 # B-5: balconies are reported SEPARATELY in Indian practice - neither carpet
 # nor common. They are part of the built-up plate.
 BALCONY_TYPES = frozenset({"balcony"})
+# §10.1 CE-5 (Rahul, 16 Aug 2026): a UTILITY is a covered-but-not-enclosed
+# strip like a balcony — two sides closed, two open — but it is NOT a balcony
+# and it is NOT carpet, and it is private to the flat so it is not common
+# either. It gets its OWN line until ruled otherwise.
+UTILITY_TYPES = frozenset({"utility"})
 
 
 def polygon_area(pts):
@@ -63,8 +68,10 @@ def compute_area_statement(scene, loading_factor=1.30):
     # "stairs", so both arrive under that one type.
     common_rooms = [r for r in rooms if r.get("type") in COMMON_TYPES]
     balcony_rooms = [r for r in rooms if r.get("type") in BALCONY_TYPES]
+    utility_rooms = [r for r in rooms if r.get("type") in UTILITY_TYPES]
     carpet_rooms = [r for r in rooms if r.get("type") not in COMMON_TYPES
-                    and r.get("type") not in BALCONY_TYPES]
+                    and r.get("type") not in BALCONY_TYPES
+                    and r.get("type") not in UTILITY_TYPES]
     common = sum(float(r.get("area_sqft", 0) or 0) for r in common_rooms)
     balcony = sum(float(r.get("area_sqft", 0) or 0) for r in balcony_rooms)
     carpet = sum(float(r.get("area_sqft", 0) or 0) for r in carpet_rooms)
@@ -96,7 +103,10 @@ def compute_area_statement(scene, loading_factor=1.30):
     # lift, stair and lobby are inside the building even though they are not
     # carpet). Using carpet alone here silently deducted the common area from
     # built-up the moment R-5 split it out.
-    floor_inside = carpet + common + balcony
+    utility = round(sum(r.get("area_sqft") or 0.0 for r in utility_rooms), 1)
+    # covered area inside the building line, so it belongs in BUILT-UP even
+    # though it is neither carpet nor balcony (§10.1)
+    floor_inside = carpet + common + balcony + utility
     if gross_outer >= floor_inside and gross_outer > 0:
         built_up = gross_outer                 # shape (a): outer already gross
     elif wall_material > 0:
@@ -149,6 +159,7 @@ def compute_area_statement(scene, loading_factor=1.30):
         "common_area": _pair(common),          # lift + staircase + lobby
         "common_rooms": [r.get("id") for r in common_rooms],
         "balcony_area": _pair(balcony),        # B-5: reported separately
+        "utility_area": _pair(utility),        # CE-5: its own line
         "balcony_rooms": [r.get("id") for r in balcony_rooms],
         "built_up_area": _pair(built_up),
         "super_built_up_area": _pair(super_built),

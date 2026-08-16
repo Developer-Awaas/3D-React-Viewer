@@ -208,6 +208,94 @@ def _paired_indices(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
     return paired
 
 
+def _spans_beyond(runs, at, lo, hi, over, tol=0.12):
+    """Is there a line collinear with this side that runs well past the box?"""
+    for p, a, b in runs:
+        if abs(p - at) <= tol and (a < lo - over or b > hi + over):
+            return True
+    return False
+
+
+def enclosed_boxes(segs, min_sqft=2.0, max_sqft=18.0, max_side_ft=6.0, tol=0.12,
+                   max_overhang_ft=0.5, wall_ft=None):
+    """Small CLOSED rectangles drawn in the wall linework, in feet.
+
+    §4 D-5: a duct is a wall-ringed VOID of 2-18 sqft. It cannot be found as
+    free space in the raster — measured 16 Aug, FLOOR PLAN's ducts are 1.00 ft
+    across and the wall-merge closing kernel is 0.88 ft, so the interior is
+    filled solid and no free-space component exists at ANY area floor. It has
+    to be read from the rectangle the drafter actually drew.
+
+    A duct is drawn as its OWN rectangle: its four sides begin and end at the
+    box. A WALL BODY also closes into a rectangle wherever two cross-walls
+    slice it — the two faces of the wall plus the two crossings — and that is
+    the noise this must not admit (a 40x20 double-line box yields a bogus
+    0.8 x 4 ft "duct" without the test). The difference is OVERHANG: a wall's
+    faces run on past the box, a duct's sides do not.
+
+    Returns [(x0, y0, x1, y1)] of boxes whose four sides are all present and
+    none of which overhangs. Pure -> unit-tested."""
+    H, V = [], []
+    for x0, y0, x1, y1 in segs:
+        if abs(y1 - y0) <= tol and abs(x1 - x0) > tol:
+            H.append((min(y0, y1), min(x0, x1), max(x0, x1)))
+        elif abs(x1 - x0) <= tol and abs(y1 - y0) > tol:
+            V.append((min(x0, x1), min(y0, y1), max(y0, y1)))
+    H.sort()
+    V.sort()
+    out = []
+    for i, (ya, xa0, xa1) in enumerate(H):
+        for yb, xb0, xb1 in H[i + 1:]:
+            h = yb - ya
+            if h <= tol:
+                continue
+            if h > max_side_ft:
+                break                      # sorted: no later pair is closer
+            lo, hi = max(xa0, xb0), min(xa1, xb1)
+            if hi - lo <= tol:
+                continue
+            for j, (xv, ya0, ya1) in enumerate(V):
+                if xv < lo - tol or xv > hi + tol:
+                    continue
+                if ya0 > ya + tol or ya1 < yb - tol:
+                    continue               # left side must span the box
+                for xw, yb0, yb1 in V[j + 1:]:
+                    w = xw - xv
+                    if w <= tol:
+                        continue
+                    if w > max_side_ft:
+                        break
+                    if xw > hi + tol or yb0 > ya + tol or yb1 < yb - tol:
+                        continue
+                    a = w * h
+                    # (1) a WALL BODY between two cross-walls closes into a
+                    # rectangle; its faces run on past the box, a duct's sides
+                    # do not.
+                    if max(xv - xa0, xa1 - xw, xv - xb0, xb1 - xw,
+                           ya - ya0, ya1 - yb, ya - yb0, yb1 - yb) \
+                            > max_overhang_ft:
+                        continue
+                    # (2) a DOOR OPENING drawn as its own rectangle inside the
+                    # wall band has no overhang either — the 40x20 test fixture
+                    # draws exactly that (4.0 x 0.8 ft). But it is as narrow as
+                    # the WALL, because it IS the wall's thickness. A duct is
+                    # not: FLOOR PLAN's are 1.00 ft against 0.83 ft walls.
+                    if wall_ft and abs(min(w, h) - wall_ft) <= 0.10 * wall_ft:
+                        continue
+                    if min_sqft <= a <= max_sqft:
+                        out.append((round(xv, 2), round(ya, 2),
+                                    round(xw, 2), round(yb, 2)))
+    # keep the SMALLEST box at each spot: a duct inside a shaft wall would
+    # otherwise be reported twice, once per enclosing rectangle
+    out.sort(key=lambda b: (b[2] - b[0]) * (b[3] - b[1]))
+    kept = []
+    for b in out:
+        cx, cy = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
+        if not any(k[0] <= cx <= k[2] and k[1] <= cy <= k[3] for k in kept):
+            kept.append(b)
+    return kept
+
+
 def keep_structural_lines(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
     """Drop page borders and site boundaries by WHAT THE LINE IS, not by how
     long it is (§1's actual intent).
@@ -1745,16 +1833,27 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _ocr_cache["live"] = out
         return _ocr_cache["live"]
 
-    def printed_balcony_widths():
-        """The balcony WIDTHS the sheet itself prints ("BALCONY 4' WIDE").
-        The only ground truth a railing run can be checked against."""
+    def printed_open_widths():
+        """The widths the sheet prints for OPEN-EDGED strips, by kind:
+        [("balcony", 4.0), ("utility", 4.5), ...].
+
+        A balcony is not the only covered-but-not-enclosed strip a sheet
+        dimensions — FLOOR PLAN also prints `UTILITY 4'6" WIDE`, and §10.1 CE-5
+        rules the utility balcony-TYPE, not a room. The kind travels with the
+        width so the admitted space can be reported on the right line."""
+        out = []
         try:
             import room_dims as _rdw
-            src = live_words() if _rdw.printed_widths(live_words(), "BALCON") \
-                else ocr_words()
-            return _rdw.printed_widths(src, "BALCON")
+            for kind, key in (("balcony", "BALCON"), ("utility", "UTI")):
+                src = live_words() if _rdw.printed_widths(live_words(), key) \
+                    else ocr_words()
+                out += [(kind, w) for w in _rdw.printed_widths(src, key)]
         except Exception:
             return []
+        return out
+
+    def printed_balcony_widths():
+        return [w for _k, w in printed_open_widths()]
 
     def dim_words():
         """Tokens for reading printed DIMENSIONS only (see
@@ -2329,6 +2428,12 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # wall-enclosed is a sliver between wall faces, so the enclosure test is
     # what keeps noise out (L-4: a lift is an enclosed shaft).
     small_room_px = int(18 * NORM_PPX * NORM_PPX)        # >= ~18 sqft, enclosed
+    # §4 D-5: the small-space floor was lowered to 2 sqft here on 16 Aug to
+    # catch ducts and REVERTED the same day. Two reasons, both measured: a duct
+    # interior is 1.00 ft across against a 0.88 ft wall-merge kernel, so it
+    # fills solid and NO area floor can reach it; and at 2 sqft the gate
+    # admitted a 3.2 sqft wall-ringed pocket in the plain 40x20 test fixture.
+    # Ducts are read from the DRAWN rectangle instead (`enclosed_boxes`).
     Hpx, Wpx = m.shape
 
     def _rooms_from_free(free, drop_border=True):
@@ -2341,6 +2446,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         ncomp, rlab, rstt, _c = cv2.connectedComponentsWithStats(free, 4)
         for i in range(1, ncomp):
             rx, ry, rw, rh, rarea = rstt[i]
+            _void = False
             if rarea < min_room_px:
                 if rarea < small_room_px:
                     continue
@@ -2348,6 +2454,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 ring = cv2.dilate(comp8, np.ones((3, 3), np.uint8)) - comp8
                 if not np.all(m_env[ring > 0] > 0):
                     continue              # not fully ringed by wall: a sliver
+
             if drop_border and (rx == 0 or ry == 0
                                 or rx + rw >= Wpx or ry + rh >= Hpx):
                 continue                                 # touches border = outside
@@ -2365,6 +2472,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 pts = cv2.approxPolyDP(big, 1.5, True).reshape(-1, 2)
                 poly = [[fx(int(p[0])), fy(int(p[1]))] for p in pts]
             out.append({"x": fx(px_), "y": fy(py_),
+                        # a void has NO floor and is never solid structure in
+                        # 3D; it is common area, never carpet (§4 D-5)
+                        **({"type": "duct", "void": True} if _void else {}),
                         "area_sqft": round(rarea / (NORM_PPX ** 2), 1),
                         "polygon_ft": poly,
                         "_lab": int(i),
@@ -2428,9 +2538,11 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # `m` and is untouched, so the open face is still never built as a wall.
     if rooms and _rail_runs_raw:
         _bals = []
+        _kinds0 = printed_open_widths()
         for _r in _rail_runs_raw:
             if _rail0.classify(_r, _pw0) != "railing":
                 continue
+            _kind, _mw = _rail0.matched_kind(_r, _kinds0)
             # the POCKET the run encloses (railings.pocket_ft): a 3-sided run
             # encloses its own bbox; a 1-sided run encloses the strip between
             # it and the wall behind, which is nothing at all without that
@@ -2464,7 +2576,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _bals.append({"x": fx(int(_my.mean())), "y": fy(int(_mx.mean())),
                           "area_sqft": round(_a / (NORM_PPX ** 2), 1),
                           "polygon_ft": _poly, "_lab": -1,
-                          "type": "balcony", "open_side": True,
+                          "type": _kind or "balcony", "open_side": True,
+                          "printed_width_ft": _mw,
                           "depth_ft": _r["depth_ft"] if "depth_ft" in _r
                           else _rail0.enclosed_depth_ft(_r),
                           "_bbox_ft": (fx(_my.min()), fy(_mx.max()),
@@ -2472,11 +2585,73 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         if _bals:
             rooms += _bals
             warnings.append(
-                "%d balcony(s) measured from the DRAWN railing edge "
+                "%d open-edged space(s) measured from the DRAWN edge "
                 "(%.1f sqft; depths %s ft against the sheet's printed %s ft)"
                 % (len(_bals), sum(b["area_sqft"] for b in _bals),
                    ", ".join("%.2f" % b["depth_ft"] for b in _bals),
                    ", ".join("%.2f" % w for w in _pw0)))
+    # --- §4 D-5 DUCTS (16 Aug 2026): wall-ringed VOIDS, 2-18 sqft ------------
+    # Read from the DRAWN rectangle, not from raster free space: a duct is
+    # narrower (1.00 ft on FLOOR PLAN) than the wall-merge kernel (0.88 ft plus
+    # dilation), so its interior is filled solid and no area floor can reach
+    # it. Ducts are COMMON AREA, never carpet, and carry `void` so nothing
+    # builds them as solid structure or gives them a floor.
+    if rooms:
+        # same frame as fx()/fy() above: raw feet, the wing shift is applied
+        # to every room later, so applying it here would double-count it
+        _seg_ft = [((g[0] - x0) / ppf, d_ft - (g[1] - y0) / ppf,
+                    (g[2] - x0) / ppf, d_ft - (g[3] - y0) / ppf)
+                   for g in struct]
+        # the sheet's own wall thickness, so a rectangle as narrow as a wall
+        # can be recognised as wall rather than void (measured, not assumed)
+        _gaps = [g["gap_in"] / 12.0 for g in (wall_gap_pairs(drawings, ppf) or [])]
+        if not _gaps:
+            # fall back to the structural pairing itself: the same 3-18 in test
+            # that decides what a wall IS (wall_gap_pairs excludes columns and
+            # can come back empty on a sparse sheet, e.g. the test fixture)
+            _H, _V = [], []
+            for _a, _b, _c, _d in _seg_ft:
+                if abs(_d - _b) <= 0.12:
+                    _H.append(((_b + _d) / 2, min(_a, _c), max(_a, _c)))
+                elif abs(_c - _a) <= 0.12:
+                    _V.append(((_a + _c) / 2, min(_b, _d), max(_b, _d)))
+            for _runs in (_H, _V):
+                _runs.sort()
+                for _i in range(len(_runs) - 1):
+                    for _j in range(_i + 1, len(_runs)):
+                        _g = _runs[_j][0] - _runs[_i][0]
+                        if _g > 1.5:
+                            break
+                        if _g >= 0.25 and min(_runs[_i][2], _runs[_j][2]) \
+                                - max(_runs[_i][1], _runs[_j][1]) >= 2.0:
+                            _gaps.append(_g)
+                            break
+        _wall_ft = (sorted(_gaps)[len(_gaps) // 2] if _gaps else None)
+        _ducts = []
+        for _b in enclosed_boxes(_seg_ft, wall_ft=_wall_ft):
+            _cx, _cy = (_b[0] + _b[2]) / 2.0, (_b[1] + _b[3]) / 2.0
+            _in_room = False
+            for _r in rooms:
+                _p = _r.get("polygon_ft") or []
+                if _p and min(q[0] for q in _p) <= _cx <= max(q[0] for q in _p) \
+                        and min(q[1] for q in _p) <= _cy <= max(q[1] for q in _p):
+                    _in_room = True
+                    break
+            if _in_room:
+                continue
+            _ducts.append({"x": round(_cx, 2), "y": round(_cy, 2),
+                           "type": "duct", "void": True, "_lab": -1,
+                           "area_sqft": round((_b[2] - _b[0]) * (_b[3] - _b[1]), 1),
+                           "polygon_ft": [[_b[0], _b[1]], [_b[2], _b[1]],
+                                          [_b[2], _b[3]], [_b[0], _b[3]]],
+                           "_bbox_ft": (_b[0], _b[1], _b[2], _b[3])})
+        if _ducts:
+            rooms += _ducts
+            warnings.append(
+                "%d duct/shaft void(s) read from the drawn rectangle (%s sqft) "
+                "- common area, never carpet, never solid in 3D (§4 D-5)"
+                % (len(_ducts), ", ".join("%.1f" % d["area_sqft"] for d in _ducts)))
+
     if not rooms:
         rooms, rlab = _rooms_from_free((m_env == 0).astype(np.uint8))
     if not rooms:
@@ -3066,6 +3241,20 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _plot_sqft = round(float(printed_areas["plot_area_sqft"]), 1)
     elif env_src == "overall_dimension_text":
         _plot_sqft = round(float(out_w) * float(out_d), 1)
+
+    if _dim_anchors:
+        # the anchors were measured before the wing shift was known, in the raw
+        # frame ((X-x0)/ppf, (Y-y0)/ppf). Put them in SCENE feet so the overlay
+        # and every consumer share one coordinate system.
+        for _a in _dim_anchors["anchors"]:
+            for _e in _a["ends"]:
+                _e["at_ft"] = [round(_e["at_ft"][0] - sx, 2),
+                               round(d_ft - _e["at_ft"][1] - sy, 2)]
+                if _e.get("wall_face"):
+                    _e["wall_face"] = [[round(q[0] - sx, 2),
+                                        round(d_ft - q[1] - sy, 2)]
+                                       for q in _e["wall_face"]]
+        _dim_anchors["frame"] = "scene_ft"
 
     scene = {
         "meta": {

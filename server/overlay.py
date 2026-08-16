@@ -35,6 +35,13 @@ LAYER_STYLE = {
     "plot_boundary":  {"colour": "#f43f5e", "kind": "line", "width": 2.0},
     "setback":        {"colour": "#fb7185", "kind": "line", "width": 1.5},
     "rejected":       {"colour": "#94a3b8", "kind": "line", "width": 0.8},
+    # §10.2 D-7: where each dimension arrow LANDS, against what we detected.
+    # Green = on a detected wall face; amber = near it; RED = the arrow points
+    # at nothing we found, which means the parse is wrong THERE (or the
+    # extraction followed the wrong line — the picture is what tells them apart).
+    "dim_anchor_hit":  {"colour": "#22c55e", "kind": "polygon", "width": 1.5},
+    "dim_anchor_near": {"colour": "#f59e0b", "kind": "polygon", "width": 1.5},
+    "dim_anchor_miss": {"colour": "#ef4444", "kind": "polygon", "width": 2.5},
     # W-2 MEASUREMENT: every wall pair coloured by its measured gap, so a
     # cluster in the histogram can be LOCATED on the drawing. A histogram says
     # a cluster exists; it cannot say what the cluster is.
@@ -128,6 +135,19 @@ def build_layers(scene, dpi=110.0):
     if scene.get("footprint_ext_ft"):
         out["footprint_ext"].append([f(p[0], p[1])
                                      for p in scene["footprint_ext_ft"]])
+
+    da = (meta.get("dimension_anchors") or {}).get("anchors") or []
+    for a in da:
+        for e in a["ends"]:
+            d = e.get("wall_dist_ft")
+            if d is None:
+                continue
+            k = ("dim_anchor_hit" if d <= 0.5
+                 else "dim_anchor_near" if d <= 5.0 else "dim_anchor_miss")
+            cx, cy = f(e["at_ft"][0], e["at_ft"][1])
+            r = 5 if k == "dim_anchor_miss" else 4
+            out[k].append([[cx - r, cy - r], [cx + r, cy - r],
+                           [cx + r, cy + r], [cx - r, cy + r]])
 
     for seg in scene.get("rejected_lines_ft") or []:
         out["rejected"].append([f(seg[0], seg[1]), f(seg[2], seg[3])])

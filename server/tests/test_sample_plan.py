@@ -56,6 +56,11 @@ def test_sample_rooms_for_walk_inside(sample_scene):
     areas = [r["area_sqft"] for r in rooms]
     assert areas == sorted(areas, reverse=True)  # biggest room first
     for r in rooms:
+        # §4 D-5: a VOID (duct/shaft) gets no beacon — you cannot stand in a
+        # 1 ft shaft — and its centre legitimately falls inside the wall band,
+        # so it is excluded here exactly as the 3D excludes it.
+        if r.get("void"):
+            continue
         assert 0 <= r["x"] <= m["plan_width_ft"]
         assert 0 <= r["y"] <= m["plan_depth_ft"]
         p = Point(r["x"], r["y"])

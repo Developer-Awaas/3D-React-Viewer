@@ -90,13 +90,21 @@ def follow_extension(end, a, b, short_lines, touch_ft=TOUCH_FT):
     return None
 
 
-def anchors(dim_lines, short_lines, texts, wall_lines, hit_ft=HIT_FT):
+def anchors(dim_lines, short_lines, texts, wall_lines, hit_ft=HIT_FT,
+            require_value=True):
     """[(A, B)] dimension lines -> one anchor record each. Pure.
 
     `texts` is [(value_ft, (x, y))]; the nearest label within NEAR_TEXT_FT of a
-    dimension line's midpoint gives its value (None when the sheet's text could
-    not be read — the anchor still stands, since the GEOMETRY is the check)."""
+    dimension line's midpoint gives its value.
+
+    `require_value` (D-3): a dimension STATES a number, so a candidate line
+    carrying none is not a dimension. This is what separates real dimensions
+    from TITLE-BLOCK ARTWORK sharing the `dim` layer — measured 16 Aug on
+    FLOOR PLAN, where all 29 arrows landing on nothing were the area-statement
+    table (8), the sheet frame (8), the ARCHITRAVE logo (12) and one leader
+    line, and every one of them is valueless."""
     out = []
+    dropped = 0
     for a, b in dim_lines or []:
         mid = ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
         val, vd = None, NEAR_TEXT_FT
@@ -104,6 +112,9 @@ def anchors(dim_lines, short_lines, texts, wall_lines, hit_ft=HIT_FT):
             d = math.hypot(mid[0] - c[0], mid[1] - c[1])
             if d < vd:
                 val, vd = v, d
+        if require_value and val is None:
+            dropped += 1                       # sheet furniture, not a dimension
+            continue
         rec = {"value_ft": val, "span_ft": round(_len(a, b), 2), "ends": []}
         for end in (a, b):
             pt = follow_extension(end, a, b, short_lines) or end
@@ -119,6 +130,8 @@ def anchors(dim_lines, short_lines, texts, wall_lines, hit_ft=HIT_FT):
     hits = sum(1 for e in ends if e["wall_dist_ft"] <= hit_ft)
     return {"anchors": out,
             "summary": {"dimensions": len(out),
+                        "candidates": len(dim_lines or []),
+                        "dropped_no_value": dropped,
                         "endpoints": len(ends),
                         "within_0_5_ft": hits,
                         "pct_on_a_detected_face": round(100.0 * hits / len(ends), 1)

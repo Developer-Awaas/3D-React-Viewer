@@ -682,7 +682,9 @@ export default function App() {
               )
             )}
             {/* walk-inside beacons: one per detected room — click to step in */}
-            {pPlan && frame && pPlan.rooms.map((r, i) => (
+            {/* voids (duct/shaft, §4 D-5) get no beacon: you cannot stand in a
+                1 ft shaft, and they are never built as solid structure */}
+            {pPlan && frame && pPlan.rooms.map((r, i) => (r as any).void ? null : (
               <CameraMarker key={r.id}
                 position={roomWorldPoint(r, frame, 4.6)}
                 onSelect={() => enterRoom(i)} />
