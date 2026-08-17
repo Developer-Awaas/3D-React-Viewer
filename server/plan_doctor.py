@@ -183,6 +183,47 @@ def diagnose(scene):
         plot_sqft = float(plot_sqft) if plot_sqft else None
     except (TypeError, ValueError):
         fp_sqft = plot_sqft = None
+    # §0.2 CONTRADICTS — a space that fails to enclose on ONE side. On an upper
+    # floor a space has a roof and a floor, so it must be closed; the only
+    # exception is a balcony with exactly one open side. This is an ASK, never
+    # an auto-correction: the drawing is wrong, and only the user can confirm
+    # the missing edge. Worked case: FLOOR PLAN's whole common area, 189.9 sqft
+    # of lobby + staircase, discarded today because its south edge is drawn
+    # 2 in wide on a furniture layer.
+    for _os in (meta.get("open_side_regions") or []):
+        try:
+            _a = float(_os.get("area_as_drawn_sqft") or 0)
+            _c = float(_os.get("area_if_closed_sqft") or 0)
+            _sd = str(_os.get("open_side") or "?")
+        except (TypeError, ValueError):
+            continue
+        _issue(issues, "ask", "space_open_on_one_side",
+               f"A {_a:.0f} sqft space is enclosed on three sides but open on "
+               f"its {_sd} side. On an upper floor that is not possible — it "
+               f"has a roof and a floor, so it must be closed (only a balcony "
+               f"has one open side). The drawing is missing that edge. IS "
+               f"THERE A WALL HERE? If you confirm it, this space counts as "
+               f"{_c:.0f} sqft; until then it is reported and NOT counted.")
+
+    # §0.2 CONTRADICTS — the sheet's OWN numbers disagree with each other.
+    # FLOOR PLAN: plate 1951 - stilt 1900 = 51 sqft of projection, which the
+    # balcony alone accounts for (50.3 measured); the utility projects too
+    # (35.8, 100% outside the wall ring) and is missing from that arithmetic.
+    # Rahul's ruling 17 Aug: our 86.2 is right, the sheet's 51 is incomplete.
+    # FLAG it; never reconcile it, never tune our figure to match.
+    _proj = [r for r in ((cmp_ or {}).get("rows") or [])
+             if r.get("figure") == "projection"]
+    if _proj and _proj[0].get("printed_sqft") and _proj[0].get("parsed_sqft"):
+        _pp, _qq = float(_proj[0]["printed_sqft"]), float(_proj[0]["parsed_sqft"])
+        if abs(_qq - _pp) > 0.15 * _pp:
+            _issue(issues, "ask", "sheet_projection_arithmetic",
+                   f"The sheet's own numbers disagree. Its stilt arithmetic "
+                   f"allows {_pp:.0f} sqft projecting beyond the external wall, "
+                   f"but we measure {_qq:.0f} sqft — the balcony alone accounts "
+                   f"for the printed figure, and the utility is not in it. The "
+                   f"drawing is internally inconsistent here; we have not "
+                   f"reconciled it. Which is right?")
+
     if fp_sqft and plot_sqft and fp_sqft > plot_sqft:
         _issue(issues, "fail", "footprint_exceeds_plot",
                f"The building footprint reads {fp_sqft:.0f} sqft on a plot of "

@@ -227,3 +227,135 @@ def test_floor_plan_finds_both_ducts_and_they_are_common_area():
     assert st["common_area"]["sqft"] == pytest.approx(30.9, abs=0.2)
     carpet_types = {r.get("type") for r in s["rooms"]}
     assert "duct" in carpet_types                          # counted, not dropped
+
+
+# --- §0.2 CONTRADICTS: a space open on ONE side (16 Aug 2026) ----------------
+# On an upper floor a space has a roof and a floor, so it must be closed. The
+# only exception is a balcony with exactly one open side. FLOOR PLAN's entire
+# common area — 189.9 sqft of lobby + staircase — is DETECTED and then thrown
+# away by the border test, because its south edge is drawn 2 in wide on a
+# furniture layer. "Not found" and "found then discarded" look identical from
+# the output, and were confused for two weeks.
+def _three_sided(open_side="S", size_ft=12):
+    """A pocket walled on three sides whose open side runs to the image edge —
+    the shape of FLOOR PLAN's common area, whose south edge is undrawn so the
+    free space reaches the raster border and the border test discards it."""
+    n = int(size_ft * PPX) + 40
+    m = np.zeros((n, n), np.uint8)
+    a, b = 40, 40 + int(size_ft * PPX)
+    t = max(3, int(0.75 * PPX))
+    m[a:a + t, a:b] = 255                          # north
+    m[a:n, a:a + t] = 255                          # west, down to the edge
+    m[a:n, b - t:b] = 255                          # east, down to the edge
+    if open_side != "S":
+        m[n - t:n, a:b] = 255                      # closed: no leak at all
+    return m
+
+
+class TestOpenSideRegions:
+    def test_a_three_sided_pocket_is_flagged(self):
+        got = pdf_vector.open_side_regions(_three_sided(), PPX, 40, 40, 20.0,
+                                           min_sqft=20.0)
+        assert len(got) == 1
+        assert got[0]["open_side"] == "south"
+        assert got[0]["area_if_closed_sqft"] > 0
+        assert got[0]["side_backed_pct"]["S"] < 35
+
+    def test_a_closed_room_is_not_flagged(self):
+        """It does not touch the border, so it is not this case at all."""
+        assert pdf_vector.open_side_regions(_three_sided(open_side="closed"),
+                                            PPX, 40, 40, 20.0,
+                                            min_sqft=20.0) == []
+
+    def test_open_ground_is_not_flagged(self):
+        """The discriminator: outside is backed on ONE side, not three. Without
+        it, FLOOR PLAN's 985.5 sqft outside component and its 122.7 sqft
+        balcony strip would both come in as 'rooms'."""
+        n = 600
+        m = np.zeros((n, n), np.uint8)
+        m[100:100 + max(3, int(0.75 * PPX)), :] = 255      # one wall, open field
+        assert pdf_vector.open_side_regions(m, PPX, 0, 0, 12.0,
+                                            min_sqft=20.0) == []
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
+                    reason="confidential corpus not present")
+def test_floor_plan_flags_its_common_area_and_nothing_else():
+    import plan_doctor
+    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+        s = pdf_vector.parse(f.read())
+    flags = s["meta"]["open_side_regions"]
+    assert len(flags) == 1, flags                      # not the outside, not the balcony
+    r = flags[0]
+    assert r["open_side"] == "south"
+    # 189.9 -> 101.4 on 17 Aug: admitting the `ar stairs` wall (Phase 1
+    # attempt 7) put the STAIRCASE inside the wall ring, so the flagged
+    # open-side region is now the LOBBY ALONE — and it closes to 94.2 sqft
+    # against a printed 15'8" x 6'2" = 96.6, within 2.4 sqft. The flag got
+    # more precise, not weaker.
+    assert r["area_as_drawn_sqft"] == pytest.approx(101.4, abs=1.5)
+    assert r["area_if_closed_sqft"] == pytest.approx(94.2, abs=1.5)
+    assert r["side_backed_pct"]["N"] > 90 and r["side_backed_pct"]["E"] > 90 \
+        and r["side_backed_pct"]["W"] > 90
+    d = plan_doctor.diagnose(s)
+    asks = [i for i in d["issues"] if i["tag"] == "space_open_on_one_side"]
+    assert len(asks) == 1 and asks[0]["level"] == "ask"
+    # an ASK must not change the grade: it is a question, not a defect in us
+    assert d["grade"] == "C"
+
+
+# --- the COLLINEAR SEAL criterion (17 Aug 2026) ------------------------------
+# Built, measured, REVERTED — kept because the criterion is right and the
+# function is what a future fix builds on. The blanket 4 ft close bridges ANY
+# gap of that size, including the gap between two parallel walls, which is a
+# room: it filled FLOOR PLAN's C.TOILET (3.9 ft interior) while A.TOILET
+# (4.5 ft) survived. Wiring this in instead fixed FLOOR PLAN (+110.3 sqft of
+# carpet, R-8 87.2 -> 92.5) and destroyed the fragmented sheets (FIRST FLOOR
+# 11 rooms -> 2, R-2 96.8 -> 0.0), whose wall fragments are not collinear.
+class TestCollinearBridges:
+    def test_a_break_in_one_wall_run_is_bridged(self):
+        got = pdf_vector.collinear_bridges([(0, 0, 10, 0), (13, 0, 25, 0)],
+                                           4.0, 0.35)
+        assert got == [((10, 0.0), (13, 0.0))]
+
+    def test_two_parallel_walls_are_never_bridged(self):
+        """This is C.TOILET: a 3.9 ft room, not a 3.9 ft hole in a wall."""
+        assert pdf_vector.collinear_bridges([(0, 0, 0, 7), (3.9, 0, 3.9, 7)],
+                                            4.0, 0.35) == []
+
+    def test_a_gap_wider_than_the_limit_stays_open(self):
+        assert pdf_vector.collinear_bridges([(0, 0, 10, 0), (20, 0, 30, 0)],
+                                            4.0, 0.35) == []
+
+    def test_offset_fragments_are_not_collinear(self):
+        """Why the fragmented sheets collapsed: their wall pieces are offset,
+        so they are not breaks in a run and nothing bridges them."""
+        assert pdf_vector.collinear_bridges([(0, 0, 10, 0), (13, 1.2, 25, 1.2)],
+                                            4.0, 0.35) == []
+
+
+# --- PASS 1 / PASS 2 SEPARATION (17 Aug 2026) --------------------------------
+# One 4 ft kernel was doing two jobs: welding disconnected fragments into a
+# building, and closing doorways. Fixing either half broke the other, so they
+# are now separate functions. The separation is CORRECT and INSUFFICIENT: it
+# fixes a cleanly drawn sheet and cannot rescue a fragmented one, because
+# there the close is not welding a wall network but substituting for one.
+class TestWeldVsBreak:
+    def test_offset_fragments_of_one_run_are_welded(self):
+        """What a fragmented sheet needs: pieces that do not line up."""
+        assert pdf_vector.weld_bridges([(0, 0, 10, 0), (13, 1.2, 25, 1.2)], 4.0)
+
+    def test_two_parallel_walls_are_never_welded(self):
+        """C.TOILET: a 3.9 ft ROOM, not a 3.9 ft hole. The weld runs ALONG a
+        wall; the line between two facing walls runs ACROSS the space."""
+        assert pdf_vector.weld_bridges([(0, 0, 0, 7), (3.9, 0, 3.9, 7)], 4.0) == []
+
+    def test_a_doorway_is_the_break_pass_not_the_weld(self):
+        segs = [(0, 0, 10, 0), (13, 0, 25, 0)]
+        assert pdf_vector.collinear_bridges(segs, 4.0, 0.35) == [((10, 0.0), (13, 0.0))]
+
+    def test_the_index_keeps_far_apart_walls_out_of_the_scan(self):
+        """BRICK WORK has 4,960 segments; the naive pass generated 620,275
+        candidate pairs. Segments a long way apart must never be compared."""
+        far = [(0, 0, 10, 0), (500, 500, 510, 500)]
+        assert pdf_vector.weld_bridges(far, 4.0) == []

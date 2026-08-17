@@ -216,6 +216,215 @@ def _spans_beyond(runs, at, lo, hi, over, tol=0.12):
     return False
 
 
+def _grid_index(runs, cell):
+    """Bucket segments into grid cells so bridging is not O(n^2). BRICK WORK
+    has 4,960 wall segments and the naive pass generated 620,275 candidate
+    pairs (17 Aug)."""
+    idx = {}
+    for k, (a0, a1, p) in enumerate(runs):
+        for c in range(int(a0 // cell), int(a1 // cell) + 1):
+            idx.setdefault((c, int(p // cell)), []).append(k)
+    return idx
+
+
+def weld_bridges(segs, max_gap, along_cos=0.7):
+    """PASS 1 — FRAGMENT WELD: join wall pieces that are near each other,
+    regardless of alignment, but ONLY ALONG A WALL RUN.
+
+    §12 (17 Aug 2026): the 4 ft morphological close did two jobs at once —
+    welding disconnected fragments into a building (which fragmented sheets
+    need to enclose at all) and filling the gap between any two walls 4 ft
+    apart (which destroys every narrow room). Separating them is the fix.
+
+    The discriminator is DIRECTION, not distance: a weld runs ALONG at least
+    one of the two walls it joins. Two parallel walls facing each other across
+    a room have their ends 4 ft apart too, but the line between them runs
+    PERPENDICULAR to both — that is not a weld, it is the room. Pure."""
+    out = []
+    for horiz in (True, False):
+        runs = []
+        for x0, y0, x1, y1 in segs:
+            if horiz and abs(y1 - y0) <= abs(x1 - x0):
+                runs.append((min(x0, x1), max(x0, x1), (y0 + y1) / 2.0))
+            elif not horiz and abs(x1 - x0) < abs(y1 - y0):
+                runs.append((min(y0, y1), max(y0, y1), (x0 + x1) / 2.0))
+        idx = _grid_index(runs, max(max_gap, 1.0))
+        seen = set()
+        for k, (a0, a1, p) in enumerate(runs):
+            for c in range(int(a0 // max_gap) - 1, int(a1 // max_gap) + 2):
+                for dq in (-1, 0, 1):
+                    for j in idx.get((c, int(p // max_gap) + dq), ()):
+                        if j <= k or (k, j) in seen:
+                            continue
+                        seen.add((k, j))
+                        b0, b1, q = runs[j]
+                        # gap ALONG the run, offset ACROSS it
+                        gap = max(b0 - a1, a0 - b1)
+                        off = abs(q - p)
+                        if gap <= 0 or gap > max_gap or off > max_gap:
+                            continue
+                        # the weld must run ALONG the walls, not across them
+                        if gap / math.hypot(gap, off) < along_cos:
+                            continue
+                        if b0 > a1:
+                            pt, qt = (a1, p), (b0, q)
+                        else:
+                            pt, qt = (a0, p), (b1, q)
+                        out.append((pt, qt) if horiz else ((pt[1], pt[0]),
+                                                           (qt[1], qt[0])))
+    return out
+
+
+def dedupe_segments(segs, ppf, min_ft=0.02):
+    """Drop DEGENERATE and DUPLICATE wall segments. Pure.
+
+    §12 (17 Aug 2026): BRICK WORK carries **4,960 wall-layer segments of which
+    4,335 are ZERO-LENGTH points** and 858 more are exact duplicates — pattern
+    and hatch artefacts of the CAD export. They cannot be walls (a segment
+    shorter than 0.02 ft has no direction), they carry no information, and they
+    made every pairwise wall pass quadratic in noise: the weld/break scan
+    generated 686,000 candidate pairs there against 90 on FLOOR PLAN. A grid
+    index hides that; removing the noise fixes it."""
+    lim = min_ft * ppf
+    out, seen = [], set()
+    for g in segs:
+        if math.hypot(g[2] - g[0], g[3] - g[1]) < lim:
+            continue                      # a point, not a wall
+        k = (round(min(g[0], g[2]), 1), round(min(g[1], g[3]), 1),
+             round(max(g[0], g[2]), 1), round(max(g[1], g[3]), 1))
+        if k in seen:
+            continue                      # the same line drawn twice
+        seen.add(k)
+        out.append(g)
+    return out
+
+
+def collinear_bridges(segs, max_gap, tol):
+    """Gaps that are a BREAK IN ONE WALL RUN, as (p, q) point pairs.
+
+    §12 (17 Aug 2026): the old envelope seal was a blanket morphological close
+    at 4 ft, which bridges any gap of that size — including the gap BETWEEN TWO
+    PARALLEL WALLS, which is a room. It filled FLOOR PLAN's C.TOILET solid
+    (interior 3.9 ft) while A.TOILET beside it (4.5 ft) survived, and swallowed
+    102.5 sqft in all, the passage included.
+
+    The criterion, not the size, was wrong. A gap closes only when the wall
+    CONTINUES across it — two collinear ends of the same run, which is a
+    doorway or a drafting break. Two walls facing each other along the gap are
+    the sides of a space and must never be joined. No threshold decides this;
+    the geometry does. Pure."""
+    H, V = [], []
+    for x0, y0, x1, y1 in segs:
+        if abs(y1 - y0) <= tol:
+            H.append((min(x0, x1), max(x0, x1), (y0 + y1) / 2.0))
+        elif abs(x1 - x0) <= tol:
+            V.append((min(y0, y1), max(y0, y1), (x0 + x1) / 2.0))
+    out = []
+    for runs, horiz in ((H, True), (V, False)):
+        runs.sort(key=lambda r: (r[2], r[0]))
+        for i, (a0, a1, p) in enumerate(runs):
+            for b0, b1, q in runs[i + 1:]:
+                if q - p > tol:
+                    break                      # sorted by the perpendicular
+                gap = b0 - a1
+                if 0 < gap <= max_gap:
+                    out.append(((a1, p), (b0, q)) if horiz
+                               else ((p, a1), (q, b0)))
+    return out
+
+
+def open_side_regions(m_env, norm_ppx, pad_x, pad_y, d_ft, min_sqft=40.0,
+                      backed=0.60, leaky=0.35, wall_ft=None):
+    """§0.2 CONTRADICTS: free regions ENCLOSED ON THREE SIDES that leak through
+    ONE undrawn edge.
+
+    On an upper floor a space has a roof and a floor, so it must be closed. A
+    region that fails to enclose on exactly one side is a DRAFTING ERROR, not
+    an outside region — and today the border test silently discards it. FLOOR
+    PLAN's entire common area (189.9 sqft of lobby + staircase) is thrown away
+    this way because its south edge is drawn 2 in wide on `ar furniture`.
+
+    The three-sides test is what keeps the real outside out: the 985.5 sqft
+    outside component and the 122.7 sqft balcony strip are backed on ONE side,
+    not three. Returns flags; changes nothing. Pure (mask in, dicts out).
+    """
+    import cv2
+    import numpy as np
+    free = (m_env == 0).astype(np.uint8)
+    n, lab, stt, _c = cv2.connectedComponentsWithStats(free, 4)
+    Hpx, Wpx = m_env.shape
+    out = []
+    for i in range(1, n):
+        x, y, w, h, area = stt[i]
+        if area / (norm_ppx ** 2) < min_sqft:
+            continue
+        if not (x == 0 or y == 0 or x + w >= Wpx or y + h >= Hpx):
+            continue                       # already enclosed: not our case
+        comp = (lab == i)
+        cov = {}
+        for side in ("N", "S", "E", "W"):
+            hits = tot = 0
+            if side in ("N", "S"):
+                for cx in range(x, x + w, 3):
+                    col = np.nonzero(comp[:, cx])[0]
+                    if not len(col):
+                        continue
+                    edge = col.min() if side == "N" else col.max()
+                    step = -1 if side == "N" else 1
+                    probe = edge + step * 3
+                    tot += 1
+                    if 0 <= probe < Hpx and m_env[probe, cx] > 0:
+                        hits += 1
+            else:
+                for cy in range(y, y + h, 3):
+                    row = np.nonzero(comp[cy, :])[0]
+                    if not len(row):
+                        continue
+                    edge = row.min() if side == "W" else row.max()
+                    step = -1 if side == "W" else 1
+                    probe = edge + step * 3
+                    tot += 1
+                    if 0 <= probe < Wpx and m_env[cy, probe] > 0:
+                        hits += 1
+            cov[side] = (hits / tot) if tot else 0.0
+        open_side = min(cov, key=lambda k: cov[k])
+        others = [v for k, v in cov.items() if k != open_side]
+        if cov[open_side] > leaky or min(others) < backed:
+            continue                       # not "three sides and one hole"
+        sealed = m_env.copy()
+        # close it with the sheet's OWN measured external wall thickness, never
+        # a constant: the confirmed edge is a real wall and must be as thick as
+        # this building's walls are (§0.1 - measured, not assumed)
+        t = max(3, int((wall_ft or 0.83) * norm_ppx))
+        if open_side == "S":
+            cv2.line(sealed, (x, y + h), (x + w, y + h), 255, t)
+        elif open_side == "N":
+            cv2.line(sealed, (x, y), (x + w, y), 255, t)
+        elif open_side == "E":
+            cv2.line(sealed, (x + w, y), (x + w, y + h), 255, t)
+        else:
+            cv2.line(sealed, (x, y), (x, y + h), 255, t)
+        n2, lab2, stt2, _c2 = cv2.connectedComponentsWithStats(
+            (sealed == 0).astype(np.uint8), 4)
+        py_, px_ = np.nonzero(comp)
+        j = lab2[int(py_.mean()), int(px_.mean())]
+        closed_sqft = (stt2[j, cv2.CC_STAT_AREA] / (norm_ppx ** 2)) if j > 0 else 0.0
+        out.append({
+            "open_side": {"N": "north", "S": "south",
+                          "E": "east", "W": "west"}[open_side],
+            "area_as_drawn_sqft": round(float(area) / (norm_ppx ** 2), 1),
+            "area_if_closed_sqft": round(float(closed_sqft), 1),
+            "side_backed_pct": {k: round(100 * v, 1) for k, v in cov.items()},
+            "bbox_ft": [round(float(x - pad_x) / norm_ppx, 1),
+                        round(float(d_ft) - float(y + h - pad_y) / norm_ppx, 1),
+                        round(float(x + w - pad_x) / norm_ppx, 1),
+                        round(float(d_ft) - float(y - pad_y) / norm_ppx, 1)],
+            "wall_ft": round(float(wall_ft), 2) if wall_ft else None,
+            "question": "This space appears open on one side. On an upper floor "
+                        "that is not possible (§0.2) - is there a wall here?"})
+    return out
+
+
 def enclosed_boxes(segs, min_sqft=2.0, max_sqft=18.0, max_side_ft=6.0, tol=0.12,
                    max_overhang_ft=0.5, wall_ft=None):
     """Small CLOSED rectangles drawn in the wall linework, in feet.
@@ -1787,6 +1996,9 @@ def _apply_scale_correction(scene):
     return scene
 
 
+_DEBUG_MASKS = {}          # instrument only: set DRISHTI_DEBUG_MASK=1
+
+
 def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
     wing: "largest" or an int index - which building wing to build when the
@@ -2023,6 +2235,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # it has a parallel partner at wall thickness, or if it is no longer than
     # the paired extent. Runs once the scale is known, then the extent is
     # recomputed from what survived.
+    _n_raw = len(struct)
+    struct = dedupe_segments(struct, ppf)
+    if len(struct) < _n_raw:
+        warnings.append(
+            "%d of %d wall segment(s) dropped as degenerate or duplicate "
+            "(zero-length pattern artefacts of the CAD export)"
+            % (_n_raw - len(struct), _n_raw))
     struct, _keep_info = keep_structural_lines(struct, ppf)
     if _keep_info["dropped"]:
         warnings.append(
@@ -2034,6 +2253,37 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         x0, y0, x1, y1 = min(xs), min(ys), max(xs), max(ys)
         w_ft = (x1 - x0) / ppf
         d_ft = (y1 - y0) / ppf
+
+    # --- PHASE 1 (17 Aug 2026): ADMIT `ar stairs`, ONE VARIABLE --------------
+    # Layer names lie (§12, 12 Aug): FLOOR PLAN's lobby north wall is drawn on
+    # `ar stairs`. Attempt 6 (16 Aug) admitted it correctly and was judged by
+    # an instrument that PUNISHED the fix — built-up was `floor_inside +
+    # wall_material`, and wall_material collapses when the ring closes, so
+    # R-8 fell to 78.4. Built-up is now the plate from the wall ring (branch
+    # c, 17 Aug), which rises as walls are read. This is attempt 7.
+    #
+    # The gate is computed from the TRUSTED walls ALONE, BEFORE any candidate
+    # is seen — a set containing the candidates lets them vouch for themselves
+    # (§12, 14 Aug). Candidates must also PAIR at wall thickness: a lone line
+    # inside the building is not a wall.
+    _ADMIT = ("ar stairs",)
+    _cand = dedupe_segments(
+        [g for g in _segs(drawings, lambda n: any(k in n for k in _ADMIT))
+         if g not in struct], ppf)
+    if _cand:
+        _ext = paired_extent(struct, ppf)
+        _margin = 0.02 * max(_ext[2] - _ext[0], _ext[3] - _ext[1]) if _ext else 0.0
+        _inside = [g for g in _cand if inside_extent(g, _ext, _margin)]
+        _paired = _paired_indices(struct + _inside, ppf)
+        _keep = [g for k, g in enumerate(struct + _inside)
+                 if k >= len(struct) and k in _paired]
+        if _keep:
+            struct = struct + _keep
+            warnings.append(
+                "PHASE 1: %d of %d `ar stairs` line(s) admitted as wall "
+                "(inside the trusted extent AND paired at wall thickness); "
+                "%d rejected outside it" % (len(_keep), len(_cand),
+                                            len(_cand) - len(_inside)))
 
     # --- CANVAS EXTENSION (14 Aug 2026) -------------------------------------
     # The raster used to be exactly the WALL extent, so anything drawn outside
@@ -2167,7 +2417,46 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         # envelope sealing (wings/rooms mask only): directionally bridge gaps in
         # wall runs BEFORE the area filter, so a fragmented building reconnects
         # into one region that survives instead of being dropped as slivers.
-        if seal_ft > 0:
+        # TWO PASSES BUILT AND MEASURED, DEFAULT LEFT ON `blanket` (17 Aug
+        # 2026). The separation is correct in principle and works on a cleanly
+        # drawn sheet — FLOOR PLAN gains C.TOILET and the passage, carpet
+        # 1203.5 -> 1301.5, R-8 87.2 -> 92.2 — but it CANNOT rescue a
+        # fragmented one, and the reason is not the weld's aim. On neelachala
+        # FIRST FLOOR the blanket close adds 493.9 sqft of "wall" that the
+        # passes do not, and **35% of it is more than 1.5 ft wide, up to 8.4
+        # ft**: it is not welding a wall network, it is SUBSTITUTING for one.
+        # That sheet's 11 rooms exist because the close FILLS SPACE, so
+        # separating welding from space-destruction necessarily loses them
+        # (514 welds fire there and it still collapses to 2 rooms).
+        # `DRISHTI_SEAL_MODE=passes` selects the separated version.
+        if seal_ft > 0 and os.getenv("DRISHTI_SEAL_MODE", "blanket") == "blanket":
+            g = int(seal_ft * NORM_PPX) | 1
+            mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (g, 3)))
+            mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (3, g)))
+        elif seal_ft > 0:
+            # TWO PASSES, SEPARATED (17 Aug 2026). One kernel was doing two
+            # jobs and fixing either half broke the other (§12).
+            #   pass 1 WELD  — join fragments ALONG a wall run (any alignment)
+            #   pass 2 BREAK — close doorways and drafting breaks (collinear)
+            # Neither may cross open space, which is what destroyed C.TOILET.
+            _seg_px = [(*tp(a_, b_), *tp(c_, d_)) for a_, b_, c_, d_ in struct]
+            _thick = max(3, int(0.5 * NORM_PPX))
+            for _p, _q in (weld_bridges(_seg_px, seal_ft * NORM_PPX)
+                           + collinear_bridges(_seg_px, seal_ft * NORM_PPX,
+                                               0.35 * NORM_PPX)):
+                cv2.line(mm, (int(_p[0]), int(_p[1])), (int(_q[0]), int(_q[1])),
+                         255, _thick)
+        if False:
+            # COLLINEAR SEAL TRIED AND REVERTED (17 Aug 2026). Replacing this
+            # blanket close with `collinear_bridges` is RIGHT on FLOOR PLAN —
+            # C.TOILET and the passage come back, carpet +110.3, R-8 87.2 ->
+            # 92.5 — and CATASTROPHIC on the fragmented sheets: neelachala
+            # FIRST FLOOR went 11 rooms -> 2 and R-2 96.8 -> 0.0, GHATIKIA
+            # 14 -> 2. Their wall fragments are NOT collinear (the geometry
+            # reader's paired spans are short and offset), so the gaps that
+            # keep those sheets enclosed are not breaks in a run and nothing
+            # bridges them. The criterion is right; it needs a companion for
+            # offset fragments before it can replace this. See §12.
             g = int(seal_ft * NORM_PPX) | 1
             mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (g, 3)))
             mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (3, g)))
@@ -2590,6 +2879,35 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 % (len(_bals), sum(b["area_sqft"] for b in _bals),
                    ", ".join("%.2f" % b["depth_ft"] for b in _bals),
                    ", ".join("%.2f" % w for w in _pw0)))
+    # §0.2 CONTRADICTS: flag spaces that fail to enclose on ONE side. Emitted
+    # only — it must not change a number until Rahul has seen what it flags.
+    try:
+        # the ENVELOPE thickness (W-2: 9-11 in is the outer wall on this
+        # corpus, 4-5 in are partitions), measured from this sheet's own pairs
+        _env_gaps = [g["gap_in"] / 12.0 for g in (wall_gap_pairs(drawings, ppf) or [])
+                     if 8.0 <= g["gap_in"] <= 14.0]
+        _env_ft = (sorted(_env_gaps)[len(_env_gaps) // 2] if _env_gaps else None)
+        _open_sides = open_side_regions(m_env, NORM_PPX, pad_x, pad_y, d_ft,
+                                        wall_ft=_env_ft)
+    except Exception:
+        _open_sides = []
+    if _open_sides:
+        warnings.append(
+            "§0.2 CONTRADICTS: %d space(s) enclosed on three sides but open on "
+            "one - %s. On an upper floor that is not possible; the DRAWING is "
+            "wrong. ASK the user to confirm the missing edge (nothing is "
+            "auto-closed, nothing counted)"
+            % (len(_open_sides),
+               "; ".join("%.1f sqft open to the %s (would be %.1f sqft closed)"
+                         % (r["area_as_drawn_sqft"], r["open_side"],
+                            r["area_if_closed_sqft"]) for r in _open_sides)))
+
+    if os.getenv("DRISHTI_DEBUG_MASK"):
+        _DEBUG_MASKS.clear()
+        _DEBUG_MASKS.update({"m_env": m_env.copy(), "m": m.copy(),
+                             "pad_x": pad_x, "pad_y": pad_y,
+                             "norm_ppx": NORM_PPX, "d_ft": d_ft})
+
     # --- §4 D-5 DUCTS (16 Aug 2026): wall-ringed VOIDS, 2-18 sqft ------------
     # Read from the DRAWN rectangle, not from raster free space: a duct is
     # narrower (1.00 ft on FLOOR PLAN) than the wall-merge kernel (0.88 ft plus
@@ -2630,15 +2948,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _ducts = []
         for _b in enclosed_boxes(_seg_ft, wall_ft=_wall_ft):
             _cx, _cy = (_b[0] + _b[2]) / 2.0, (_b[1] + _b[3]) / 2.0
-            _in_room = False
-            for _r in rooms:
-                _p = _r.get("polygon_ft") or []
-                if _p and min(q[0] for q in _p) <= _cx <= max(q[0] for q in _p) \
-                        and min(q[1] for q in _p) <= _cy <= max(q[1] for q in _p):
-                    _in_room = True
-                    break
-            if _in_room:
-                continue
+            # A duct INSIDE a larger room is still a duct (17 Aug 2026): a
+            # void is not a room and containment must not suppress it. The
+            # only real risk is double-counting, so the test is whether the
+            # duct's own interior is already FREE space claimed by a room —
+            # it is not, because a wall-ringed void reads as solid in m_env.
+            _px_, _py_ = int(_cx * NORM_PPX) + pad_x, int((d_ft - _cy) * NORM_PPX) + pad_y
+            if 0 <= _py_ < m_env.shape[0] and 0 <= _px_ < m_env.shape[1] \
+                    and m_env[_py_, _px_] == 0:
+                continue                       # free space: a room already has it
             _ducts.append({"x": round(_cx, 2), "y": round(_cy, 2),
                            "type": "duct", "void": True, "_lab": -1,
                            "area_sqft": round((_b[2] - _b[0]) * (_b[3] - _b[1]), 1),
@@ -3273,6 +3591,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # canvas instrument: the wall extent, the railing-derived bound
             # that grew it, and the resulting raster (px). Reporting only.
             "dimension_anchors": _dim_anchors,
+            "open_side_regions": _open_sides,
             "canvas": {"wall_extent_ft": [0.0, 0.0, round(w_ft, 2), round(d_ft, 2)],
                        "railing_bound_ft": list(_canvas_ext) if _canvas_ext else None,
                        "raster_px": [W, H],

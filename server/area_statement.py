@@ -104,15 +104,58 @@ def compute_area_statement(scene, loading_factor=1.30):
     # carpet). Using carpet alone here silently deducted the common area from
     # built-up the moment R-5 split it out.
     utility = round(sum(r.get("area_sqft") or 0.0 for r in utility_rooms), 1)
+    # §10.2 D-8 PROJECTION (Rahul, 16 Aug 2026): the part of a balcony or
+    # utility that sits BEYOND the external wall ring. It is what makes the
+    # upper floor bigger than the stilt below it, and the sheet states both, so
+    # it is checkable: FLOOR PLAN prints plate 1951 and stilt 1900, i.e. 51 sqft
+    # of projection. Measured against the footprint polygon, never assumed.
+    projection = 0.0
+    try:
+        from shapely.geometry import Polygon
+        _fp = Polygon(scene.get("footprint_ft") or []).buffer(0)
+        if _fp.area > 0:
+            for r in balcony_rooms + utility_rooms:
+                _g = Polygon(r.get("polygon_ft") or []).buffer(0)
+                if _g.area > 0:
+                    projection += _g.difference(_fp).area
+    except Exception:
+        projection = 0.0
+    projection = round(projection, 1)
     # covered area inside the building line, so it belongs in BUILT-UP even
     # though it is neither carpet nor balcony (§10.1)
     floor_inside = carpet + common + balcony + utility
-    if gross_outer >= floor_inside and gross_outer > 0:
+    # INSTRUMENT (16 Aug 2026): which branch fired, and what the OTHER branch
+    # would have said. This is a CLIFF, not a gradient — on FLOOR PLAN ten
+    # admitted wall lines flipped the condition and moved built-up by 366 sqft
+    # — and R-8, our best instrument, sits directly downstream of it (§12).
+    _branch_a = round(gross_outer, 1)
+    _branch_b = round(floor_inside + wall_material, 1)
+    # BRANCH C (17 Aug 2026) — THE PLATE FROM THE WALL RING. Built-up is the
+    # floor plate: the footprint enclosed by the outer wall ring, plus what
+    # projects beyond it (§10.2 D-8). Branches a and b are artefacts of
+    # INCOMPLETENESS: `wall_material` is the wall polygon's own footprint and
+    # it COLLAPSES when the ring closes — 380.9 sqft on FLOOR PLAN today, 15.1
+    # when `ar stairs` was admitted, so built-up fell 366 sqft and R-8 to 78.4.
+    # An instrument that falls when the parse improves is measuring the gap,
+    # not the building. The ring's outer contour only gets MORE complete as
+    # walls are admitted, so this rises where the others fall.
+    _fp = meta.get("footprint_sqft")
+    try:
+        _branch_c = round(float(_fp) + projection, 1) if _fp else None
+    except (TypeError, ValueError):
+        _branch_c = None
+    if _branch_c and _branch_c >= floor_inside:
+        built_up = _branch_c
+        _branch = "c_footprint_plus_projection"
+    elif gross_outer >= floor_inside and gross_outer > 0:
         built_up = gross_outer                 # shape (a): outer already gross
+        _branch = "a_gross_outer"
     elif wall_material > 0:
         built_up = floor_inside + wall_material  # shape (b): walls sit ON floor
+        _branch = "b_floor_plus_walls"
     else:
         built_up = gross_outer
+        _branch = "c_fallback_gross_outer"
     if built_up <= 0:                          # fallback: envelope box
         built_up = float(meta.get("plan_width_ft", 0) or 0) * \
                    float(meta.get("plan_depth_ft", 0) or 0)
@@ -158,8 +201,17 @@ def compute_area_statement(scene, loading_factor=1.30):
         "carpet_area": _pair(carpet),
         "common_area": _pair(common),          # lift + staircase + lobby
         "common_rooms": [r.get("id") for r in common_rooms],
+        "built_up_branch": {"fired": _branch,
+                            "a_gross_outer": _branch_a,
+                            "b_floor_plus_walls": _branch_b,
+                            "c_footprint_plus_projection": _branch_c,
+                            "why_c": "a and b FALL when walls are admitted; "
+                                     "the ring's outer contour does not",
+                            "cliff_sqft": round(abs(_branch_a - _branch_b), 1),
+                            "condition": "gross_outer >= floor_inside"},
         "balcony_area": _pair(balcony),        # B-5: reported separately
         "utility_area": _pair(utility),        # CE-5: its own line
+        "projection_area": _pair(projection),  # D-8: beyond the external wall
         "balcony_rooms": [r.get("id") for r in balcony_rooms],
         "built_up_area": _pair(built_up),
         "super_built_up_area": _pair(super_built),

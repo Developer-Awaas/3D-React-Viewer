@@ -110,6 +110,57 @@ def apply_corrections(scene, corr):
         meta.setdefault("warnings", []).append(
             "user corrections applied: " + "; ".join(info["applied"]))
         scale["corrected"] = True
+
+    # 6) §0.2 CONTRADICTS — the user answers "is there a wall here?"
+    # CONFIRM closes the edge and the space counts; REJECT leaves it uncounted
+    # and stops the prompt. Never auto-answered, and the answer travels with
+    # the scene so /recompute does not ask twice.
+    flags = meta.get("open_side_regions") or []
+    conf = corr.get("confirm_open_sides")
+    rej = corr.get("reject_open_sides")
+    for key, val in (("confirmed", conf), ("rejected", rej)):
+        if val is None:
+            continue
+        if not isinstance(val, (list, tuple)):
+            raise ValueError(f"{key} open sides must be a list of indices")
+        for i in val:
+            try:
+                i = int(i)
+            except (TypeError, ValueError):
+                raise ValueError("open-side index must be an integer")
+            if not (0 <= i < len(flags)):
+                raise ValueError(f"open-side index {i} out of range")
+            flags[i]["answer"] = key
+    for i, f in enumerate(flags):
+        if f.get("answer") != "confirmed" or f.get("_applied"):
+            continue
+        b = f.get("bbox_ft") or []
+        a = float(f.get("area_if_closed_sqft") or 0)
+        if len(b) != 4 or a <= 0:
+            continue
+        # a confirmed space is COMMON when it holds the lift, stair or a duct;
+        # otherwise it is ordinary floor. Decided from what is inside it, not
+        # from a guess about what the space is for.
+        cx, cy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+        holds = any(r.get("type") in ("stairs", "lobby", "lift", "duct")
+                    and b[0] <= (r.get("x") or 0) <= b[2]
+                    and b[1] <= (r.get("y") or 0) <= b[3]
+                    for r in (scene.get("rooms") or []))
+        scene.setdefault("rooms", []).append({
+            "id": f"osr{i}", "x": round(cx, 2), "y": round(cy, 2),
+            "area_sqft": round(a, 1),
+            "type": "lobby" if holds else None,
+            "polygon_ft": [[b[0], b[1]], [b[2], b[1]], [b[2], b[3]], [b[0], b[3]]],
+            "confirmed_open_side": f.get("open_side"), "_lab": -1})
+        f["_applied"] = True
+        info["applied"].append(
+            f"confirmed the missing {f.get('open_side')} edge: a {a:.1f} sqft "
+            f"space now encloses and counts"
+            + (" as common area" if holds else ""))
+    if rej:
+        info["applied"].append(
+            f"{len(rej)} open-side flag(s) rejected - left uncounted, not asked again")
+
     return scene, info
 
 

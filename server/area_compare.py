@@ -221,11 +221,33 @@ def compare(printed, statement):
     -> comparison block, or None when there is nothing comparable. Pure."""
     if not printed or not statement:
         return None
+    # R-8 BASIS (Rahul, 16 Aug 2026). The printed `built_up_total` is the sum
+    # of the FLATS ONLY; the sheet lists common area separately. Our built-up
+    # is a WHOLE-FLOOR figure, so the like-for-like comparison is against the
+    # PLATE = flats + common. FLOOR PLAN self-confirms it: 1705 + 246 = 1951,
+    # and its printed STILT FLOOR reads 1900 — the same plate without the 51
+    # sqft of balcony/utility that project beyond the external wall upstairs
+    # (§10.2 D-8). Comparing against 1705 read 99.8% only because the common
+    # area was missing: a wrong basis and a missing area cancelling.
+    _flats = printed.get("built_up_total_sqft")
+    _common = printed.get("common_area_sqft")
+    _plate = (float(_flats) + float(_common)) if (_flats and _common) else _flats
     pairs = (
-        ("built_up", "Built-up", printed.get("built_up_total_sqft"),
+        ("built_up", "Built-up (plate)", _plate,
+         (statement.get("built_up_area") or {}).get("sqft")),
+        ("built_up_flats_only", "Built-up (flats only, printed)", _flats,
          (statement.get("built_up_area") or {}).get("sqft")),
         ("carpet", "Carpet", printed.get("carpet_total_sqft"),
          (statement.get("carpet_area") or {}).get("sqft")),
+        # THE STILT CROSS-CHECK (fifth instrument, 16 Aug 2026). A printed
+        # stilt/ground-floor figure is the SAME PLATE without the upper floor's
+        # projections, so `plate - stilt` is the sheet's own statement of how
+        # much balcony/utility hangs beyond the external wall — free, because
+        # the number is already on the drawing. FLOOR PLAN: 1951 - 1900 = 51.
+        ("projection", "Projection beyond the wall",
+         (float(_plate) - float(printed["stilt_area_sqft"]))
+         if (_plate and printed.get("stilt_area_sqft")) else None,
+         (statement.get("projection_area") or {}).get("sqft")),
     )
     rows = []
     for key, label, p, q in pairs:
@@ -240,7 +262,14 @@ def compare(printed, statement):
         })
     if not rows:
         return None
-    worst = max(abs(r["diff_pct"]) for r in rows)
+    # Two rows are REPORTED but must not drive the verdict:
+    #  - flats_only: a different basis from what we measure (§10.2 D-4)
+    #  - projection: a NEW instrument (16 Aug), unruled. On FLOOR PLAN it reads
+    #    86.2 parsed against 51 printed, and that disagreement is a finding to
+    #    be ruled on, not a reason to fail the whole sheet — letting it set the
+    #    verdict would flip the grade C -> D and mask R-8's own status.
+    _quiet = ("built_up_flats_only", "projection")
+    worst = max(abs(r["diff_pct"]) for r in rows if r["figure"] not in _quiet)
     return {
         "rows": rows,
         "printed": printed,

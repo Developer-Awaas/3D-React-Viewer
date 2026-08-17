@@ -177,6 +177,12 @@
     "explains": "the 80.0 x 47.8 ft extent = two ~40 ft plans side by side; and the 530.5 sqft blob that wrecks R-2 (3.24x its printed size) STRADDLES the band at x 35.1-61.1, merging rooms from both plans",
     "does_NOT_explain": "the 19% scale error (printed room dims imply ppf 7.14 against the column-box 8.80). That scale is derived from column boxes, independent of the extent, so it is a SEPARATE defect.",
     "do_not": "do not accept any area or room-count improvement here until the two views are separated; R-2 58.6 guard stands"
+   },
+   "open_side_flag_2026_08_16": {
+    "status": "UNVERIFIED - do not trust",
+    "what": "the §0.2 open-side instrument flags one 214.0 sqft region open to the NORTH (bbox x -0.2..20.1, y 31.6..48.0, backed S 100%, E 100%, W 69.8%)",
+    "why_unverified": "this sheet is TWO VIEWS parsed as ONE building (see two_views_finding_2026_08_15), so the region may straddle both plans and its area may be meaningless. It is emitted as a flag only and nothing is counted.",
+    "do_not": "do not confirm this flag or use its area until the two views are separated"
    }
   },
   "neelachala FIRST FLOOR.pdf": {
@@ -341,6 +347,19 @@
     "consequence": "Any parser change that moves BRICK WORK's numbers cannot be judged right or wrong from this sheet. Movements here must be reported and ruled on by Rahul, never self-accepted.",
     "corpus_gap": "We have 4 corpus plans and only ONE (FLOOR PLAN.pdf) carries all three printed instruments. GHATIKIA and FIRST FLOOR fail R-2; BRICK WORK has no instruments at all. A second fully-instrumented sheet is the single highest-value corpus addition.",
     "moved_uninstrumented_2026_08_12": "BORDER_MAXLEN_PT fix moved it: rooms 11->10, carpet 606.7->502.0, footprint 1244->1128, envelope 30.4x48.7->29.6x48.7. PARKED, not accepted."
+   },
+   "dedupe_2026_08_17": {
+    "status": "REPORTED, NOT ACCEPTED - uninstrumented sheet",
+    "what_moved": "built-up 803.4 -> 800.8 sqft (-2.6, 0.3%)",
+    "cause": "12 degenerate/duplicate wall segments dropped upstream of keep_structural_lines. This sheet's wall layers carry 4,335 ZERO-LENGTH segments and 858 exact duplicates out of 4,960 pre-crop (production sees 442 post-crop).",
+    "why_unverifiable": "BRICK WORK prints no area statement, no room dimensions and no balcony width: R-8, R-2 and B-5 are all silent here. Only the §10.2 dimension-anchor instrument reaches it (66.4% of endpoints on a detected wall face).",
+    "do_not": "do not treat this movement as evidence either way"
+   },
+   "built_up_rebasis_2026_08_17": {
+    "status": "REPORTED, NOT ACCEPTED",
+    "what_moved": "built-up 800.8 -> 1128.0 sqft when built-up was re-based on footprint + projections",
+    "cause": "the old formula was floor_inside + wall_material, and wall_material collapses when the wall ring closes; the new basis is the plate from the wall ring (see PLAN-READING-RULES 10.2 D-8 and the 17 Aug 12 entries)",
+    "do_not": "unverifiable here - this sheet prints no area statement"
    }
   },
   "plan1.dwg": {

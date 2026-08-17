@@ -94,13 +94,22 @@ class TestCompare:
     STMT = {"carpet_area": {"sqft": 1287.1}, "built_up_area": {"sqft": 1693.3}}
 
     def test_floor_plan_built_up_matches_the_sheet(self):
-        """The anchor case: printed 1705 vs parsed 1693.3 = 99.3%."""
+        """The anchor case, re-based 16 Aug 2026: the sheet prints 1705 for the
+        two FLATS and 246 of common SEPARATELY, so the plate is 1951. A
+        whole-floor parse of 1693.3 is 86.8% of that — it was only ever 99.3%
+        of 1705 because the common area was missing from our side too."""
         printed = area_compare.parse_area_statement(_floor_plan_tokens())
         cmp_ = area_compare.compare(printed, self.STMT)
         bu = next(r for r in cmp_["rows"] if r["figure"] == "built_up")
-        assert bu["printed_sqft"] == 1705.0
+        # BASIS (16 Aug 2026): the comparison is against the PLATE — the
+        # sheet's flats-only 1705 PLUS its separately listed 246 of common.
+        # The flats-only figure is still reported, on its own row.
+        assert bu["printed_sqft"] == 1951.0
         assert bu["parsed_sqft"] == 1693.3
-        assert bu["match_pct"] == 99.3
+        assert bu["match_pct"] == 86.8
+        # the flats-only row is still there, and still reads 99.3%
+        fo = next(r for r in cmp_["rows"] if r["figure"] == "built_up_flats_only")
+        assert fo["printed_sqft"] == 1705.0 and fo["match_pct"] == 99.3
 
     def test_verdict_bands(self):
         printed = {"built_up_total_sqft": 1000.0}
@@ -147,14 +156,15 @@ class TestDoctor:
         return plan_doctor.diagnose(scene)
 
     def test_match_is_an_ok_issue_and_keeps_grade_a(self):
-        d = self._scene(1693.3)
+        # 1938 against the PLATE of 1951 = 99.3%, the same margin 1693.3 used
+        # to have against the old flats-only basis of 1705
+        d = self._scene(1938.0)
         assert d["grade"] == "A"
         assert any(i["tag"] == "printed_area_verified" for i in d["issues"])
 
     def test_carpet_gap_alone_downgrades_to_a_warning(self):
-        """FLOOR PLAN.pdf as it stands: built-up matches at 99.3% but carpet is
-        6% light (lift/stair pockets counted in, balconies dropped)."""
-        d = self._scene(1693.3, carpet=1287.1)
+        """Built-up matches the plate at 99.3% but carpet is 6% light."""
+        d = self._scene(1938.0, carpet=1287.1)
         assert any(i["tag"] == "printed_area_close" for i in d["issues"])
 
     def test_mismatch_fails_the_plan(self):
@@ -200,9 +210,62 @@ def test_floor_plan_pdf_end_to_end():
     # human ruling: coverage improved (good — re-baseline this floor upward,
     # with the evidence, per §0.1) or something regressed (bad — investigate).
     # Do not delete the check, and do not relax it to make a change pass.
-    # RATCHET RAISED 98.8 -> 99.4 on 16 Aug 2026 (Rahul), per §0.1: the cause
-    # is the UTILITY admitted under §10.1 CE-5 — 36.1 sqft that was in no
-    # bucket at all — not a tuning change. Duct detection (§4 D-5) then took
-    # the actual to 99.8; the pin stays at the authorised 99.4.
-    assert bu["match_pct"] >= 99.4
-    assert bu["printed_sqft"] == 1705.0       # the sheet's own figure, fixed
+    # RATCHET RE-DERIVED 16 Aug 2026 (Rahul) — 99.4 -> 87.2, and this is NOT a
+    # regression. R-8 was comparing our WHOLE-FLOOR built-up against the
+    # sheet's FLATS-ONLY 1705, while the common area was missing from ours:
+    # a wrong basis and a missing area cancelling to a flattering 99.8%.
+    # The correct basis is the PLATE = flats 1705 + common 246 = 1951, which
+    # the sheet self-confirms: its printed STILT reads 1900, the same plate
+    # without the 51 sqft that projects beyond the external wall (§10.2 D-8).
+    # 87.2 is the UNCONFIRMED value; confirming the missing south edge (§0.2)
+    # takes it to 96.6, but confirmation is USER INPUT and must never be
+    # assumed by a test.
+    # RATCHET RE-DERIVED AGAIN 17 Aug 2026 (Rahul) — 87.2 -> 91.8, and this is
+    # a BASIS fix, not tuning. Built-up was `floor_inside + wall_material`, and
+    # `wall_material` is the wall polygon's own footprint: it COLLAPSES when
+    # the ring closes (380.9 sqft here, 15.1 when `ar stairs` was admitted), so
+    # every correct wall admission DROPPED built-up and R-8 with it. An
+    # instrument that falls when the parse improves is measuring the gap, not
+    # the building. Built-up is now the PLATE: footprint + projections beyond
+    # the ring (1705.3 + 86.2 = 1791.5 of the printed 1951), which rises as
+    # walls are read. Both older formulas stay reported on `built_up_branch`.
+    assert bu["match_pct"] >= 91.8
+    assert bu["printed_sqft"] == 1951.0       # the PLATE: flats 1705 + common 246
+
+
+# --- §10.2 D-9 BASIS (17 Aug 2026) -------------------------------------------
+# Three basis defects surfaced in one week, so all eight comparisons were swept.
+# These pin the two that are WRONG, so neither can quietly start driving a
+# verdict, and the one that is right, so it cannot be re-broken.
+def test_the_flats_only_row_is_reported_but_never_judged():
+    printed = area_compare.parse_area_statement(_floor_plan_tokens())
+    cmp_ = area_compare.compare(printed, {"built_up_area": {"sqft": 1702.2},
+                                          "carpet_area": {"sqft": 1203.5}})
+    figs = {r["figure"] for r in cmp_["rows"]}
+    assert "built_up_flats_only" in figs          # reported...
+    fo = next(r for r in cmp_["rows"] if r["figure"] == "built_up_flats_only")
+    # ...but it must not set the verdict: it compares a whole-floor parse
+    # against the sheet's flats-only figure, which is a different basis
+    assert cmp_["worst_diff_pct"] != abs(fo["diff_pct"])
+
+
+def test_the_projection_row_does_not_drive_the_verdict():
+    """The sheet's own stilt arithmetic omits the utility (Rahul, 17 Aug), so
+    this row disagrees BY THE DRAWING'S ERROR. It is surfaced as an `ask`, and
+    must not fail the sheet or mask R-8."""
+    printed = area_compare.parse_area_statement(_floor_plan_tokens())
+    cmp_ = area_compare.compare(printed, {"built_up_area": {"sqft": 1951.0},
+                                          "carpet_area": {"sqft": 1370.0},
+                                          "projection_area": {"sqft": 86.2}})
+    pr = next(r for r in cmp_["rows"] if r["figure"] == "projection")
+    assert pr["printed_sqft"] == 51.0 and pr["parsed_sqft"] == 86.2
+    assert cmp_["verdict"] == "match"             # the other rows are exact
+
+
+def test_carpet_keeps_its_basis():
+    """Printed carpet is FLATS ONLY (680 + 690) and ours excludes common,
+    balcony and utility — the same axis. This comparison was checked, not
+    assumed, on 17 Aug."""
+    printed = area_compare.parse_area_statement(_floor_plan_tokens())
+    assert printed["carpet_total_sqft"] == 1370.0
+    assert [f["carpet_sqft"] for f in printed["flats"]] == [680.0, 690.0]

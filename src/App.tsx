@@ -329,6 +329,7 @@ export default function App() {
     'dining', 'study', 'parking', 'balcony', 'lobby', 'storage']
   const applyCorrections = useCallback(async (corr: {
     room_types?: Record<string, string>; delete_rooms?: string[]
+    confirm_open_sides?: number[]; reject_open_sides?: number[]
   }) => {
     if (!pPlan?.raw) return
     // claim the request sequence: if the user uploads a new plan / picks the
@@ -890,6 +891,32 @@ export default function App() {
 
           {/* G7: correct a wrong room type or drop a phantom room -> instant
               recompute of every number. Only when we have the raw scene. */}
+          {/* §0.2 CONTRADICTS — the drawing is missing an edge. We ASK; we
+              never guess and never auto-close. Answering counts the space. */}
+          {pPlan.raw && (pPlan.openSides ?? []).map((r, i) => r.answer ? null : (
+            <div key={`osr${i}`} className="mt-2 rounded-lg border border-amber-400/40 bg-amber-400/5 p-2">
+              <p className="text-[11px] font-semibold text-amber-300">
+                ⚠ A {Math.round(r.area_as_drawn_sqft)} sqft space is open on its {r.open_side} side
+              </p>
+              <p className="mt-1 text-[10px] leading-snug text-white/50">
+                On an upper floor a space has a roof and a floor, so it must be closed.
+                The drawing is missing that edge. <span className="text-white/70">Is there a wall here?</span>
+                {' '}Confirming counts it as {Math.round(r.area_if_closed_sqft)} sqft.
+              </p>
+              <div className="mt-1.5 flex gap-1.5">
+                <button disabled={correctBusy}
+                  onClick={() => applyCorrections({ confirm_open_sides: [i] })}
+                  className="rounded-full bg-amber-400/90 px-3 py-1 text-[10px] font-semibold text-black disabled:opacity-40">
+                  Yes, there is a wall
+                </button>
+                <button disabled={correctBusy}
+                  onClick={() => applyCorrections({ reject_open_sides: [i] })}
+                  className="rounded-full border border-white/20 px-3 py-1 text-[10px] text-white/60 disabled:opacity-40">
+                  No — leave it open
+                </button>
+              </div>
+            </div>
+          ))}
           {pPlan.raw && pPlan.rooms.length > 0 && (
             <div className="mt-2 border-t border-white/10 pt-2">
               <button

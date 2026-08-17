@@ -41,6 +41,18 @@ export type AreaStatement = {
   efficiency_pct: number
 }
 
+// §0.2 CONTRADICTS — a space enclosed on three sides and open on one. On an
+// upper floor that cannot exist, so the DRAWING is wrong: we ask rather than
+// guess, and nothing is counted until the user confirms the missing edge.
+export type OpenSideRegion = {
+  open_side: string
+  area_as_drawn_sqft: number
+  area_if_closed_sqft: number
+  bbox_ft: number[]
+  question: string
+  answer?: 'confirmed' | 'rejected'
+}
+
 // R-8: the sheet's OWN printed area statement, read off the drawing, vs what
 // we parsed. The printed figures are the architect's — where they disagree
 // with ours, ours are the ones under suspicion (PLAN-READING-RULES §0.1).
@@ -77,6 +89,7 @@ export type BuiltPlan = {
   rooms: Room[]
   areaStatement?: AreaStatement
   areaComparison?: AreaComparison
+  openSides?: OpenSideRegion[]      // §0.2: spaces open on one side — ASK
   vastu?: VastuSummary
   costInr?: number          // BOQ total incl. labour (budgeting estimate)
   diagnosis?: Diagnosis
@@ -136,6 +149,7 @@ function planFromScene(scene: any): Omit<BuiltPlan, 'glbUrl'> {
     rooms: (scene.rooms ?? []) as Room[],
     areaStatement: scene.area_statement as AreaStatement | undefined,
     areaComparison: scene.area_comparison as AreaComparison | undefined,
+    openSides: (scene.meta?.open_side_regions ?? []) as OpenSideRegion[],
     vastu: scene.vastu as VastuSummary | undefined,
     costInr: scene.boq?.cost_inr?.total_with_labour as number | undefined,
     diagnosis: scene.diagnosis as Diagnosis | undefined,
@@ -149,6 +163,10 @@ export type Corrections = {
   delete_rooms?: string[]
   loading_factor?: number
   north_deg?: number
+  // §0.2 CONTRADICTS: the user answers "is there a wall here?" — indices into
+  // meta.open_side_regions. Confirm closes the edge and the space counts.
+  confirm_open_sides?: number[]
+  reject_open_sides?: number[]
 }
 
 /** G7: apply user corrections to a parsed plan and get fresh numbers back.

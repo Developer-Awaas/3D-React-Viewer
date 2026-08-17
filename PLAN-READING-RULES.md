@@ -31,6 +31,33 @@ FEATURE, not an edge case.
 
 ---
 
+### 0.2 CONTRADICTS — AN ENCLOSED SPACE CANNOT HAVE AN OPEN SIDE
+
+Ruling 16 Aug 2026 (Rahul). On an upper floor a space has a roof and a floor,
+so it MUST be closed. **The only exception is an open balcony, which has
+exactly ONE open side.**
+
+Therefore: when the parser finds a space that fails to enclose because an edge
+is missing, and that space is not a balcony, **the DRAWING is wrong** — not the
+parser. The tool must **FLAG and ASK the user to confirm the missing edge**.
+
+- It must NEVER guess the edge.
+- It must NEVER auto-close it.
+- The space must not be silently discarded as "outside" either, which is what
+  the border test does today.
+
+**Worked case (the first real CONTRADICTS, measured 16 Aug).** FLOOR PLAN's
+common area is ONE connected enclosure of **189.9 sqft** (x 27.1-41.2,
+y -0.2-18.3) holding the lobby and the staircase, with the lift (23.6) and the
+two ducts (5.0 + 2.3) as separately enclosed spaces inside its outline. The
+parser finds it correctly and then **DROPS it, because its south edge is not
+drawn as a wall**: the free space reaches the raster border and the border test
+classifies 189.9 sqft as outside. The south edge IS drawn — as a **2 in double
+line on the layer `ar furniture`**, 15.67 ft long (the lobby's printed 15'8"),
+below the 3 in wall minimum. Rahul confirms a wall exists there in reality.
+**189.9 + 23.6 + 7.3 = 220.8 against the printed 246**, the remainder being
+internal wall thickness.
+
 ## 0.1 VERIFICATION FIRST
 
 **Where a sheet carries its own AREA STATEMENT, opening schedule, or printed
@@ -224,6 +251,15 @@ at 5.0 and 2.3 sqft both fall under the 18 sqft small-room floor. **The gap is
 DETECTION, not separation.** Position matches D-1 exactly: hard against the
 lift's west wall, with the toilet above and the lobby below.
 
+**D-7 A DUCT IS A VOID ENCLOSED ON ALL SIDES (Rahul, 16 Aug 2026)** — whether
+drawn as a STANDALONE rectangle or CARVED INTO A CORNER using existing wall
+runs. The overhang test currently rejects the carved case, and that test asks
+a DRAFTING-STYLE question, not a structural one. **Ruling recorded, implementation
+DEFERRED**: the only two carved candidates sit on GHATIKIA and neelachala FIRST
+FLOOR, which fail everything else, and a guard is not relaxed on the evidence of
+sheets that cannot check the result. Revisit when those sheets are otherwise
+trustworthy.
+
 **D-6 SIZING RATIONALE (Rahul, 16 Aug 2026).** Duct size is driven by
 MAINTENANCE ACCESS: roughly two hands must fit, or the duct opens onto a common
 space so it can be reached. That is why a duct is narrow in one direction and
@@ -347,6 +383,17 @@ walkthrough as well as wrong for area.
 
 ---
 
+**R-9 CARPET CONVENTION (Rahul, 17 Aug 2026).** Carpet =
+**named rooms + PASSAGE / circulation**. It EXCLUDES balconies, excludes
+balcony-type spaces (the utility, §10.1 CE-5), and excludes external and
+internal walls.
+
+Consequences, worked on FLOOR PLAN: its printed carpet 1370 = 680 + 690 is
+FLATS ONLY, and flat-2's 85 sqft of unnamed remainder (printed carpet 690
+against 605.1 of printed room labels) is **circulation**. The utility's 36.1
+sqft is NOT carpet, so **carpet stays 1203.5 / 1370 = 87.8%** — the 90.5%
+alternative is withdrawn.
+
 ## 10. Balconies
 
 1. **B-1** — A balcony is enclosed on 3 sides and open on 1 (the outer face).
@@ -441,8 +488,60 @@ sheet prints 4'6" for it and `room_dims.printed_widths(toks, "UTI")` already
 reads that value. **This run was called a "false positive" in four reports and
 is not one.**
 
+
+**D-8 THE PLATE, THE FLATS AND THE STILT (Rahul, 16 Aug 2026).** A sheet can
+state the same floor plate more than once, on different bases, and the
+statements CHECK EACH OTHER:
+
+    flats built-up 1705 + common 246 = 1951 = the whole-floor PLATE
+    printed STILT FLOOR              = 1900
+    difference                       =   51 = balcony + utility PROJECTING
+                                              beyond the external wall
+
+The stilt has no projections, so `plate - projections ~= stilt`. Consequences:
+
+- **R-8's basis is the PLATE**, never the flats-only figure. Our built-up is a
+  whole-floor number and must be compared with one. Comparing it against 1705
+  read **99.8%** while the common area was MISSING from our side — a wrong
+  basis and a missing area cancelling. Corrected: **87.2% unconfirmed, 96.6%
+  with the §0.2 wall confirmed.** The flats-only row is still reported.
+- **THE STILT CROSS-CHECK is a fifth instrument, and it is free** — the number
+  is already printed. It needs no area statement of its own: any sheet printing
+  a stilt or ground-floor figure can be checked this way.
+- **Measured on FLOOR PLAN (16 Aug): our projection beyond the wall is 86.2
+  sqft against the printed 51.** Balcony **50.3** (100% outside the ring) +
+  utility **35.8** (100% outside). **The balcony alone matches the printed 51
+  within 0.7 sqft**; the discrepancy IS the utility, which the sheet's own
+  arithmetic does not treat as a projection. Unresolved - reported, not
+  attributed.
+
+
+**D-9 EVERY PRINTED-VS-PARSED COMPARISON MUST DECLARE ITS BASIS.** Three basis
+defects surfaced in one week (R-8's flats-only plate, the lobby's wall-inclusive
+dimension, the stilt's incomplete projection), so all of them were swept on
+17 Aug 2026. State the basis on BOTH sides or the number is not a measurement:
+
+| comparison | printed basis | our basis | agree? |
+|---|---|---|---|
+| Built-up (plate) | flats 1705 + common 246, incl. projections | whole floor, incl. projections | **YES** (fixed 16 Aug) |
+| Built-up (flats only) | the two flats alone | whole floor | **NO — reported, never judged** |
+| Carpet | flats only (680 + 690), common excluded | rooms minus common, balcony, utility | **YES** on the common axis; OPEN whether the printed figure includes the UTILITY (36.1 sqft = 2.6 points) |
+| Projection (stilt) | plate - stilt = 51, which omits the utility | balcony + utility beyond the wall ring = 86.2 | **NO — and the SHEET is wrong (Rahul, 17 Aug)** |
+| Room dims (R-2) | clear inside + ~0.16 ft (2 in) | clear inner face | **YES**, within 0.16 ft on 6 of 8 rooms |
+| Balcony width (B-5) | the printed strip width | railing to the wall behind it | **YES**, within 0.13 ft |
+| Footprint <= plot | printed plot area | outer face of the wall ring | **YES** |
+| Common area | lift + stair + lobby (ducts unstated) | the same types + ducts | measured residual **+5.8 sqft** |
+
+**D-10 A SHEET MAY USE MORE THAN ONE CONVENTION AT ONCE.** FLOOR PLAN's ROOM
+dimensions are clear-inside — measured **+0.14 to +0.22 ft (about 2 in) across
+6 rooms**, a tight and consistent offset — while its LOBBY dimension of 15'8"
+is WALL-INCLUSIVE: 14.09 ft clear + 2 x 0.79 ft of flanking wall = 15.67.
+**Never assume one convention per drawing.** Check each comparison against a
+case whose basis is already known, and state the basis on both sides (D-9).
+
 ## 11. Deferred — to be written
 
+- **FLAT ASSIGNMENT FROM THE PRINTED LABELS.** The sheet prints `FLAT-1` and `FLAT-2` (with their own built-up and carpet figures) and we do not read them: rooms are assigned to flats by an x-coordinate split, which puts flat-1's toilet and utility in the common band. Flat-1's toilet and utility are currently assigned to flat-1 by RAHUL'S RULING and the layout, not by anything we parse. Read the labels, and assign by which flat's door a space opens off
 - **Ask the user for NUMBER OF FLOORS (G+n)** so the expected column-size band can be derived — C-4 already carries the G+n bands but nothing supplies n
 - **Structural logic for where a column MUST sit** (span rules, load paths) — a deeper enhancement, noted only
 - Lift door recessed into the shaft wall (§5 L-6) — realism, after the shaft
@@ -471,6 +570,46 @@ is not one.**
 | 10 Aug 2026 | **WN-3 consolidated** — one sill table only: W1 3'0", W2 3'0", W3 3'6". Flagged CODE FIX PENDING: `pdf_vector.LEGEND` and `tag_openings.WIN_FT` disagree (2'6" vs 3'0") and must be reconciled to it | Rahul |
 | 10 Aug 2026 | **§11 deferred** — added elevation-file upload as the resolution path for wall height, sill height, and balcony railing vs parapet | Rahul |
 | 11 Aug 2026 | **R-5 / L-5 / S-5 BUILT** — lift, staircase and lobby are split out of carpet into a separate `common_area` line (`area_statement.COMMON_TYPES`); built-up covers carpet + common, so the split never deducts common area from the plate. Tiny-room floor lowered 28 → 18 sqft ONLY for spaces fully ringed by wall (L-4), which recovers FLOOR PLAN's 5'x5' lift. FLOOR PLAN: carpet 1032.6 → 842.9 (expected dip), common 213.4 vs printed 246, R-8 79.2% → 80.6% | Rahul |
+| 17 Aug 2026 | **PHASE 1 ATTEMPT 7 — `ar stairs` ADMITTED AND IT HELD. First success in seven attempts.** 10 of 11 lines passed the gate and the pairing test. FLOOR PLAN: **R-8 91.8 -> 96.6**, footprint 1702.7 -> **1799.3**, built-up 1791.5 -> 1885.5; carpet 1203.5, rooms 16, buckets 1321.3, R-2 97.0 all UNCHANGED; footprint 53% of plot. Attempt 6 was identical and read R-8 78.4 — **the only thing that changed is the instrument** | Rahul |
+| 17 Aug 2026 | **THE FOOTPRINT JUMP IS VERIFIED CORRECT BY A THIRD FIGURE.** The ring grew **+94.1 sqft (5.5%)**, which Rahul's rule says to treat as a degradation — the premise being that a jump means the ring encloses something it should not. Measured, the premise does NOT hold here: the gain is **88.5 sqft at x 30.5-41.2, y 6.8-18.3 = the STAIRCASE zone** (the ring used to bite a notch around it) plus 5.5 sqft at the lobby's west edge. The independent check is the printed **STILT = 1900 sqft**, the same plate without projections: the footprint moved **89.6% -> 94.7% of it**. **The ring is enclosing something it SHOULD.** Reported for ruling, not self-approved | Rahul |
+| 17 Aug 2026 | **THE OPEN-SIDE FLAG GOT MORE PRECISE: 189.9 -> 101.4 sqft.** With the staircase now inside the ring, the flagged region is the **LOBBY ALONE**, and closing its missing south edge gives **94.2 sqft against a printed 15'8" x 6'2" = 96.6 — within 2.4 sqft (97.5%)**. The lobby is still discarded at the border and still unanswered; the staircase is now inside built-up but is still NOT a detected space, so common stays 30.9 against the printed 246 | Rahul |
+| 17 Aug 2026 | **NAMED PATTERN — AN INSTRUMENT THAT FALLS WHEN THE PARSE IMPROVES IS MEASURING AN ARTEFACT OF INCOMPLETENESS.** Built-up was `floor_inside + wall_material`, and `wall_material` is the wall polygon's own footprint: it COLLAPSES when the ring closes (380.9 -> 15.1 sqft), so **every correct wall admission dropped built-up and R-8 with it**. Six Phase 1 attempts were judged by an instrument that punished the fix. Same class as the 16 Aug R-8 basis error, one level deeper. **Check every instrument against the question: does this go UP when the parse gets better?** | Rahul |
+| 17 Aug 2026 | **STEP 1 BUILT — built-up is now the PLATE FROM THE WALL RING** (branch c: footprint + projections beyond it). FLOOR PLAN **1702.2 -> 1791.5**, R-8 **87.2 -> 91.8** (pin re-derived, evidence in the test). Both older formulas stay reported on `built_up_branch`. Other sheets rise too and are UNVERIFIABLE: BRICK WORK 800.8 -> 1128.0, GHATIKIA 2216.7 -> 2660.8, FIRST FLOOR 1544.2 -> 1731.7 — none prints an area statement | Rahul |
+| 17 Aug 2026 | **PLOT HEADROOM MEASURED — the physics check has room, and FIRST FLOOR is the tight one.** FLOOR PLAN uses **51% of its plot (1705.3 / 3371, headroom 1665.7 sqft)**; neelachala FIRST FLOOR uses **68% (1664.3 / 2454.4, headroom 790.1)**. What would breach it: admitting lines OUTSIDE the building, which is exactly what Phase 1 attempt 1 did on 14 Aug — FIRST FLOOR's footprint hit **7,614 sqft on a 2,455 sqft plot** and the check caught it unaided. Attempt 6's `ar stairs` admission grew FLOOR PLAN's ring to 1799.3 = 53% of plot, still far inside | Rahul |
+| 17 Aug 2026 | **THE SEAL SUBSTITUTES FOR WALLS ON ALL FOUR SHEETS, and the banked gain is probably larger than +98 sqft.** 62-78% of what the blanket close adds is wider than one wall thickness on every sheet, so once walls are read properly the separated seal should return more than the +98 sqft carpet / +5.0 R-8 measured on FLOOR PLAN alone | Rahul |
+| 17 Aug 2026 | **THE BLANKET SEAL IS SUBSTITUTING FOR WALLS ON EVERY SHEET, not only the fragmented ones.** Re-derived against each sheet's OWN measured wall thickness instead of my 1.5 ft guess, the share of the blanket-only fill that is WIDER THAN A WALL is: **BRICK WORK 78% (wall 0.25 ft), GHATIKIA 75% (0.52), FIRST FLOOR 68% (0.42), FLOOR PLAN 62% (0.83)** — against my guess of 17/39/35/42%. **My threshold understated it everywhere and was worst where it mattered most.** Derive a threshold from the sheet, never from a plausible-sounding number | Rahul |
+| 17 Aug 2026 | **DEGENERATE SEGMENTS DEDUPED UPSTREAM — and my performance flag was half wrong.** BRICK WORK's wall layers carry **4,335 ZERO-LENGTH segments and 858 duplicates of 4,960**, which is what made the pairwise wall passes quadratic in noise. But the 686k pair count I reported came from MY re-derived list, taken BEFORE the building crop: **production sees 442 segments there, not 4,960**. Dedupe now runs before `keep_structural_lines` (BRICK WORK 12 of 442, FLOOR PLAN 2 of 134, the neelachala pair 0). **One number moved: BRICK WORK built-up 803.4 -> 800.8 (-2.6, 0.3%)**, an uninstrumented sheet; both instrumented sheets are byte-identical | Rahul |
+| 17 Aug 2026 | **THE LAST BLOCKER ON PHASE 1 IS AN INSTRUMENT, NOT THE GEOMETRY: built-up depends on `wall_material`, which COLLAPSES when walls improve.** Branch b is `floor_inside + wall_material`, and `wall_material` is the wall polygon's own footprint: today **380.9 sqft**, but **15.1** when `ar stairs` was admitted on 16 Aug, because a closed ring becomes one outline with a hole nearly as large. Built-up fell 366 sqft and R-8 to 78.4 — **the measure of success falls when the thing measured improves.** All six previously named blockers are gone; this one was never named. **Proposal, not built: built-up = FOOTPRINT + projections = 1705.3 + 86.2 = 1791.5 = 91.8% of the printed plate against today's 87.2%, and it RISES as walls are admitted** because the ring's outer contour only gets more complete | Rahul |
+| 17 Aug 2026 | **THE TWO PASSES ARE BUILT AND THE SEPARATION CANNOT RESCUE A FRAGMENTED SHEET — the reason, not an eighth revert.** Pass 1 WELD (`weld_bridges`, proximity + ALONG a wall run, grid-indexed) and pass 2 BREAK (`collinear_bridges`) both work as specified: **FLOOR PLAN gains C.TOILET and the passage — carpet 1203.5 -> 1301.5, R-8 87.2 -> 92.2, ducts kept, footprint <= plot.** neelachala FIRST FLOOR still collapses to 2 rooms with **514 welds firing**. Measured cause: the blanket close adds **493.9 sqft of "wall" there that the passes do not, and 35% of it is MORE THAN 1.5 ft WIDE, up to 8.4 ft**. **It is not welding a wall network — it is SUBSTITUTING for one.** That sheet's 11 rooms exist because the kernel FILLS SPACE, so any rule that stops destroying space necessarily loses them. **The separation is right and it is not sufficient; what FIRST FLOOR needs is wall DETECTION, not a better seal** | Rahul |
+| 17 Aug 2026 | **DEFAULT LEFT ON `blanket`, both versions shipped.** `DRISHTI_SEAL_MODE=passes` selects the separated seal. Nothing regresses: all four sheets are byte-identical to the accepted state, and the passes are one env var away for the day FIRST FLOOR's walls are read properly. **The gain waiting behind that flag is +98 sqft of carpet and +5.0 points of R-8 on the sheet we can actually check** | Rahul |
+| 17 Aug 2026 | **DUCT CONTAINMENT FIXED — a void inside a room is still a void.** The old rule skipped any duct whose centre fell inside a room polygon, which suppressed both of FLOOR PLAN's ducts the moment the seal fix enlarged the rooms around them. The real risk was only double-counting, so the test is now whether the duct's own interior is already FREE space (it is not: a wall-ringed void reads SOLID in `m_env`). Both ducts survive under either seal mode | Rahul |
+| 17 Aug 2026 | **COLLINEAR SEAL — BUILT, MEASURED, REVERTED. The criterion is right and it is not sufficient.** Wired in place of the blanket close: **FLOOR PLAN improved exactly as predicted** — C.TOILET and the passage returned, carpet **1203.5 -> 1313.8 (+110.3)**, R-8 **87.2 -> 92.5**, footprint 1704.2 <= plot, R-2 96.9. **But neelachala FIRST FLOOR, an INSTRUMENTED sheet, collapsed: 11 rooms -> 2, R-2 96.8 -> 0.0**, carpet leaking 1005.7 -> 1997.1; GHATIKIA 14 rooms -> 2. Reverted per instruction, not tuned. **Cause measured: those sheets' wall fragments are NOT COLLINEAR.** The geometry reader emits short offset spans, so the gaps holding those plans together are not breaks in a run — 246 bridges fired on FIRST FLOOR and none of them were the ones that mattered. **The collinear rule needs a companion for OFFSET fragments before it can replace the blanket close** | Rahul |
+| 17 Aug 2026 | **THE SEAL IS TWO JOBS WEARING ONE KERNEL.** On a cleanly drawn sheet it closes doorways and drafting breaks; on a fragmented sheet it welds disconnected wall pieces into a building. The first job needs the collinear test, the second needs proximity regardless of alignment, and one 4 ft morphological close was doing both — which is why fixing either half breaks the other. Any future fix must do them SEPARATELY | Rahul |
+| 17 Aug 2026 | **STANDING CHECK — WHEN A SPACE IS MISSING, TEST WHETHER IT EXISTS IN AN EARLIER MASK BEFORE ASSUMING IT WAS NEVER DETECTED.** Third instance of found-then-destroyed-downstream in two days: the common area (border test, 16 Aug), C.TOILET and the passage (seal kernel, 17 Aug). All three were correctly detected and then removed by a later step, and all three read from the output exactly like a detection failure. The check is one line — compare the free space in an earlier mask against the final one | Rahul |
+| 17 Aug 2026 | **THE COLLINEARITY TEST SEPARATES THE BIG GAPS CLEANLY AND IS INCONCLUSIVE ON THE SMALL ONES.** Of the 8 gaps the 4 ft seal closes on FLOOR PLAN, the three large ones classify as **FACING WALLS (a room)** with no threshold at all — C.TOILET 25.8 (3.9 x 6.8), the passage 45.1 (11.8 x 3.9), a balcony strip 13.3 (4.3 x 3.1): each is flanked by two PARALLEL walls running along the gap, not by collinear ends. The other five (2.1-9.3 sqft, 26.1 total) have no wall segment hugging either face and the test returns nothing. **The principle holds; the small cases need a second signal** | Rahul |
+| 17 Aug 2026 | **THE BLANKET SEAL IS LOAD-BEARING ON THREE OF FOUR SHEETS — removing it is not an option.** With `DRISHTI_SEAL_FT=0`: BRICK WORK rooms **12 -> 4**, carpet 502 -> 210.6; GHATIKIA **14 -> 3**, carpet 1711 -> 760, R-2 58.6 -> **0.0**; FIRST FLOOR **11 -> 3**, carpet 1005.7 -> 1972.3 (rooms merge into blobs). Even FLOOR PLAN gets WORSE: rooms 16 -> 13, R-8 87.2 -> 84.2. **So the fix cannot be a smaller number — it must be a seal that closes only what the collinearity test calls a break** | Rahul |
+| 17 Aug 2026 | **THE 93.5 sqft DOES NOT ALL RETURN AS CARPET (R-9).** C.TOILET **25.8** + passage **45.1** = **70.9 carpet**; the 13.3 sqft strip at x 62.4-66.7, y 14.1-17.3 lies INSIDE flat-2's traced balcony pocket (62.33-71.95, 14.09-17.46) so it is BALCONY, excluded; 9.3 unresolved. **flat-2 becomes 644.5 against a printed 690 - short 45.5 (6.6%), not the 22.9 I reported.** The two unidentified strips are located: **9.3 sqft at (80.1, 2.6)** between A.TOILET and flat-2's east bedroom, **9.1 sqft at (25.9, 2.0)** between flat-1's living room and the common strip - both circulation-shaped, neither labelled | Rahul |
+| 17 Aug 2026 | **C.TOILET IS DESTROYED BY OUR OWN 4 FT ENVELOPE SEAL — our bug, exactly as Rahul ruled.** The drawing is complete: west wall pair at x 71.66/72.08, east (shared with A.TOILET) at 76.08/76.49, north at y 13.26, south 1.50 ft of wall plus a 2.26 ft DOOR. In the unsealed mask `m` its interior is correctly free; in `m_env` it is SOLID. Cause: `DRISHTI_SEAL_FT = 4` closes gaps up to 4 ft, and **C.TOILET's interior is 3.9 ft** — narrower than the kernel meant to bridge wall gaps. **A.TOILET beside it is 4.5 ft and survives.** The seal that makes a fragmented building enclose is annihilating the narrow spaces inside it | Rahul |
+| 17 Aug 2026 | **THE SEAL SWALLOWS 102.5 sqft ON FLOOR PLAN, AND IT INCLUDES THE PASSAGE.** Measured as free-in-`m` but solid-in-`m_env`: **C.TOILET 25.8** (printed 26.0), **flat-2's PASSAGE 45.1 (11.8 x 3.9 ft)**, 13.3, 9.3 and 9.1 sqft strips. **93.5 of those sqft are in flat-2**, which was short 116.4 — so returning them leaves it short only 22.9 (3.3%). **Answer to "do we detect circulation at all": we DETECT it and then fill it in.** Same class as the border-test finding of 16 Aug: found, then destroyed downstream | Rahul |
+| 17 Aug 2026 | **§9 R-9 CARPET CONVENTION SETTLED (Rahul): named rooms + PASSAGE, excluding balconies, balcony-type spaces (the utility) and all walls.** So carpet stays **1203.5 / 1370 = 87.8%** and the 90.5% alternative is withdrawn; flat-2's 85 sqft unnamed remainder is circulation. **§11: flat assignment must come from the printed FLAT-1 / FLAT-2 labels, not an x-coordinate split** — flat-1's toilet and utility sit in flat-1 by ruling and layout, not by anything we parse | Rahul |
+| 17 Aug 2026 | **THE CARPET GAP IS CONCENTRATED, NOT DISTRIBUTED — the opposite of GHATIKIA.** Every room we DO find measures within **1.6 to 3.9 sqft (about 2%)** of its printed size across 8 dimensioned rooms, so boundaries are right. The 201 sqft of missing carpet is WHOLE SPACES: flat-2's **C.TOILET (printed 4'0" x 6'6" = 26 sqft) has NO free component at all** — the label sits at (74.1, 10.7) and is inside no room polygon — and flat-2's **BALCONY is merged into the 233.4 sqft dining** (its label at (67.4, 15.7) IS inside that polygon). Same test that told GHATIKIA's scatter (sd 0.106) from a scale error, applied the other way | Rahul |
+| 17 Aug 2026 | **THE FLAT BOUNDARY IS AN ASSIGNMENT PROBLEM, AND WE HAVE NO RULE FOR IT.** Splitting by the common strip (x < 27 = flat-1, 27-41.3 = common, > 41.3 = flat-2) puts flat-1's **TOILET (34.7)** and its **UTILITY (36.1)** in the COMMON band, because both sit east of x=27 while belonging to flat-1. With them returned to flat-1 it reads **629.9 against a printed 680 (short 50.1)**, and if the printed carpet includes the utility, **666.0 against 680 - within 14 sqft (2%)**. flat-2 stays **573.6 against 690, short 116.4**. **We assign rooms to flats by an x-coordinate guess; the sheet assigns them by door and by its printed FLAT-1 / FLAT-2 labels, which we do not read** | Rahul |
+| 17 Aug 2026 | **THE SHEET'S OWN ARITHMETIC IS INCONSISTENT — CONTRADICTS, flagged not reconciled** (Rahul). The utility DOES project beyond the external wall, so the printed `plate - stilt` = 51 sqft should have included it and does not: **balcony 50.3 measured accounts for the printed 51 on its own, and the utility's 35.8 is unaccounted** (both 100% outside the wall ring). **Our 86.2 is correct; the drawing is wrong.** Surfaced as a Plan Doctor `ask` — "the sheet's stilt arithmetic accounts for the balcony but not the utility. Which is right?" **Our figure is NOT tuned to match** | Rahul |
+| 17 Aug 2026 | **CARPET'S BASIS IS VALID — 87.8% STANDS.** Printed 1370 = 680 + 690, FLATS ONLY with common excluded; ours is rooms minus common, balcony and utility, i.e. also flats-only. **The bases agree on the axis that broke R-8.** The 166.5 sqft gap is genuine coverage, not a basis error. ONE open question: if the printed carpet includes the UTILITY, our comparable figure is 1239.6 = **90.5%** — a 36.1 sqft / 2.6 point uncertainty. Per-flat: ours **595.2 / 573.6** against printed **680 / 690**, so both flats are short, flat-2 by more | Rahul |
+| 17 Aug 2026 | **§10.2 D-9 — ALL EIGHT COMPARISONS SWEPT FOR BASIS DEFECTS** rather than waiting for a fourth instance. Two are wrong and both are now explicit: the flats-only row (reported, never judged) and the projection row (the SHEET is wrong). Five agree. One residual (+5.8 sqft in the 246) is measured and unattributed. **Finding: the same sheet uses TWO dimension conventions** — rooms clear-inside +2 in, the lobby wall-to-wall including its flanking walls (14.09 clear vs 15'8" printed) | Rahul |
+| 16 Aug 2026 | **R-8's BASIS CORRECTED TO THE PLATE (§10.2 D-8).** The sheet prints 1705 for the two FLATS and 246 of common SEPARATELY; the plate is **1951**, and the sheet self-confirms it — printed STILT 1900 + 51 sqft of projection. R-8 now compares whole-floor against whole-floor: **87.2% unconfirmed (pin re-derived here), 96.6% with the §0.2 wall confirmed**. The old 99.8% was a wrong basis and a missing area cancelling. **Pinned at the UNCONFIRMED 87.2 — confirmation is user input and a test must never assume it.** The flats-only comparison is still emitted on its own row | Rahul |
+| 16 Aug 2026 | **FIFTH INSTRUMENT — THE STILT CROSS-CHECK, and it is free.** `plate - projections ~= stilt`, from figures already printed. Live on FLOOR PLAN: **printed 51 vs parsed 86.2 = 31.0%**. Kept OUT of the verdict for now (like the `ask` level): it is new and unruled, and letting it drive the grade flipped FLOOR PLAN C -> D and masked R-8's own status. **The discrepancy is exactly the utility**: balcony **50.3** matches the printed 51 within **0.7 sqft**, utility **35.8** is counted by us and not by the sheet. Both are 100% outside the wall ring | Rahul |
+| 16 Aug 2026 | **THE CONFIRMATION PATH IS BUILT (§0.2) — and applying it EXPOSED A BASIS ERROR IN R-8 ITSELF.** Confirming FLOOR PLAN's missing south edge takes common **30.9 -> 213.6** (182.7 + lift 23.6 + ducts 7.3) against the printed 246, carpet and footprint unchanged. But R-8 falls **99.8 -> 89.4**, and the cause is not the parse: **the sheet's printed `built_up_total` 1705 is the TWO FLATS ONLY (870 + 835), with the 246 common listed SEPARATELY**, so the printed whole-floor plate is **1951**. Our built-up is a whole-floor figure. Against 1951 the confirmed built-up of 1884.9 is **96.6%**. **R-8 read 99.8 only because the common area was missing — two errors cancelling, the exact pattern §12 already names.** STOPPED per instruction; the comparison basis is not changed without a ruling | Rahul |
+| 16 Aug 2026 | **THE 246 CLOSED BY MEASUREMENT, residual +5.8 sqft (2.4%).** lobby+staircase **182.7** (ONE space - no wall divides them) + lift **23.6** + ducts **5.0 + 2.3** + **wall material 38.1 measured inside the block** (drawn wall pairs, not subtraction) = **251.8** against printed **246**. Bases (§10.2 D-4): the spaces are INNER-FACE (wall-to-wall clear), the ducts include their own drawn faces, the block outline is 289.4 sqft to OUTER faces. **The residual is NOT attributed**: if the printed 246 excludes the two ducts the sum is 244.5 (-1.5), which is one candidate and not a finding. **The lobby measures 14.09 ft clear against a printed 15'8"**: 14.09 + 2 x 0.79 = 15.67, so the printed figure includes its flanking walls - the printed dimension is NOT clear-inside | Rahul |
+| 16 Aug 2026 | **HEADLINE — A REGION CAN BE CORRECTLY DETECTED AND THEN DESTROYED DOWNSTREAM.** FLOOR PLAN's entire common area is found by the parser as ONE 189.9 sqft component (lobby + staircase, with the lift and both ducts enclosed inside its outline) and then DISCARDED by the border test, because the undrawn south edge lets it reach y = -0.2 and touch the raster edge. **"Not found" and "found then discarded" are indistinguishable from the output, and we assumed the former for two weeks** — six wall-admission attempts were spent adding walls to a space that was already there. Check what happens to a region AFTER detection before concluding it was never detected | Rahul |
+| 16 Aug 2026 | **§0.2 ASK PATH BUILT — flag only, changes no number.** `open_side_regions()` + `meta.open_side_regions` + a Plan Doctor issue at a new level `ask` (which does not affect grade or score, because a question about the DRAWING is not a defect in us). The discriminator is three-sides-backed, not border-touching: FLOOR PLAN flags **exactly one** region — 189.9 sqft open to the south, backed 100% north/east/west — and does NOT flag its 985.5 sqft outside component or its 122.7 sqft balcony strip, which are backed on one side. GHATIKIA flags one 214.0 sqft region open north (that sheet fails everything else; reported, not accepted); BRICK WORK and FIRST FLOOR flag nothing. **Nothing is auto-closed and nothing is counted** | Rahul |
+| 16 Aug 2026 | **NAMED PATTERN — an instrument DOWNSTREAM of a branching heuristic measures the BRANCH, not the thing.** `area_statement` picks built-up from two formulas and R-8, our best instrument, sits directly below it. Instrumented: every sheet fires branch **b** (`floor_inside + wall_material`), and the untaken branch **a** (`gross_outer`) would say 1247.9 / 235.9 / 520.2 / 317.6 — cliffs of **454 to 1697 sqft**. Emitted as `built_up_branch` on every sheet | Rahul |
+| 16 Aug 2026 | **CORRECTION (in place) — the "branch flip" diagnosis of attempt 6 was WRONG.** The branch did not change: it was `wall_material` collapsing from **380.9 to 15.1 sqft** inside branch b (built-up 1702.2 -> 1336.4 = floor_inside 1321.3 + 15.1). Admitting the stair lines closed the wall ring, so the wall polygon became one outline with a hole nearly as large — material vanished. The cliff is INSIDE branch b, not between a and b | Rahul |
+| 16 Aug 2026 | **THE NORTH WALL WAS NEVER THE MISSING PIECE — the 14 Aug assumption is WRONG.** Admitting `ar stairs` gained NOTHING: common stayed 30.9, the lobby did not enclose, the staircase did not appear. Measured cause (16 Aug): the lobby+staircase region **already forms one 189.9 sqft component** in the parser's own mask. It is discarded by the BORDER TEST because the missing SOUTH edge lets it reach the raster edge. **We spent six attempts admitting walls for a region that was already there** | Rahul |
+| 16 Aug 2026 | **§0.2 written — CONTRADICTS: an enclosed space cannot have an open side.** Upper floor = roof + floor = closed; the only exception is a balcony with exactly one open side. A non-balcony space that fails to enclose means the DRAWING is wrong: FLAG and ASK, never guess, never auto-close, and never silently discard as outside (which is what the border test does today). First worked case: FLOOR PLAN's south edge, drawn as a **2 in pair on `ar furniture`**, 15.67 ft = the lobby's printed 15'8" | Rahul |
+| 16 Aug 2026 | **§4 D-7 RULING — a duct is a VOID ENCLOSED ON ALL SIDES, carved into a corner or drawn standalone.** The overhang test asks a drafting-style question, not a structural one, and both carved candidates sit where D-1 predicts. **Implementation DEFERRED by Rahul**: the evidence is only on GHATIKIA and FIRST FLOOR, which fail everything else, and a guard is not relaxed on the evidence of sheets that cannot check the result | Rahul |
+| 16 Aug 2026 | **PHASE 1 ATTEMPT 6 — `ar stairs` REVERTED, and the blocker has MOVED.** First attempt since the balcony stopped being a mask difference, and **the old failure mode is genuinely gone: the balcony survived at 50.8** where every earlier attempt collapsed it to 0. 10 of 11 lines passed the position gate and the pairing test. FLOOR PLAN still degraded, by a DIFFERENT mechanism: **built-up 1702.2 -> 1336.4, R-8 99.8 -> 78.4, footprint 1705.3 -> 1799.3**. `area_statement` chooses between two shapes — ONE ENCLOSING OUTLINE (`built_up = gross_outer`) and THIN WALL STRIPS (`built_up = floor_inside + wall_material`) — and the admitted lines flipped the wall polygon from the first to the second, taking 366 sqft with it. **AND IT GAINED NOTHING: common stayed 30.9, the lobby still did not enclose, the staircase still did not become a space.** Reverted, not tuned. **The next blocker is the built-up SHAPE TEST, not the balcony** | Rahul |
+| 16 Aug 2026 | **THE ~124 sqft STAIRCASE FIGURE IS INFERENCE, NOT PRINTED.** It is 246 - 96.6 (printed lobby) - 25 (printed lift), and the sheet prints only the 246 total. Flagged as inference wherever used | Rahul |
 | 16 Aug 2026 | **AN IMPOSSIBLE INSTRUCTION IS MEASURED AND REPORTED, NEVER APPROXIMATED.** The specified duct fix — lower the small-space area floor — cannot work at any value: a 1.00 ft duct interior fills solid under the 0.88 ft wall-merge kernel, so no free-space component exists to admit. Measured, reported, reverted, and replaced with the right primitive: **read the rectangle the drafter drew.** Approximating the instruction (a lower floor plus ad-hoc filters) would have shipped noise and hidden the real reason | Rahul |
 | 16 Aug 2026 | **THE ZEROS ON GHATIKIA AND FIRST FLOOR ARE NOT THE THIN-WALL LIMIT.** Both rejected candidates were killed by the OVERHANG test and by a wide margin, not marginally: GHATIKIA **2.63 x 4.36 ft (11.5 sqft) overhanging 2.62 ft** against a 0.50 ft limit, FIRST FLOOR **3.47 x 3.47 ft (12.1 sqft) overhanging 1.66 ft**. Measured wall thickness is 0.52 ft and 0.42 ft against candidate widths of 2.63 and 3.47 ft, so the thickness guard never fired and the recorded limit is not what is happening. Their sides are shared with longer wall runs — a shaft carved into a corner rather than drawn as its own box. **Whether that shape should count as a duct is a RULING, not a threshold** | Rahul |
 | 16 Aug 2026 | **PHASE 1's BLOCKER IS GONE.** The 14 Aug ruling was "nothing can be admitted until balcony stops being `foot_ext - foot`", because every ring improvement collapsed the balcony to 0. Balcony has been measured from the DRAWN railing edge since 15 Aug and the mask subtraction is deleted; `foot_ext` now feeds the overlay only. **The `ar stairs` admission can be retried, and its old failure mode cannot recur by that mechanism.** The common-area gap needs it: 215.1 of the printed 246 sqft is still absent, and it is not one space but TWO — the lobby (96.6 printed) AND the staircase (~124 by subtraction), both in the same core zone, both dependent on reading walls by signature | Rahul |
