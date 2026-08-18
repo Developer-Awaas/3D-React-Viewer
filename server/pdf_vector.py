@@ -24,7 +24,22 @@ BORDER_MAXLEN_PT = 900       # drop page-border / site-boundary mega-lines
 WINDOW_SILL_FT = 3.0         # locked: sill 3 ft / head 7 ft
 WINDOW_HEAD_FT = 7.0
 DOOR_HEAD_FT = 7.0           # lintel level 7'0" (Indian practice; matches window head)
-DOOR_MIN_FT, DOOR_MAX_FT = 2.0, 5.5
+# ONE CONSTANT PER PURPOSE (18 Aug 2026). `DOOR_MIN_FT` was doing FIVE jobs at
+# once — a real leaf width, a drawn-gap width, the geometry fallback's gap, a
+# sanity bound, and a strip-span floor — and the `- 0.3` slack existed only to
+# reconcile the last with the first. Worst instance of the week's pattern
+# (the seal served 2, the built-up formula 2, the strip bound 3).
+#
+# A REAL DOOR LEAF, in the world: what a printed tag or a derived width must
+# look like to be a door at all. Indian residential practice, 2'0"-5'6".
+DOOR_LEAF_MIN_FT, DOOR_LEAF_MAX_FT = 2.0, 5.5
+# THE DRAWN OPENING in the linework: the run-to-run gap between wall faces
+# where the drafter stopped the wall. It equals the leaf it holds, so the
+# numbers coincide — but it is a measurement of the DRAWING, not of a door,
+# and it must be free to move independently.
+DRAWN_GAP_MIN_FT, DRAWN_GAP_MAX_FT = 2.0, 5.5
+# kept as an alias so nothing outside this file breaks
+DOOR_MIN_FT, DOOR_MAX_FT = DOOR_LEAF_MIN_FT, DOOR_LEAF_MAX_FT
 WALL_HEIGHT_FT = 9.843       # ~3 m
 MIN_WALL_AREA_PX = 6000
 MIN_HOLE_AREA_PX = 2500
@@ -503,6 +518,51 @@ def enclosed_boxes(segs, min_sqft=2.0, max_sqft=18.0, max_side_ft=6.0, tol=0.12,
         if not any(k[0] <= cx <= k[2] and k[1] <= cy <= k[3] for k in kept):
             kept.append(b)
     return kept
+
+
+def _wall_thickness_ft(drawings, ppf):
+    """This sheet's own wall thickness: the median measured pair gap. Used
+    wherever a tolerance is really "one wall" — never a constant (§0.1)."""
+    gaps = sorted(g["gap_in"] / 12.0 for g in (wall_gap_pairs(drawings, ppf) or []))
+    return gaps[len(gaps) // 2] if gaps else None
+
+
+def wall_rects(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+    """Walls as RECTANGLES: the material BETWEEN each measured pair of faces.
+
+    Rahul's ruling, 17 Aug 2026: a wall is ALWAYS two drawn lines, and the wall
+    is what lies between them — its thickness is the MEASURED gap, not a
+    painted band. The old raster dilated each line into a band, which is why
+    room accuracy improved to R-2 99.5% the moment dilation was removed: the
+    faces were being fattened inward over the rooms.
+
+    Returns (rects, unpaired) in the segments' own units. Each rect is
+    (x0, y0, x1, y1) covering exactly the overlap of its two faces. Pure."""
+    lo, hi = (min_in / 12.0) * ppf, (max_in / 12.0) * ppf
+    H, V = [], []
+    for k, (x0, y0, x1, y1) in enumerate(segs):
+        if abs(y1 - y0) < 0.5:
+            H.append((k, (y0 + y1) / 2, min(x0, x1), max(x0, x1)))
+        elif abs(x1 - x0) < 0.5:
+            V.append((k, (x0 + x1) / 2, min(y0, y1), max(y0, y1)))
+    rects, paired = [], set()
+    for runs, horiz in ((H, True), (V, False)):
+        runs.sort(key=lambda r: r[1])
+        for i in range(len(runs)):
+            ki, pi, ai, bi = runs[i]
+            for j in range(i + 1, len(runs)):
+                kj, pj, aj, bj = runs[j]
+                if pj - pi > hi:
+                    break
+                if pj - pi < lo:
+                    continue
+                s0, s1 = max(ai, aj), min(bi, bj)
+                if s1 - s0 < min_ovl_ft * ppf:
+                    continue
+                rects.append((s0, pi, s1, pj) if horiz else (pi, s0, pj, s1))
+                paired.add(ki)
+                paired.add(kj)
+    return rects, [g for k, g in enumerate(segs) if k not in paired]
 
 
 def keep_structural_lines(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
@@ -1500,7 +1560,7 @@ def fitz_rect_overlaps_half(a, b):
     return w * h >= 0.5 * min(a.width * a.height, b.width * b.height)
 
 
-def _door_gap_strip(m, box_px, door_w_px):
+def _door_gap_strip(m, box_px, door_w_px, wall_ft=None, dil_px=6.0):
     """Locate the doorway GAP in the wall mask beside a door swing box.
 
     CAD wall linework stops at both jambs, so the raster wall mask has a hole
@@ -1535,6 +1595,23 @@ def _door_gap_strip(m, box_px, door_w_px):
             w = stt[i, cv2.CC_STAT_WIDTH]
             h = stt[i, cv2.CC_STAT_HEIGHT]
             long_, thin = max(w, h), min(w, h)
+            # "thicker than any wall" — DERIVED from this sheet's own wall
+            # (17 Aug 2026), not the 1.5 ft constant chosen when walls were a
+            # 0.20 ft smear. Two walls thick is not a wall. On FLOOR PLAN the
+            # gap strip is the wall (0.83) plus the door mask's dilation
+            # (0.26 each side) = 1.35 ft, which sat just under the old 1.5 and
+            # tipped over it as soon as walls carried their real thickness.
+            # DERIVATION ATTEMPTED TWICE AND REVERTED (17 Aug 2026). This
+            # constant looks like the same smear-era value as min_flank /
+            # face_tol / group_tol, but it is NOT measuring a wall: it bounds
+            # the strip the CLOSING reveals, which is a function of the wall,
+            # the door mask's dilation and the closing kernel together.
+            #   `thin > 2 x W`        -> BRICK WORK snapped 11 -> 3, FIRST
+            #                            FLOOR 8 -> 5 (W = 0.25 / 0.42 ft)
+            #   `thin > W + 2 x dil`  -> FLOOR PLAN 8 -> 6, BRICK WORK 3
+            # Both are worse than the constant on every sheet. Left alone and
+            # reported rather than tuned; the strip geometry needs measuring
+            # before it can be derived (§12).
             if thin > 1.5 * NORM_PPX:             # thicker than any wall
                 continue
             if not (0.5 * door_w_px <= long_ <= door_w_px + 0.6 * NORM_PPX):
@@ -1563,10 +1640,10 @@ def _door_gap_endpoints(struct, cl, ppf, wd_ft=None):
     gap mark the doorway. Returns the strip rect in pt (x0, y0, x1, y1)
     covering the full wall band, or None."""
     if wd_ft:                          # this door's own width, + jamb offset /
-        wd_lo = max(DOOR_MIN_FT, wd_ft - 0.7) * ppf        # crossing wall
+        wd_lo = max(DOOR_LEAF_MIN_FT, wd_ft - 0.7) * ppf   # (1) a real leaf
         wd_hi = min(DOOR_MAX_FT + 1.0, wd_ft + 1.6) * ppf
     else:
-        wd_lo, wd_hi = DOOR_MIN_FT * ppf, (DOOR_MAX_FT + 0.6) * ppf
+        wd_lo, wd_hi = DOOR_LEAF_MIN_FT * ppf, (DOOR_LEAF_MAX_FT + 0.6) * ppf
     reach = 1.2 * ppf                  # wall face may sit ~a thickness away
     H, V = [], []
     for ax, ay, bx, by in struct:
@@ -2235,6 +2312,30 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # it has a parallel partner at wall thickness, or if it is no longer than
     # the paired extent. Runs once the scale is known, then the extent is
     # recomputed from what survived.
+    # --- SIGNATURE UNION (17 Aug 2026): the W-1/W-3 pairing reader runs
+    # ALONGSIDE the named layers, not only as a fallback. `DRISHTI_SIG_UNION`:
+    # off | on (all signature spans) | nocol (excluding column-layer faces).
+    # A column box's two faces are 10 in apart and pass the wall-pair test, so
+    # the reader reads them as wall — 20 of FLOOR PLAN's 50 new spans. Columns
+    # are detected separately and are NOT walls.
+    _sig_mode = os.getenv("DRISHTI_SIG_UNION", "off")
+    if _sig_mode != "off" and struct and mode != "geometry":
+        _src = drawings if _sig_mode == "on" else [
+            d for d in drawings if "column" not in (d["lname"] or "")]
+        _sig = _geometry_wall_segs(_src, ppf, [], dim_keys)
+        _have = {tuple(round(v, 1) for v in
+                       (min(g[0], g[2]), min(g[1], g[3]),
+                        max(g[0], g[2]), max(g[1], g[3]))) for g in struct}
+        _add = [g for g in _sig
+                if tuple(round(v, 1) for v in
+                         (min(g[0], g[2]), min(g[1], g[3]),
+                          max(g[0], g[2]), max(g[1], g[3]))) not in _have]
+        if _add:
+            struct = struct + _add
+            warnings.append(
+                "SIGNATURE UNION (%s): %d wall-signature span(s) admitted "
+                "alongside the named layers" % (_sig_mode, len(_add)))
+
     _n_raw = len(struct)
     struct = dedupe_segments(struct, ppf)
     if len(struct) < _n_raw:
@@ -2266,9 +2367,27 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # is seen — a set containing the candidates lets them vouch for themselves
     # (§12, 14 Aug). Candidates must also PAIR at wall thickness: a lone line
     # inside the building is not a wall.
-    _ADMIT = ("ar stairs",)
+    # Layer `0` is the big one — 782 ft of wall-signature pairs on GHATIKIA and
+    # 1,230 ft on neelachala FIRST FLOOR, sheets whose NAMED layers carry
+    # essentially nothing (§12, 12 Aug). It is matched EXACTLY: "0" as a
+    # substring would match `ar-10`, `column0` and every other layer.
+    # LAYER `0` ADMITTED AND REVERTED (17 Aug 2026, attempt 8). On FLOOR PLAN
+    # — the only sheet that can judge it — layer `0` contributes NOTHING: of
+    # 112 candidates only the same 10 `ar stairs` lines survive, and 101 are
+    # rejected outside the trusted extent (the gate correctly throws out its 13
+    # lines at y -13.0..-7.9, below the building). On the sheets where it
+    # matters it is destructive: neelachala FIRST FLOOR's footprint went
+    # 1664.3 -> 3819.6 sqft = **102% OF ITS OWN PLOT**, a §0.1 physics
+    # violation, with R-2 96.8 -> 95.9; GHATIKIA lost 485 sqft of carpet
+    # (1711.3 -> 1226.0) and R-2 58.6 -> 54.2. Layer `0` carries real wall AND
+    # everything else the drafter left unnamed, and the pairing test cannot
+    # tell them apart. See §12.
+    _ADMIT_SUB = ("ar stairs",)
+    _ADMIT_EXACT = ()
     _cand = dedupe_segments(
-        [g for g in _segs(drawings, lambda n: any(k in n for k in _ADMIT))
+        [g for g in _segs(drawings,
+                          lambda n: n in _ADMIT_EXACT
+                          or any(k in n for k in _ADMIT_SUB))
          if g not in struct], ppf)
     if _cand:
         _ext = paired_extent(struct, ppf)
@@ -2280,7 +2399,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         if _keep:
             struct = struct + _keep
             warnings.append(
-                "PHASE 1: %d of %d `ar stairs` line(s) admitted as wall "
+                "PHASE 1: %d of %d candidate line(s) (`ar stairs`, `0`) admitted as wall "
                 "(inside the trusted extent AND paired at wall thickness); "
                 "%d rejected outside it" % (len(_keep), len(_cand),
                                             len(_cand) - len(_inside)))
@@ -2404,16 +2523,51 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
           polygons from the thin mask decouples the two."""
         K = cv2.getStructuringElement
         shp = getattr(cv2, f"MORPH_{shape_flag}")
+        # PAIR-BUILT WALLS (17 Aug 2026, Rahul): paint the MATERIAL BETWEEN each
+        # measured pair of faces, at its own measured thickness — never a band
+        # dilated out of a line. Dilating the faces inward over the rooms is
+        # what cost room accuracy: R-2 went 97.0 -> 99.5 the moment dilation
+        # was ablated. An UNPAIRED survivor has no measured thickness, so it
+        # takes this sheet's MEDIAN measured wall (derived per sheet, never a
+        # constant); on FLOOR PLAN they are 7% of wall length, on neelachala
+        # FIRST FLOOR 0%, on BRICK WORK 49%.
+        _abl = os.getenv("DRISHTI_ABLATE", "")
         mm = np.zeros((H, W), np.uint8)
-        for ax, ay, bx, by in struct:
-            cv2.line(mm, tp(ax, ay), tp(bx, by), 255, 2)
+        if os.getenv("DRISHTI_PAINT", "pairs") == "lines":   # measurement hook
+            for ax, ay, bx, by in struct:
+                cv2.line(mm, tp(ax, ay), tp(bx, by), 255, 2)
+            _rects, _unp = [], []
+        else:
+            _rects, _unp = wall_rects(struct, ppf)
+        for _rx0, _ry0, _rx1, _ry1 in _rects:
+            _p, _q = tp(_rx0, _ry0), tp(_rx1, _ry1)
+            cv2.rectangle(mm, (min(_p[0], _q[0]), min(_p[1], _q[1])),
+                          (max(_p[0], _q[0]), max(_p[1], _q[1])), 255, -1)
+        _med = (sorted(abs(r[3] - r[1]) if abs(r[2] - r[0]) > abs(r[3] - r[1])
+                       else abs(r[2] - r[0]) for r in _rects)[len(_rects) // 2]
+                if _rects else 0.5 * ppf)
+        _upx = max(2, int(_med * sc))
+        for ax, ay, bx, by in _unp:
+            cv2.line(mm, tp(ax, ay), tp(bx, by), 255, _upx)
         mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (9, 9)))
-        mm = cv2.dilate(mm, K(shp, (dil, dil)))
+        # DILATE is now only a JUNCTION CONNECTOR: pair-painting already fills
+        # the wall body, so this exists solely to close the pixel-scale gaps
+        # where two pair-rectangles meet at a corner. Its value is DERIVED by
+        # sweep (DRISHTI_DILATE), not assumed.
+        _dil = int(os.getenv("DRISHTI_DILATE", dil) or dil)
+        if _abl != "dil" and _dil > 1:
+            mm = cv2.dilate(mm, K(shp, (_dil, _dil)))
         # merge the TWO lines of a double-line wall into one solid band:
         # kernel = max wall thickness (10 in ~ 0.85 ft). Door gaps
         # (>= 2'6" = 127 px) survive.
-        wk = int(0.9 * NORM_PPX) | 1
-        mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (wk, wk)))
+        if os.getenv("DRISHTI_CLOSE45", "off") == "on":      # measurement hook
+            _wk = int(0.9 * NORM_PPX) | 1
+            mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(shp, (_wk, _wk)))
+        # the 0.88 ft closing kernel that used to merge the two faces of a
+        # wall is REMOVED (17 Aug 2026): ablation showed it changed FLOOR PLAN
+        # by nothing and the other sheets by under 4 sqft, and pair-painting
+        # fills the wall body directly, so there is nothing left for it to
+        # merge. A step we reasoned about for a week did nothing (§12).
         # envelope sealing (wings/rooms mask only): directionally bridge gaps in
         # wall runs BEFORE the area filter, so a fragmented building reconnects
         # into one region that survives instead of being dropped as slivers.
@@ -2460,7 +2614,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             g = int(seal_ft * NORM_PPX) | 1
             mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (g, 3)))
             mm = cv2.morphologyEx(mm, cv2.MORPH_CLOSE, K(cv2.MORPH_RECT, (3, g)))
-        if ero:
+        if ero and _abl != "ero":
             mm = cv2.erode(mm, K(cv2.MORPH_RECT, (ero, ero)))
         n, lab, stt, _ = cv2.connectedComponentsWithStats(mm, 8)
         keep = np.zeros_like(mm)
@@ -2469,13 +2623,23 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 keep[lab == i] = 255
         return keep
 
-    m = _mask("RECT", 9, 5)             # output mask (de-blobbed) -> walls_poly
-    m_snap = _mask("ELLIPSE", 13, 0)    # fat mask for door-gap finding only
+    # DILATE 9 -> 5 (17 Aug 2026), DERIVED BY SWEEP, not assumed. With
+    # pair-painting the wall body is already filled, so dilation only has to
+    # close pixel-scale gaps where two pair-rectangles meet at a corner.
+    # Swept 3/5/7/9 on both instrumented sheets: at 3 neelachala FIRST FLOOR
+    # collapses (11 rooms -> 7, R-2 96.8 -> 93.7, sample 8 -> 5); 5 is the
+    # smallest value that holds it, and it reads BETTER than 9 on both sheets
+    # (FLOOR PLAN R-2 96.6 -> 98.0, FIRST FLOOR 97.2 -> 98.4).
+    m = _mask("RECT", 5, 5)             # output mask (de-blobbed) -> walls_poly
+    # the door-gap finder wants a FAT wall band. With pair-painted walls the
+    # band already carries its true thickness, so the extra dilation it used to
+    # need is smaller — swept, not assumed (DRISHTI_SNAP_DIL).
+    m_snap = _mask("ELLIPSE", int(os.getenv("DRISHTI_SNAP_DIL", 13)), 0)
     # sealed mask used ONLY for wing-grouping + room free-space: bridges wall
     # gaps so a fragmented building is one region and rooms enclose. walls_poly
     # stays from the unsealed `m`, so stairs/open features are never filled.
     _SEAL_FT = float(os.getenv("DRISHTI_SEAL_FT", "4") or 0)
-    m_env = _mask("RECT", 9, 5, seal_ft=_SEAL_FT) if _SEAL_FT > 0 else m
+    m_env = _mask("RECT", 5, 5, seal_ft=_SEAL_FT) if _SEAL_FT > 0 else m
 
     # door clusters are needed BEFORE the wing split: the default wing is the
     # one with the most doors (the largest-area block on a mixed sheet can be
@@ -2486,7 +2650,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     door_centers = []                  # ft, full-sheet frame, door-sized only
     for cl in door_clusters:
         wd_ = max(cl.width, cl.height) / ppf
-        if DOOR_MIN_FT <= wd_ <= DOOR_MAX_FT:
+        if DOOR_LEAF_MIN_FT <= wd_ <= DOOR_LEAF_MAX_FT:   # (4) sanity: a real leaf
             door_centers.append((((cl.x0 + cl.x1) / 2 - x0) / ppf,
                                  d_ft - ((cl.y0 + cl.y1) / 2 - y0) / ppf))
 
@@ -2567,10 +2731,22 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     def _nearest_wall_gap(ccx_px, ccy_px):
         if _gap_state["gaps"] is None:
             seg_px_ = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
+            # TOLERANCES RE-DERIVED FROM THE SHEET'S OWN WALL THICKNESS
+            # (17 Aug 2026). 0.8 / 0.35 / 1.2 ft were fixed values chosen
+            # against a 0.20 ft SMEARED band; walls are now painted at their
+            # measured thickness, so each tolerance is measuring a different
+            # object. Derived, not swept to a target:
+            #   group_tol = W   — its stated job is to MERGE THE TWO FACES OF
+            #                     ONE WALL, so it is exactly one wall thick
+            #   min_flank = W   — a jamb is at least as long as the wall is
+            #                     thick, or it is not a jamb
+            #   face_tol  = W/2 — "still the same face": past half a wall you
+            #                     are at the other face
+            _W = _wall_thickness_ft(drawings, ppf) or 0.83
             _gap_state["gaps"] = gap_openings(
-                seg_px_, DOOR_MIN_FT * NORM_PPX, DOOR_MAX_FT * NORM_PPX,
-                min_flank=0.8 * NORM_PPX, face_tol=0.35 * NORM_PPX,
-                group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX)
+                seg_px_, DRAWN_GAP_MIN_FT * NORM_PPX, DRAWN_GAP_MAX_FT * NORM_PPX,
+                min_flank=_W * NORM_PPX, face_tol=0.5 * _W * NORM_PPX,
+                group_tol=_W * NORM_PPX, junction_pad=0.5 * NORM_PPX)
         best, bd = None, (4.0 * NORM_PPX) ** 2      # within 4 ft of the swing
         for g in _gap_state["gaps"]:
             if id(g) in _gap_state["used"]:
@@ -2584,14 +2760,16 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
 
     for cl in door_clusters:
         wd = max(cl.width, cl.height) / ppf
-        if not (DOOR_MIN_FT <= wd <= DOOR_MAX_FT):
+        if not (DOOR_LEAF_MIN_FT <= wd <= DOOR_LEAF_MAX_FT):   # (4) sanity
             continue
         ccx = ((cl.x0 + cl.x1) / 2 - x0) / ppf
         ccy = d_ft - ((cl.y0 + cl.y1) / 2 - y0) / ppf
         if not _in_wing(ccx, ccy, pad=2.0):
             continue
         (ax, ay), (bx, by) = tp(cl.x0, cl.y0), tp(cl.x1, cl.y1)
-        hit = _door_gap_strip(m_snap, (ax, ay, bx, by), wd * NORM_PPX)
+        hit = _door_gap_strip(m_snap, (ax, ay, bx, by), wd * NORM_PPX,
+                              wall_ft=_wall_thickness_ft(drawings, ppf),
+                              dil_px=int(os.getenv("DRISHTI_SNAP_DIL", 13)) / 2.0)
         if hit:
             comp, bbox_px, (offx, offy) = hit
             for mm in (m, m_snap):      # fill: wall continuous, header cut works
@@ -2643,7 +2821,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         import fitz as _fitz
         seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
         geo = gap_openings(seg_px,
-                           DOOR_MIN_FT * NORM_PPX, DOOR_MAX_FT * NORM_PPX,
+                           DRAWN_GAP_MIN_FT * NORM_PPX, DRAWN_GAP_MAX_FT * NORM_PPX,
                            min_flank=0.8 * NORM_PPX, face_tol=0.35 * NORM_PPX,
                            group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX)
         th = int(0.9 * NORM_PPX)          # fill thickness ~ one wall band
@@ -2905,6 +3083,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     if os.getenv("DRISHTI_DEBUG_MASK"):
         _DEBUG_MASKS.clear()
         _DEBUG_MASKS.update({"m_env": m_env.copy(), "m": m.copy(),
+                             "m_snap": m_snap.copy(),
                              "pad_x": pad_x, "pad_y": pad_y,
                              "norm_ppx": NORM_PPX, "d_ft": d_ft})
 
@@ -3287,7 +3466,17 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # width AND thin. A fat/oversize strip (>5.5 ft wide or >1.6 ft
             # thick) is a merged WALL, not a door — demote it to an unsnapped
             # swing-box cut so BOQ / the door-scale check don't trust it.
-            if DOOR_MIN_FT - 0.3 <= span <= DOOR_MAX_FT + 0.5 and thick <= 1.6:
+            # (5) THE STRIP HAS NO LOWER BOUND, and that is the finding, not
+            # an omission. Measured 18 Aug: a strip is a property of the ROI
+            # CLOSE, not of the doorway — three doors that snap correctly show
+            # 0.00-0.18 ft of opening on their wall line and still produce
+            # 2.24-3.05 ft strips, while the four that failed produced
+            # 1.49-1.61 ft strips at real openings of 2.06-3.46 ft. A floor
+            # borrowed from a door width was comparing two unlike objects, and
+            # the old `- 0.3` was slack papering over exactly that. What still
+            # makes a strip valid is that it is THIN (a door cut, not a merged
+            # wall) and not absurdly long.
+            if span <= DOOR_LEAF_MAX_FT + 0.5 and thick <= 1.6:
                 fp = cand
         if fp is not None:
             rec["footprint"] = fp

@@ -627,11 +627,16 @@ def test_stair_filter_survives_interleaved_walls():
     filled = sum(Polygon(w["outer"], w.get("holes") or None).buffer(0)
                  .intersection(patch).area for w in s["walls_poly"])
     assert filled < 0.25 * patch.area
-    # the interleaved real wall must SURVIVE (x 22..38 ft, y ~14.4 ft)
+    # the interleaved real wall must SURVIVE (x 22..38 ft, y ~14.4 ft).
+    # Measured against the WALL's own area, not the patch's: since 17 Aug a
+    # wall is painted as the material between its two faces at its MEASURED
+    # thickness (0.4 ft here), where it used to be a dilated band ~0.76 ft
+    # wide. The old threshold (0.3 x patch = 6.7 sqft) silently required the
+    # fattening; the wall itself is only 16 x 0.4 = 6.4 sqft.
     wall_patch = sbox(23.0, 13.6, 37.0, 15.2)
     kept = sum(Polygon(w["outer"], w.get("holes") or None).buffer(0)
                .intersection(wall_patch).area for w in s["walls_poly"])
-    assert kept > 0.3 * wall_patch.area
+    assert kept > 0.8 * (14.0 * 0.4), kept        # >80% of the real wall
 
 
 # ---------------------------------------------------------------------------

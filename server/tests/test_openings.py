@@ -100,3 +100,30 @@ def test_empty_inputs():
     assert attach_openings([], [], tol=10) == ([], [])
     segs, ops = attach_openings([[0, 5, 50, 5]], [], tol=10)
     assert len(segs) == 1 and ops == []
+
+
+# --- ONE CONSTANT PER PURPOSE (18 Aug 2026) ----------------------------------
+# `DOOR_MIN_FT` was doing five jobs: a real leaf width, the drawn-gap width in
+# gap_openings, the same in the geometry fallback, a sanity bound, and a
+# strip-span floor — with a `- 0.3` slack that existed only to reconcile the
+# last with the first. The four doors that stopped snapping sat 0.09-0.21 ft
+# under that floor because the floor was a compromise between unlike things.
+def test_leaf_and_drawn_gap_are_separate_constants():
+    import pdf_vector
+    assert pdf_vector.DOOR_LEAF_MIN_FT and pdf_vector.DRAWN_GAP_MIN_FT
+    # they may coincide in VALUE — a drawn opening holds the leaf it carries —
+    # but they must be free to move independently
+    assert "DOOR_LEAF_MIN_FT" in dir(pdf_vector)
+    assert "DRAWN_GAP_MIN_FT" in dir(pdf_vector)
+
+
+def test_the_strip_has_no_lower_span_bound():
+    """A strip is a property of the ROI close, not a doorway: doors that snap
+    correctly show 0.00-0.18 ft of opening on their wall line and still produce
+    2.24-3.05 ft strips. A floor borrowed from a door width compared two
+    unlike objects, so there is no floor — deliberately."""
+    import inspect
+    import pdf_vector
+    src = inspect.getsource(pdf_vector.parse)
+    assert "DOOR_MIN_FT - 0.3" not in src
+    assert "span <= DOOR_LEAF_MAX_FT + 0.5 and thick <= 1.6" in src

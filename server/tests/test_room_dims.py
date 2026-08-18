@@ -191,5 +191,30 @@ def test_first_floor_r2_ratchet():
     with open(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf"), "rb") as f:
         rooms = pdf_vector.parse(f.read())["rooms"]
     s = R.summary(rooms)
+    # RATCHET BOTH (Rahul, 17 Aug 2026): R-2 held at 97.0 on FLOOR PLAN while
+    # a printed, verifiable toilet was DELETED — the room left the SAMPLE
+    # instead of lowering the score. A median cannot see a room that stops
+    # existing, so the sample size is pinned beside it.
     assert s and s["rooms_checked"] >= 8
     assert s["median_match_pct"] >= 96.8, s
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "FLOOR PLAN.pdf")),
+                    reason="confidential corpus not present")
+def test_floor_plan_r2_sample_is_ratcheted():
+    """A score that holds while its sample shrinks is not holding (Rahul,
+    17 Aug 2026). Pair-built walls took this sheet to 98.0 over 8 rooms."""
+    with open(os.path.join(_PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+        s = R.summary(pdf_vector.parse(f.read())["rooms"])
+    assert s["rooms_checked"] >= 8, s
+    assert s["median_match_pct"] >= 95.0, s
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")),
+                    reason="confidential corpus not present")
+def test_ghatikia_r2_sample_is_ratcheted():
+    """GHATIKIA's median is 60.1 and is NOT ratcheted (that sheet is two views
+    parsed as one). Its SAMPLE is: losing rooms there must still be visible."""
+    with open(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), "rb") as f:
+        s = R.summary(pdf_vector.parse(f.read())["rooms"])
+    assert s["rooms_checked"] >= 14, s

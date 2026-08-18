@@ -33,6 +33,18 @@
     "cause": "NOT a tuning change (§0.1). Two spaces that were in NO bucket at all were admitted: the UTILITY under §10.1 CE-5 (36.1 sqft, measured from its drawn edge, depth 4.92 vs printed 4'6\") and the two DUCT voids under §4 D-5 (5.0 and 2.3 sqft, read from the drawn rectangle). Built-up 1658.8 -> 1694.9 -> 1702.2 against a printed 1705.",
     "unchanged_by_it": "carpet 1203.5, R-2 97.0, footprint 1705.3, plot 3371",
     "pin_vs_actual": "pinned at the authorised 99.4, not the achieved 99.8 - raising to 99.8 is Rahul's call"
+   },
+   "snapped_doors_investigation_2026_08_17": {
+    "status": "RESOLVED 18 Aug 2026 - 12 of 12 snapped, golden GREEN",
+    "pinned_in_golden": 11,
+    "value_before_pair_built_walls": 10,
+    "value_now": 12,
+    "why_red": "the golden's `snapped >= 11` has had THREE different causes since 16 Aug: the door-gap finder, the seal removal, and now pair-built walls. It is measuring an open investigation, not one regression persisting.",
+    "what_is_understood": "the loss is NOT the pair-rectangles (the gap is 75-93% open at all four lost doors) and NOT the gap_openings tolerances (re-derived from measured wall thickness, neutral on every sheet). It is `_door_gap_strip`'s geometry.",
+    "what_is_not": "`thin > 1.5 ft` and `thick <= 1.6 ft` bound the strip a morphological CLOSE reveals - a function of wall thickness, door-mask dilation and kernel together - so they cannot be derived from any one of them. Two derivations were tried and both were worse on every sheet.",
+    "rule": "a red test we understand is worth more than a green one we have adjusted to (Rahul, 17 Aug). Do not touch the golden until the strip geometry is understood.",
+    "resolution": "`DOOR_MIN_FT` was serving FIVE purposes and the `- 0.3` slack existed only to reconcile the strip-span floor with a real leaf width. Split into DOOR_LEAF_MIN/MAX_FT (a real door), DRAWN_GAP_MIN/MAX_FT (the opening in the linework), and NO floor at all on the strip span - measured: a strip is a property of the ROI close, not a doorway (doors that snap correctly show 0.00-0.18 ft of opening yet produce 2.24-3.05 ft strips).",
+    "not_rebaselined": "the golden's `snapped >= 11` was NEVER adjusted; it passes at 12 because the parse improved"
    }
   },
   "attachment-1 FIRST FLOOR PLAN (photo, awaiting file)": {

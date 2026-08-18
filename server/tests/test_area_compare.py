@@ -229,7 +229,13 @@ def test_floor_plan_pdf_end_to_end():
     # the building. Built-up is now the PLATE: footprint + projections beyond
     # the ring (1705.3 + 86.2 = 1791.5 of the printed 1951), which rises as
     # walls are read. Both older formulas stay reported on `built_up_branch`.
-    assert bu["match_pct"] >= 91.8
+    # RATCHET RAISED 91.8 -> 96.6 on 17 Aug 2026 (Rahul), per §0.1: Phase 1
+    # attempt 7 admitted the `ar stairs` wall, and the ring stopped biting a
+    # notch around the staircase — footprint 1702.7 -> 1799.3, of which 88.5
+    # sqft is that zone. Verified against a THIRD figure, the printed STILT of
+    # 1900 (the same plate without projections): 89.6% -> 94.7% of it. The
+    # identical admission read R-8 78.4 on 16 Aug; only the instrument changed.
+    assert bu["match_pct"] >= 96.6
     assert bu["printed_sqft"] == 1951.0       # the PLATE: flats 1705 + common 246
 
 
