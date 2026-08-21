@@ -190,6 +190,23 @@ def diagnose(scene):
     # the missing edge. Worked case: FLOOR PLAN's whole common area, 189.9 sqft
     # of lobby + staircase, discarded today because its south edge is drawn
     # 2 in wide on a furniture layer.
+    # §0.2 ASK — a column standing inside a doorway. Report the CLEAR WIDTH,
+    # which is what decides whether a person fits; C-7 says the column is where
+    # the drawing puts it, so this is a real-world clash, never ours to fix.
+    for _b in (meta.get("blocked_openings") or []):
+        try:
+            _ci = float(_b.get("clear_in") or 0)
+            _ow = float(_b.get("opening_ft") or 0)
+            _at = _b.get("at_ft") or [0, 0]
+        except (TypeError, ValueError):
+            continue
+        _issue(issues, "ask", "doorway_obstructed_by_column",
+               f"A column obstructs the doorway at ({_at[0]:.0f}, {_at[1]:.0f}) ft, "
+               f"leaving {_ci:.0f} in clear of a {_ow * 12:.0f} in opening. Nobody "
+               f"walks through that, and the column is where the drawing puts it "
+               f"— so either the drawing clashes or the door is elsewhere. "
+               f"IS THE COLUMN OR THE DOOR MISPLACED? Not corrected.")
+
     for _os in (meta.get("open_side_regions") or []):
         try:
             _a = float(_os.get("area_as_drawn_sqft") or 0)

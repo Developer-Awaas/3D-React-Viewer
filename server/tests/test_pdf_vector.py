@@ -323,11 +323,18 @@ def test_door_snaps_onto_doorway_gap():
     assert x1 - x0 == pytest.approx(3.0, abs=0.8)      # door-width along the wall
     assert y1 - y0 < 2.0                               # thin like a wall
     assert y1 > 18.0                                   # sits ON the top wall band
-    # the strip must genuinely overlap wall geometry (it was filled in)
+    # The cut must sit IN THE WALL RUN — wall on both sides along the run.
+    # It used to be asserted as "the cut overlaps wall material", which only
+    # held because the raster's morphology FILLED the doorway gap and the
+    # polygon was traced around it. Since 19 Aug walls come from the measured
+    # pair rectangles, so a doorway drawn as a gap has no wall in it — which is
+    # the point. What still must be true is that wall continues either side.
     walls = [Polygon(w["outer"], w.get("holes") or None).buffer(0)
              for w in s["walls_poly"]]
-    cut = sbox(x0, y0, x1, y1)
-    assert sum(cut.intersection(w).area for w in walls) > 0.5
+    left = sbox(x0 - 1.5, y0, x0 - 0.1, y1)
+    right = sbox(x1 + 0.1, y0, x1 + 1.5, y1)
+    assert sum(left.intersection(w).area for w in walls) > 0.1
+    assert sum(right.intersection(w).area for w in walls) > 0.1
 
 
 def test_door_without_gap_falls_back_with_warning():
@@ -670,3 +677,58 @@ def test_furniture_dedupe_drops_stacked_frames():
     items = _furniture_items([d1, d2], ppf)
     assert len(items) == 1
     assert items[0][0] == "bed"
+
+
+def test_wall_faces_come_from_the_measured_pair_rectangles():
+    """`walls_poly` is built from the measured PAIR RECTANGLES, not traced back
+    out of the raster: tracing inherits the morphology's rounding around each
+    punched door hole and extrudes it as a lumpy mass in the wall run — five
+    x-values spanning 1.57 ft where a 0.42 ft wall has two faces.
+
+    Twice reverted first (19 Aug). The CORNER CLOSURE is the delicate part:
+    `wall_rects` clips a rectangle to the overlap of its two faces, leaving a
+    wall-thickness square open at each junction. Extending to the neighbour's
+    FAR BOUND grew rectangles across the plan (997 sqft of material against
+    199 measured); extending unpaired survivors too added 60% on BRICK WORK,
+    where 54% of the wall is unpaired and was never clipped in the first
+    place. What ships: pair rectangles only, one wall thickness, only where
+    another wall sits."""
+    import os
+    import pytest as _p
+    from pdf_vector import parse
+    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+    f = os.path.join(plans, "FLOOR PLAN.pdf")
+    if not os.path.exists(f):
+        _p.skip("confidential corpus not present")
+    with open(f, "rb") as fh:
+        q = parse(fh.read())["meta"]["wall_face_quality"]
+    assert q["source"] == "pair_rectangles"
+
+
+def test_m1_wall_material_ratio_holds_on_every_sheet():
+    """M-1 (19 Aug 2026, Rahul): the model's own wall material against an
+    independently measured drawing quantity — the union of the pair rectangles,
+    each painted between two measured wall faces, clipped to the built wing.
+    Built because the pair-rectangle `walls_poly` of 19 Aug shipped a GLB of
+    plan-wide stacked sheets carrying 5x too much material and EVERY numeric
+    ratchet passed: they all measure the 2D parse, none measures the model.
+    DENOMINATOR CORRECTED 19 Aug (Rahul): pair rectangles UNION the unpaired
+    survivors at the sheet's own median wall — exactly what `_mask()` paints.
+    With pairs alone BRICK WORK read 3.02 for no fault of the model, because
+    54% of its wall length is unpaired and every square foot of it sat in the
+    numerator and nowhere in the denominator. Ceiling PROVISIONAL at 1.35
+    pending Rahul's ruling: today FLOOR PLAN 1.05, BRICK WORK 1.06, FIRST
+    FLOOR 1.10, GHATIKIA 1.15, against the 19 Aug broken build's 3.00."""
+    import glob
+    import os
+    import pytest as _p
+    from pdf_vector import parse
+    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+    files = sorted(glob.glob(os.path.join(plans, "*.pdf")))
+    if not files:
+        _p.skip("confidential corpus not present")
+    for f in files:
+        with open(f, "rb") as fh:
+            q = parse(fh.read())["meta"]["wall_face_quality"]
+        assert q["material_ratio"] is not None, f
+        assert q["material_ratio"] <= 1.35, (os.path.basename(f), q)

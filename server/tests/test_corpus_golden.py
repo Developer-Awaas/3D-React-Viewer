@@ -49,7 +49,14 @@ def test_floor_plan_golden():
     c = _counts(parse(_load("FLOOR PLAN.pdf"), None))
     assert c["w"] == pytest.approx(95.2, abs=1.2)
     assert c["d"] == pytest.approx(29.8, abs=1.2)
-    assert c["doors"] == 12
+    # 12 -> 16 on 21 Aug 2026 (Rahul), per §0.1: NOT a re-baseline to make code
+    # pass. The sheet draws four openings with no leaf at all — KITCHEN,
+    # BALCONY, LOBBY and FLAT-2's balcony — so the symbol path is blind at each
+    # and the geometric gap finder was switched off sheet-wide by one door
+    # layer existing anywhere. Per-location gating admits them; all four were
+    # verified against the drawn faces either side and all 16 doors score
+    # SOUND. Two of the four were not known to be there.
+    assert c["doors"] == 16
     assert c["snapped"] >= 11          # golden 2026-07-14: 11/12
     assert c["windows"] >= 1           # data-limited sheet (dead text)
 

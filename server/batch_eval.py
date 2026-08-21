@@ -70,6 +70,11 @@ def parse_metrics(scene):
         # nothing here would have shown it (12 Aug)
         "columns": len(scene.get("columns", [])),
         "footprint_sqft": m.get("footprint_sqft"),
+        # M-1 (19 Aug): the model's own wall material / the measured pair
+        # rectangles. Printed because the 3D can be incoherent while every
+        # other number holds — that is exactly how the stacked-sheet build
+        # of 19 Aug passed the whole judged set.
+        "m1": (m.get("wall_face_quality") or {}).get("material_ratio"),
         "furniture": len(scene.get("furniture", [])),
         "wings": m.get("wing", {}).get("count", 1),
         "scale": m.get("scale", {}).get("source"),
@@ -103,7 +108,7 @@ def evaluate(plans_dir, ground_truth=None):
 
 def _print(results):
     print(f"\n{'plan':<42} {'envelope':>14} {'dr':>3} {'wn':>3} {'rm':>3} {'ty':>3} "
-          f"{'col':>4} {'foot':>6} flags")
+          f"{'col':>4} {'foot':>6} {'M-1':>5} flags")
     print("-" * 104)
     healthy = 0
     for r in results:
@@ -117,7 +122,7 @@ def _print(results):
         foot = f"{r['footprint_sqft']:.0f}" if r.get("footprint_sqft") else "-"
         print(f"{r['plan']:<42} {env:>14} {r['doors']:>3} {r['windows']:>3} "
               f"{r['rooms']:>3} {r['typed_rooms']:>3} {r.get('columns', 0):>4} "
-              f"{foot:>6} {flags}")
+              f"{foot:>6} {(f'{r['m1']:.2f}' if r.get('m1') else '-'):>5} {flags}")
     print("-" * 104)
     print(f"{healthy}/{len(results)} plans clean (no health flags)\n")
 

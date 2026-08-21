@@ -235,7 +235,14 @@ def test_floor_plan_pdf_end_to_end():
     # sqft is that zone. Verified against a THIRD figure, the printed STILT of
     # 1900 (the same plate without projections): 89.6% -> 94.7% of it. The
     # identical admission read R-8 78.4 on 16 Aug; only the instrument changed.
-    assert bu["match_pct"] >= 96.6
+    # RE-DERIVED 96.6 -> 96.5 on 21 Aug 2026 (Rahul), per §0.1. The cause is
+    # FOUR correctly-sealed doorways, not a parse regression: per-location gap
+    # gating admitted the KITCHEN, BALCONY, LOBBY and FLAT-2 openings, which
+    # this sheet draws with no leaf, and sealing them moved built-up 1883.7 ->
+    # 1883.6 sqft. ONE TENTH of a square foot — a four-inch square — and the
+    # displayed 96.55% rounds down. A ratchet written to one decimal blocked a
+    # change whose real effect is smaller than its own precision.
+    assert bu["match_pct"] >= 96.5
     assert bu["printed_sqft"] == 1951.0       # the PLATE: flats 1705 + common 246
 
 

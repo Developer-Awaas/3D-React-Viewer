@@ -13,7 +13,9 @@ describe('roomWorldPoint', () => {
     const p = roomWorldPoint({ x: 10, y: 20 }, FRAME, 5)
     expect(p[0]).toBeCloseTo(-6 + 0.35 * 10 * FT, 6)
     expect(p[1]).toBeCloseTo(0 + 0.35 * 5 * FT, 6)
-    expect(p[2]).toBeCloseTo(-4 + 0.35 * 20 * FT, 6)
+    // plan-y maps to -Z since 18 Aug: the GLB negates it so a top view reads
+    // north-up, and world points must negate it identically
+    expect(p[2]).toBeCloseTo(-4 - 0.35 * 20 * FT, 6)
   })
 
   it('eye height scales WITH the building (small model = low eye)', () => {

@@ -26,7 +26,9 @@ export function roomWorldPoint(
   return [
     f.position[0] + f.scale * room.x * FT,
     f.position[1] + f.scale * heightFt * FT,
-    f.position[2] + f.scale * room.y * FT,
+    // plan-y maps to -Z (18 Aug 2026): the GLB negates it so a top view reads
+    // north-up, and every world point must negate it the same way
+    f.position[2] - f.scale * room.y * FT,
   ]
 }
 

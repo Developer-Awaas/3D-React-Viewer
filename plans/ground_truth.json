@@ -26,6 +26,29 @@
     "known_open": "R-8 built-up knowingly RED at 68.1% (1161 parsed vs 1705 printed): room COVERAGE is short - 9 pockets found of ~16 rooms. Sizes are right; coverage is the next gap. R-8 must RISE as coverage improves, never silently fall.",
     "rule": "PLAN-READING-RULES 0.1: a golden may be re-baselined ONLY when the drawing's own printed data disproves it."
    },
+   "r8_pin_rederived_2026_08_21": {
+    "pin": 96.5,
+    "previous_pin": 96.6,
+    "cause": "NOT a parse regression (\u00a70.1). FOUR correctly-sealed doorways. FLOOR PLAN draws the KITCHEN, BALCONY, LOBBY and FLAT-2 balcony openings with NO leaf at all, so the symbol path is blind at each; the geometric gap finder saw them and its whole output was discarded by a PER-SHEET gate (`not has_door_layer`) - one door layer anywhere switched it off everywhere. Per-location gating admits them and each was verified against the drawn faces either side.",
+    "what_moved": "built-up 1883.7 -> 1883.6 sqft (-0.1), R-8 96.55% displayed as 96.5. Doors 12 -> 16, all 16 SOUND (12 leafed, 4 leafless).",
+    "the_lesson": "A RATCHET WRITTEN TO ONE DECIMAL BLOCKED A CHANGE WHOSE REAL EFFECT IS A FOUR-INCH SQUARE. 0.1 sqft is 0.005% of built-up, an order of magnitude below the instrument's own displayed precision. Ratchets need a stated tolerance or a stated precision - otherwise the pin measures rounding, not the parse.",
+    "two_doors_we_did_not_know_about": "Rahul expected 14 (12 + the balcony and kitchen he knew). The linework had FOUR: the LOBBY doorway at 28.41-31.41, y 7.50 (between drawn faces 7.06 / 7.89) and FLAT-2's BALCONY opening at 66.60-71.65, y 13.72 (faces 13.68 / 14.09) were not known to be there. The drawing held more than either of us had counted.",
+    "unchanged_by_it": "R-2 98.0 (n=8), FIRST FLOOR R-2 98.4 (n=8), rooms 16, carpet 1191.1, M-1 1.06, footprint 1796.8",
+    "authorised_by": "Rahul, 21 Aug 2026"
+   },
+   "r8_pin_rederived_2026_08_20": {
+    "pin": 96.6,
+    "actual": 96.6,
+    "previous_actual": 96.7,
+    "pin_unchanged": "the pinned floor was ALREADY 96.6 (raised 17 Aug); what changed is that the achieved value now sits exactly on it, with no margin",
+    "cause": "NOT a tuning change (\u00a70.1). `wall_rects`'s overlap floor `min_ovl_ft = 2.0` was serving two purposes - 'long enough to be a wall' and silently 'solid or two fins': a run under 2.0 ft could never pair, so BOTH of its faces fell to the unpaired fallback and were buffered SEPARATELY at the sheet's median wall. Seven FLOOR PLAN wall ends were therefore built as two 0.83 ft plates where the wall measures 0.41-0.42 ft, overlapping 0.47-1.90 ft and protruding up to 1.75 ft (the fins and stacked blocks Rahul saw at C.TOILET/A.TOILET and flat-1's entry). The floor is now DERIVED from the drawing: a wall run is at least as long as the wall is THICK, the thickness being the pair's own measured gap.",
+    "what_moved": "footprint 1799.4 -> 1796.8 sqft (-2.6), built-up 1886.3 -> 1883.7, R-8 96.7 -> 96.6. The 2.6 sqft is exactly the material those seven ends stop claiming at TWICE their drawn thickness.",
+    "why_it_is_artefact_not_coverage": "the drawing measures those walls at 0.41-0.42 ft and we were painting 0.83. Losing material we never had is not losing coverage - same shape as the R-8 basis correction of 16 Aug, at a smaller scale.",
+    "independent_confirmation": "the lobby's open-side region moved 94.6 -> 96.9 sqft against a PRINTED 15'8\" x 6'2\" = 96.6 - from 2.0 sqft short to 0.3 sqft. The drawing's own number moved TOWARD us.",
+    "unchanged_by_it": "R-2 98.0 (n=8), FIRST FLOOR R-2 98.4 (n=8), rooms 16, carpet 1190.6 -> 1191.1, doors 12, doors_placed_sound 12, M-1 1.05 -> 1.06, footprint 53% of plot",
+    "stronger_evidence_elsewhere": "BRICK WORK (49% of its wall length unpaired): pairs 39 -> 126, short-step vertices 361 -> 162, M-1 1.06 -> 1.13, doors 11 -> 12, at no cost",
+    "authorised_by": "Rahul, 20 Aug 2026"
+   },
    "r8_ratchet_2026_08_16": {
     "raised_to": 99.4,
     "actual": 99.8,
@@ -366,6 +389,13 @@
     "cause": "12 degenerate/duplicate wall segments dropped upstream of keep_structural_lines. This sheet's wall layers carry 4,335 ZERO-LENGTH segments and 858 exact duplicates out of 4,960 pre-crop (production sees 442 post-crop).",
     "why_unverifiable": "BRICK WORK prints no area statement, no room dimensions and no balcony width: R-8, R-2 and B-5 are all silent here. Only the §10.2 dimension-anchor instrument reaches it (66.4% of endpoints on a detected wall face).",
     "do_not": "do not treat this movement as evidence either way"
+   },
+   "door_count_untrustworthy_2026_08_21": {
+    "status": "REPORTED, NOT ACCEPTED - and this sheet is now the least trustworthy in the corpus",
+    "what_moved": "doors 11 -> 12 -> 20 -> 17 across four changes on 20-21 Aug: the split of DOOR_MIN_FT, the derived wall-pairing floor, the gap-grouping fix, and per-location gap gating",
+    "why_unjudgeable": "BRICK WORK prints no area statement, no room dimensions and no balcony width, so R-8, R-2 and B-5 are ALL silent here. It also has no door layer, so every door it has comes from the geometric gap finder: 15 of its 17 are LEAFLESS, scored against drawn gaps rather than against drawn doors. Nothing on this sheet can tell a real doorway from a wall break.",
+    "only_instruments_that_reach_it": "the \u00a710.2 dimension-anchor instrument (66.4% of endpoints on a detected wall face) and M-1 (1.13, inside its 1.35 ceiling)",
+    "do_not": "do not treat any door movement on this sheet as evidence in either direction"
    },
    "built_up_rebasis_2026_08_17": {
     "status": "REPORTED, NOT ACCEPTED",

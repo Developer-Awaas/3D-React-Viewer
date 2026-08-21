@@ -16,6 +16,8 @@ import WallOverlay from './components/WallOverlay'
 import ErrorBoundary from './components/ErrorBoundary'
 import CameraMarker from './components/CameraMarker'
 import CameraRig, { View } from './components/CameraRig'
+import FocusPicker from './components/FocusPicker'
+import TrackpadPanControls from './components/TrackpadPanControls'
 import TraceScene from './components/TraceScene'
 import { Seg } from './cv/detectWalls'
 import { detectWallsWorker } from './cv/detectWorker'
@@ -640,7 +642,7 @@ export default function App() {
         )}
 
         {mode === 'plan' && (
-          <>
+          <FocusPicker onFocus={setView}>
             {/* self-contained sky shader (no downloads) + distance fog: the
                 model sits in a world instead of a void */}
             <Sky distance={450000} sunPosition={[14, 22, 9]} turbidity={5.5} rayleigh={1.1} />
@@ -692,11 +694,11 @@ export default function App() {
             ))}
             {/* M: click two points -> real distance in ft/m */}
             <MeasureTool active={measureOn} modelScale={frame?.scale} />
-          </>
+          </FocusPicker>
         )}
 
         {mode === 'viewer' && (
-          <>
+          <FocusPicker onFocus={setView}>
             <ErrorBoundary fallback={null}>
               <Suspense fallback={null}><Environment preset="apartment" /></Suspense>
             </ErrorBoundary>
@@ -714,12 +716,32 @@ export default function App() {
                 </ErrorBoundary>
               </Suspense>
             )}
-          </>
+          </FocusPicker>
         )}
 
         <CameraRig view={view} />
         <GBufferBridge />
-        <OrbitControls makeDefault enableDamping target={[0, 1.5, 0]} />
+        <TrackpadPanControls />
+        {/* ZOOM COULD NEVER REACH THE FAR ROOMS (20 Aug 2026): the orbit centre
+            was fixed at the building's middle, so on a 95 ft plan the dolly ran
+            into the centre and stopped. `zoomToCursor` moves the centre toward
+            whatever is under the pointer, panning is explicit (right-drag, and
+            two-finger trackpad via TrackpadPanControls), and double-click
+            re-targets outright. `screenSpacePanning` keeps a pan parallel to
+            the screen instead of sliding along the ground plane. minDistance is
+            small enough to stand inside a room at model scale (~6 units for a
+            95 ft building), maxDistance far enough to see the whole plot. */}
+        <OrbitControls
+          makeDefault
+          enableDamping
+          enablePan
+          screenSpacePanning
+          zoomToCursor
+          panSpeed={1.1}
+          minDistance={0.35}
+          maxDistance={400}
+          target={[0, 1.5, 0]}
+        />
       </Canvas>
 
       {/* ── empty state: nothing loaded yet in Plan → 3D ── */}
@@ -991,7 +1013,8 @@ export default function App() {
 
       {/* ── desktop controls hint ── */}
       <div className="pointer-events-none absolute bottom-5 right-5 z-20 hidden text-[11px] tracking-wide text-white/35 md:block">
-        drag to orbit · scroll to zoom ·{' '}
+        drag to orbit · two-finger drag or right-drag to pan · pinch/scroll to zoom ·
+        double-click to focus ·{' '}
         <span className="rounded border border-white/20 px-1">T</span> top view ·{' '}
         <span className="rounded border border-white/20 px-1">F</span> frame plan
         {mode === 'plan' && pPlan && (

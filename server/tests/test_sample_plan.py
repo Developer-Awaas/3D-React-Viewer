@@ -32,7 +32,11 @@ def test_sample_envelope_and_scale(sample_scene):
 
 def test_sample_all_doors_snap(sample_scene):
     doors = [o for o in sample_scene["openings"] if o["type"] == "door"]
-    assert len(doors) == 6
+    # 6 -> 7 on 21 Aug 2026: the fixture DRAWS a 3 ft door gap at x=17, y 5-8
+    # (`dwall(17, 0.5, 17, 13, gaps=[(5, 8)])`) that the symbol path never
+    # emitted. Per-location gap gating finds it: a doorway the sample plan
+    # draws and we were missing, not a new false positive.
+    assert len(doors) == 7
     assert all(o.get("snapped") for o in doors), \
         "every demo door must snap (headers/lintels depend on it)"
 

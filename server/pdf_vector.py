@@ -168,8 +168,25 @@ def _filter_text_layers(drawings, want, warnings, maxlen=None):
 GEOM_SKIP = ("door", "dim", "text", "furn", "sanitary", "kitchen", "stair",
              "elev", "chhaja", "boundary")   # layers that never carry wall lines
 
+# W-3, THE WALL-GAP BAND — ONE DEFINITION (21 Aug 2026, Rahul). Two faces are
+# the same wall when they are parallel, this far apart and overlapping along
+# the run. Five functions ask that question — `paired_extent`,
+# `_paired_indices`, `wall_rects`, `keep_structural_lines` and, since gap faces
+# began grouping by measured pair, `gap_openings` — and the band was written
+# out at each. It is a SPEC constant (§2 W-3), not a tuning dial, and it is
+# expressed in INCHES so it converts per sheet against that sheet's own scale
+# rather than living in page units.
+WALL_GAP_MIN_IN, WALL_GAP_MAX_IN = 3.0, 18.0
 
-def paired_extent(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+
+def wall_gap_band(units_per_ft):
+    """The W-3 band in whatever unit `units_per_ft` measures (points, px, ft).
+    Derived per sheet from its own scale — never a hardcoded span."""
+    return ((WALL_GAP_MIN_IN / 12.0) * units_per_ft,
+            (WALL_GAP_MAX_IN / 12.0) * units_per_ft)
+
+
+def paired_extent(segs, ppf, min_in=WALL_GAP_MIN_IN, max_in=WALL_GAP_MAX_IN, min_ovl_ft=2.0):
     """Bounding box of the lines that PAIR into walls — i.e. the building.
 
     Split out so the extent can be computed from the TRUSTED walls ALONE,
@@ -197,7 +214,7 @@ def inside_extent(seg, extent, margin):
             and by0 - margin <= min(seg[1], seg[3]) and max(seg[1], seg[3]) <= by1 + margin)
 
 
-def _paired_indices(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+def _paired_indices(segs, ppf, min_in=WALL_GAP_MIN_IN, max_in=WALL_GAP_MAX_IN, min_ovl_ft=2.0):
     """Indices of segments that have a parallel partner at wall thickness."""
     lo, hi = (min_in / 12.0) * ppf, (max_in / 12.0) * ppf
     H, V = [], []
@@ -527,7 +544,101 @@ def _wall_thickness_ft(drawings, ppf):
     return gaps[len(gaps) // 2] if gaps else None
 
 
-def wall_rects(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+def group_door_symbols(paths, tol_ft=0.35, cv=0.25, min_leaf=1.2):
+    """Assemble each door symbol from its ARC polyline and its LEAF.
+
+    §12 (19 Aug 2026): a symbol may be SPLIT ACROSS DRAWING PATHS — FLOOR PLAN
+    keeps every leaf in a different path from its arc, so neither path
+    membership nor a bounding box can group them (every door box caught the
+    same 25 lines). The geometry does it instead: **the leaf IS the radius** of
+    its quarter circle, and the leaf's hinge end is the arc's centre. Measured
+    on all 12 doors, leaf length equals arc radius to 0.01 ft with a radius CV
+    of 0.000-0.001 — an exact match, not a tolerance.
+
+    `paths` is [[(a, b), ...]] in feet, one list per drawing path. Returns
+    [[leaf, *arc_segments]] ready for door_swing(). Pure -> unit-tested."""
+    arcs, lines = [], []
+    for ss in paths or []:
+        if not ss:
+            continue
+        longest = max(math.dist(a, b) for a, b in ss)
+        if len(ss) > 5 and longest < 0.6:
+            arcs.append(ss)
+        else:
+            lines += [(a, b) for a, b in ss if math.dist(a, b) >= min_leaf]
+    out = []
+    for arc in arcs:
+        pts = [p for a, b in arc for p in (a, b)]
+        best = None
+        for a, b in lines:
+            ln = math.dist(a, b)
+            for h in (a, b):
+                rr = [math.dist(h, p) for p in pts]
+                mean = sum(rr) / len(rr)
+                if mean <= 0:
+                    continue
+                spread = (sum((r - mean) ** 2 for r in rr) / len(rr)) ** 0.5 / mean
+                if abs(mean - ln) <= tol_ft and spread <= cv \
+                        and (best is None or spread < best[0]):
+                    best = (spread, (a, b))
+        if best:
+            out.append([best[1]] + list(arc))
+    return out
+
+
+def door_swing(segs, tol=0.25):
+    """DR-3: read a door's LEAF, HINGE and SWING SIDE from its drawn symbol.
+
+    The symbol is a straight leaf plus a quarter-circle arc centred on the
+    hinge, drawn as a polyline (measured 19 Aug 2026: FLOOR PLAN's door layer
+    carries 300 line items and NO curve items). Two facts fall out of that
+    geometry: the arc's CENTRE is the hinge, and the side the arc sweeps to is
+    the room the door opens into.
+
+    Until now `hinge` appeared nowhere in the parser and every leaf defaulted to
+    +60 degrees in the GLB, i.e. right by chance about half the time.
+
+    Returns {leaf_ft, hinge, tip, opens_toward} or None when the arc is absent
+    or ambiguous — never a guess. Pure -> unit-tested."""
+    if not segs:
+        return None
+    leaf = max(segs, key=lambda t: math.dist(t[0], t[1]))
+    ln = math.dist(leaf[0], leaf[1])
+    if ln < 1.2:
+        return None
+    pts = [p for a, b in segs for p in (a, b)
+           if math.dist(p, leaf[0]) > 0.05 and math.dist(p, leaf[1]) > 0.05]
+    if len(pts) < 4:
+        return None
+    best = None
+    for h in (leaf[0], leaf[1]):
+        rr = [math.dist(h, p) for p in pts]
+        mean = sum(rr) / len(rr)
+        if mean <= 0:
+            continue
+        cv = (sum((r - mean) ** 2 for r in rr) / len(rr)) ** 0.5 / mean
+        if best is None or cv < best[0]:
+            best = (cv, h, mean)
+    if best is None or best[0] > tol:
+        return None                      # not a clean arc: report nothing
+    cv, hinge, radius = best
+    tip = leaf[1] if hinge == leaf[0] else leaf[0]
+    cx = sum(p[0] for p in pts) / len(pts)
+    cy = sum(p[1] for p in pts) / len(pts)
+    dx, dy = tip[0] - hinge[0], tip[1] - hinge[1]
+    side = dx * (cy - hinge[1]) - dy * (cx - hinge[0])   # cross product
+    # the CLOSED leaf position: the arc end opposite the drawn (open) tip. The
+    # symbol draws the leaf perpendicular to its wall and the arc back to the
+    # shut position, so hinge->closed IS the doorway, along the wall run.
+    closed = max(pts, key=lambda p: math.dist(p, tip))
+    return {"leaf_ft": round(ln, 2), "hinge": [round(hinge[0], 2), round(hinge[1], 2)],
+            "tip": [round(tip[0], 2), round(tip[1], 2)],
+            "closed": [round(closed[0], 2), round(closed[1], 2)],
+            "opens_toward": "left" if side > 0 else "right",
+            "arc_fit_cv": round(cv, 3)}
+
+
+def wall_rects(segs, ppf, min_in=WALL_GAP_MIN_IN, max_in=WALL_GAP_MAX_IN, min_ovl_ft=None):
     """Walls as RECTANGLES: the material BETWEEN each measured pair of faces.
 
     Rahul's ruling, 17 Aug 2026: a wall is ALWAYS two drawn lines, and the wall
@@ -537,7 +648,29 @@ def wall_rects(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
     faces were being fattened inward over the rooms.
 
     Returns (rects, unpaired) in the segments' own units. Each rect is
-    (x0, y0, x1, y1) covering exactly the overlap of its two faces. Pure."""
+    (x0, y0, x1, y1) covering exactly the overlap of its two faces. Pure.
+
+    THE OVERLAP FLOOR IS DERIVED, NOT 2.0 FT (20 Aug 2026). `min_ovl_ft = 2.0`
+    was serving two purposes — "long enough to be a wall" and, silently,
+    "solid or two fins": a run under it could never pair, so BOTH of its faces
+    fell through to the unpaired fallback and were buffered separately at the
+    sheet's MEDIAN wall. That built a short wall end as two fat plates with a
+    step between them (FLOOR PLAN: 7 of them, runs 0.47-1.90 ft, plates 0.83 ft
+    thick where the wall measures 0.41-0.42, protruding up to 1.75 ft). Fifth
+    instance of a constant serving several purposes.
+
+    THE FLOOR IS DERIVED FROM THE DRAWING: a wall run is at least as long as
+    the wall is THICK, and the thickness is the pair's own measured gap. No
+    page units, no assumed minimum, and it scales with the sheet. Passing
+    `min_ovl_ft` restores a fixed floor for callers that want one.
+
+    Shipped 20 Aug 2026 on Rahul's ruling. FLOOR PLAN pairs 48 -> 60, unpaired
+    51 -> 33, all 7 fin ends become single rectangles at their measured
+    0.42 ft, outline points 96 -> 82; BRICK WORK pairs 39 -> 126, short steps
+    361 -> 162, M-1 1.06 -> 1.13, doors 11 -> 12. Its one cost is 2.6 sqft of
+    FLOOR PLAN footprint (1799.4 -> 1796.8, R-8 96.7 -> 96.6) and that is the
+    artefact going away, not coverage: those 7 ends were painted at TWICE
+    their drawn thickness. R-8's pin re-derived to 96.6 with that evidence."""
     lo, hi = (min_in / 12.0) * ppf, (max_in / 12.0) * ppf
     H, V = [], []
     for k, (x0, y0, x1, y1) in enumerate(segs):
@@ -557,7 +690,8 @@ def wall_rects(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
                 if pj - pi < lo:
                     continue
                 s0, s1 = max(ai, aj), min(bi, bj)
-                if s1 - s0 < min_ovl_ft * ppf:
+                _floor = (min_ovl_ft * ppf) if min_ovl_ft is not None else (pj - pi)
+                if s1 - s0 < _floor:
                     continue
                 rects.append((s0, pi, s1, pj) if horiz else (pi, s0, pj, s1))
                 paired.add(ki)
@@ -565,7 +699,7 @@ def wall_rects(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
     return rects, [g for k, g in enumerate(segs) if k not in paired]
 
 
-def keep_structural_lines(segs, ppf, min_in=3.0, max_in=18.0, min_ovl_ft=2.0):
+def keep_structural_lines(segs, ppf, min_in=WALL_GAP_MIN_IN, max_in=WALL_GAP_MAX_IN, min_ovl_ft=2.0):
     """Drop page borders and site boundaries by WHAT THE LINE IS, not by how
     long it is (§1's actual intent).
 
@@ -757,7 +891,8 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
 
 
 def gap_openings(segs, min_w, max_w, min_flank=1.0,
-                 face_tol=0.35, group_tol=1.2, junction_pad=0.4):
+                 face_tol=0.35, group_tol=1.2, junction_pad=0.4,
+                 pair_min=None, pair_max=None):
     """Detect openings (doorway / window gaps) in axis-aligned wall-face
     segments WITHOUT layer names. Pure geometry, so it is unit-testable:
     `segs` is a list of (x0, y0, x1, y1) and EVERY threshold is in the SAME
@@ -784,19 +919,81 @@ def gap_openings(segs, min_w, max_w, min_flank=1.0,
                 V.append((min(y0, y1), max(y0, y1), (x0 + x1) / 2))
 
     def _runs_by_line(lines):
-        """Group faces by their perpendicular coord (merging the two faces of
-        one wall), then union the along-axis intervals into solid runs."""
+        """Group faces into WALL LINES, then union each line's along-axis
+        intervals into solid runs.
+
+        GROUPED BY MEASURED PAIR (20 Aug 2026, Rahul) when `pair_min`/
+        `pair_max` are given. A wall line is not a 1-D cluster of faces at some
+        tolerance — it is the two faces of ONE wall, a measured pair, and
+        `wall_rects` identifies those by exactly this test: parallel, W-3 apart
+        (3-18 in), overlapping along the run. One pair is one wall, so one
+        doorway in it yields ONE opening, structurally.
+
+        Sixth instance of a TOLERANCE DECIDING CONSTRUCTION, after the 4 ft
+        seal, the built-up formula, the door-strip span bound, `DOOR_MIN_FT`
+        and `min_ovl_ft`. It failed twice here in two different ways. Keyed on
+        a ROLLING MEAN it was ORDER-DEPENDENT — the same 7 FLOOR PLAN faces
+        keyed 18.70 ft read bottom-up (feet, y up) and 16.73 ft read top-down
+        (raster px, y down), which put the kitchen doorway 2.4 ft off its own
+        wall. Bounded by the group's EXTENT instead, it SPLIT the lobby wall:
+        its faces at 7.06 and 7.89 fell either side of a chain that had begun
+        at 6.30, so one doorway was emitted twice, once per face.
+
+        With no pair band supplied the extent-bounded clustering is kept, so
+        callers with no scale still work."""
         lines = sorted(lines, key=lambda s: s[2])
-        groups = []                       # [perp_mean, [intervals]]
-        for lo, hi, perp in lines:
-            if groups and perp - groups[-1][0] <= group_tol:
-                groups[-1][1].append((lo, hi))
-                # rolling mean keeps the key near the wall centre-line
-                groups[-1][0] = (groups[-1][0] + perp) / 2
-            else:
-                groups.append([perp, [(lo, hi)]])
+        groups = []                       # [perp_a, [intervals], perp_b]
+        if pair_min is not None and pair_max is not None:
+            # collinear segments first: one drawn FACE is many segments broken
+            # at every doorway and junction, and pairing them one by one would
+            # split a wall into as many "lines" as it has segments — the gap
+            # between two of them could then never be seen. `face_tol` here
+            # means "the same drawn line" (drafting precision), not "the same
+            # wall" — that is what the measured pair below decides.
+            faces = []                    # [perp, [intervals]]
+            for lo, hi, perp in lines:
+                if faces and perp - faces[-1][0] <= face_tol:
+                    faces[-1][1].append((lo, hi))
+                else:
+                    faces.append([perp, [(lo, hi)]])
+            lines = [(min(lo for lo, _h in ivs), max(hi for _l, hi in ivs), perp)
+                     for perp, ivs in faces]
+            spans = {i: faces[i][1] for i in range(len(faces))}
+            used = [False] * len(lines)
+            for i, (lo, hi, perp) in enumerate(lines):
+                if used[i]:
+                    continue
+                mate = None
+                for j in range(i + 1, len(lines)):
+                    if used[j]:
+                        continue
+                    d = lines[j][2] - perp
+                    if d > pair_max:
+                        break
+                    if d < pair_min:
+                        continue
+                    if min(hi, lines[j][1]) - max(lo, lines[j][0]) <= 0:
+                        continue          # parallel, but not the same wall
+                    mate = j
+                    break
+                used[i] = True
+                if mate is None:          # a face with no partner is its own line
+                    groups.append([perp, list(spans[i]), perp])
+                else:
+                    used[mate] = True
+                    groups.append([perp, list(spans[i]) + list(spans[mate]),
+                                   lines[mate][2]])
+            groups.sort(key=lambda g: (g[0] + g[2]) / 2.0)
+        else:
+            for lo, hi, perp in lines:
+                if groups and perp - groups[-1][0] <= group_tol:
+                    groups[-1][1].append((lo, hi))
+                    groups[-1][2] = perp
+                else:
+                    groups.append([perp, [(lo, hi)], perp])
         out = []
-        for perp, ivs in groups:
+        for first, ivs, last in groups:
+            perp = (first + last) / 2.0
             ivs.sort()
             merged = [list(ivs[0])]
             for lo, hi in ivs[1:]:
@@ -2726,6 +2923,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # and the vector-endpoint fallback miss, look up the nearest true doorway
     # GAP in the wall lines (the unit-tested gap_openings detector, computed
     # once, in mask px) and snap the door onto it. Each gap is used once.
+    _pair_band = wall_gap_band(NORM_PPX)     # W-3, in raster px
     _gap_state = {"gaps": None, "used": []}
 
     def _nearest_wall_gap(ccx_px, ccy_px):
@@ -2746,7 +2944,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _gap_state["gaps"] = gap_openings(
                 seg_px_, DRAWN_GAP_MIN_FT * NORM_PPX, DRAWN_GAP_MAX_FT * NORM_PPX,
                 min_flank=_W * NORM_PPX, face_tol=0.5 * _W * NORM_PPX,
-                group_tol=_W * NORM_PPX, junction_pad=0.5 * NORM_PPX)
+                group_tol=_W * NORM_PPX, junction_pad=0.5 * NORM_PPX,
+                pair_min=_pair_band[0], pair_max=_pair_band[1])
         best, bd = None, (4.0 * NORM_PPX) ** 2      # within 4 ft of the swing
         for g in _gap_state["gaps"]:
             if id(g) in _gap_state["used"]:
@@ -2817,13 +3016,38 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # the room seals); the gap itself is emitted as the door. Pure detection is
     # in gap_openings() (unit-tested). Gated on `not has_door_layer`, so layered
     # CAD plans never enter here and cannot regress. ---
-    if not has_door_layer and struct:
+    # PER-LOCATION GATING (shipped 21 Aug 2026, Rahul).
+    # FLOOR PLAN reads 16 doors — the 12 symbols plus FOUR gaps, every one
+    # verified against the drawn faces either side, none a duplicate, and all
+    # 16 SOUND (12 leafed, 4 leafless):
+    #   KITCHEN   18.00-21.98 at y 18.95, between drawn faces 18.73 / 19.15
+    #   BALCONY   y 9.90-12.91 at x 0.41, between drawn faces 0.00 / 0.83
+    #   LOBBY     28.41-31.41 at y 7.50, between drawn faces 7.06 / 7.89
+    #   FLAT-2    66.60-71.65 at y 13.72, between drawn faces 13.68 / 14.09
+    # Two of those were not known to be there: the LOBBY doorway and FLAT-2's
+    # BALCONY opening. The sheet was expected to gain 2 and had 4.
+    #
+        # The gate was `not
+    # has_door_layer`: one door layer anywhere on the sheet switched the whole
+    # geometric finder off. FLOOR PLAN is the case — it draws NO leaf for the
+    # KITCHEN or the BALCONY (measured 19 Aug), so the symbol path has nothing
+    # to read at either, while the gap path sees both and had its output
+    # discarded. A feature present in two code paths and reachable through
+    # neither. A gap is now admitted only where the door layer is SILENT at
+    # that location, so a sheet with symbols keeps every one of them.
+    _gap_ft = {}
+    if struct:
         import fitz as _fitz
+        _sym_ft = [((c.x0 + c.x1) / 2.0 - x0, d_ft - ((c.y0 + c.y1) / 2.0 - y0) / ppf)
+                   for _b, c in door_hits]
+        _sym_ft = [(a / ppf, b) for a, b in _sym_ft]
         seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
         geo = gap_openings(seg_px,
                            DRAWN_GAP_MIN_FT * NORM_PPX, DRAWN_GAP_MAX_FT * NORM_PPX,
                            min_flank=0.8 * NORM_PPX, face_tol=0.35 * NORM_PPX,
-                           group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX)
+                           group_tol=1.2 * NORM_PPX, junction_pad=0.5 * NORM_PPX,
+                           pair_min=_pair_band[0],    # W-3: the same band
+                           pair_max=_pair_band[1])    # `wall_rects` pairs on
         th = int(0.9 * NORM_PPX)          # fill thickness ~ one wall band
         placed = 0
         for o in geo:
@@ -2839,16 +3063,23 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             fcy = d_ft - (cy - pad_y) / NORM_PPX
             if not _in_wing(fcx, fcy):
                 continue
+            # IS THE DOOR LAYER SILENT HERE? a symbol-derived door within a
+            # leaf's reach is this same doorway seen from the linework, not a
+            # second one. Per-LOCATION: a sheet with symbols keeps every one.
+            if any(math.dist((fcx, fcy), _p) < DOOR_LEAF_MAX_FT for _p in _sym_ft):
+                continue
             for mm in (m, m_snap):        # seal the doorway, both masks
                 mm[gy0:gy1, gx0:gx1] = 255
             px0, py0 = x0 + (gx0 - pad_x) / sc, y0 + (gy0 - pad_y) / sc
             px1, py1 = x0 + (gx1 - pad_x) / sc, y0 + (gy1 - pad_y) / sc
             cl = _fitz.Rect(px0, py0, px1, py1).normalize()
             door_hits.append(((gx0, gy0, gx1, gy1), cl))
+            _gap_ft[(gx0, gy0, gx1, gy1)] = (round(fcx, 3), round(fcy, 3),
+                                             round(w / NORM_PPX, 3))
             placed += 1
         if placed:
             warnings.append(f"{placed} door(s) detected by GEOMETRY (wall-gap "
-                            f"rule) - no door layer/symbols on this sheet")
+                            f"rule) - the door layer is silent at those spots")
 
     # --- contours -> polygons in FEET (origin bottom-left, y up) ---
     def fx(px):
@@ -2861,8 +3092,126 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         c = cv2.approxPolyDP(c, 1.2, True).reshape(-1, 2).astype(float)
         return [[fx(px), fy(py)] for px, py in c]
 
-    cnts, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    # --- WALLS FROM PAIR RECTANGLES: BUILT 19 Aug 2026 AND REVERTED ---------
+    # The idea is right — the traced polygon carries the morphology's rounding
+    # around each punched door hole and extrudes it as a lumpy mass in the wall
+    # run (five x-values spanning 1.57 ft where a 0.42 ft wall has two faces).
+    # The RECTANGLES are clean: 48 of them, 202.1 sqft summed, 198.9 union,
+    # only 3.3 sqft (2%) of overlap.
+    #
+    # What broke was the CORNER CLOSURE. `wall_rects` clips each rectangle to
+    # the overlap of its two faces, leaving a wall-thickness square open at
+    # every junction, and the closure extended a rectangle to the NEIGHBOUR'S
+    # FAR BOUND instead of by one wall thickness — so a rectangle meeting a
+    # long perpendicular wall grew across the plan. Net wall material came out
+    # **997.1 sqft against the rectangles' own 198.9**, the union swallowed the
+    # room voids, and the 3D read as stacked sheets. Every numeric ratchet
+    # still passed, which is why nothing caught it.
+    #
+    # Next attempt: extend by ONE WALL THICKNESS, never to a neighbour's bound,
+    # and assert net material ~= the rectangles' union before returning.
     walls_poly = []
+    # --- WALLS FROM THE MEASURED PAIR RECTANGLES (19 Aug 2026, 3rd attempt) --
+    # Tracing walls_poly out of the raster inherits the morphology's rounding
+    # around each punched door hole and extrudes it as a lumpy mass in the wall
+    # run. `_mask()` has painted pair rectangles since 17 Aug; this makes the
+    # OTHER code path read the same object — one object, one code path.
+    #
+    # THE CORNER CLOSURE is what broke attempt 1: `wall_rects` clips each
+    # rectangle to the overlap of its two faces, leaving a wall-thickness
+    # square OPEN at every junction, and attempt 1 closed it by extending to
+    # the NEIGHBOUR'S FAR BOUND — so a rectangle meeting a long perpendicular
+    # wall grew across the plan (997 sqft of material against 199 measured, a
+    # GLB of plan-wide stacked sheets, and every numeric ratchet still green).
+    # Here a rectangle is extended along its own run by exactly ONE WALL
+    # THICKNESS, its own short side, and only where another wall actually
+    # sits — bounded by construction. M-1 now watches the result.
+    try:
+        from shapely.geometry import box as _sbox
+        from shapely.geometry import LineString as _LS
+        from shapely.ops import unary_union as _uu
+        _pr, _pu = wall_rects(struct, ppf)
+        _tof = lambda X, Y: ((X - x0) / ppf, d_ft - (Y - y0) / ppf)
+        _shapes = []
+        for _a, _b, _c, _e in _pr:
+            _p1, _q1 = _tof(_a, _b), _tof(_c, _e)
+            _shapes.append(_sbox(min(_p1[0], _q1[0]), min(_p1[1], _q1[1]),
+                                 max(_p1[0], _q1[0]), max(_p1[1], _q1[1])))
+        # an unpaired survivor has no measured thickness -> this sheet's MEDIAN
+        # PAIR RECTANGLE, which is the rule `_mask()` uses. Attempt 2 used
+        # `_wall_thickness_ft` here instead and so painted a different wall
+        # from the mask on the sheet where it matters (BRICK WORK, 54%
+        # unpaired) — the same "different input, different measurement" error
+        # as the 1.92-vs-1.26 M-1 reading.
+        _mth = (sorted(min(abs(r[2] - r[0]), abs(r[3] - r[1])) for r in _pr)[len(_pr) // 2]
+                / ppf) if _pr else 0.5
+        for _a, _b, _c, _e in _pu:
+            _p1, _q1 = _tof(_a, _b), _tof(_c, _e)
+            if math.dist(_p1, _q1) > 0.01:
+                _shapes.append(_LS([_p1, _q1]).buffer(_mth / 2.0, cap_style=2,
+                                                      join_style=2))
+        # CLOSURE APPLIES TO PAIR RECTANGLES ONLY. The open junction square is
+        # created by `wall_rects` clipping a rectangle to the overlap of its
+        # two faces; an unpaired survivor is buffered at full length and was
+        # never clipped, so it has no such gap to close. Extending them too
+        # (attempts 2-3) added 60% of extra material on BRICK WORK, where 54%
+        # of the wall length is unpaired, against 9% on FLOOR PLAN.
+        _npair = len(_pr)
+        _bb = [g.bounds for g in _shapes]
+        _grown = []
+        for _i, _g in enumerate(_shapes):
+            if _i >= _npair:
+                _grown.append(_g)
+                continue
+            _a0, _b0, _a1, _b1 = _bb[_i]
+            _w, _h = _a1 - _a0, _b1 - _b0
+            _t = min(_w, _h)                      # this wall's own thickness
+            if _t <= 0 or _t >= max(_w, _h):
+                _grown.append(_g)
+                continue
+            _x0e, _y0e, _x1e, _y1e = _a0, _b0, _a1, _b1
+            for _j, _o in enumerate(_bb):
+                if _j == _i:
+                    continue
+                if _w >= _h:                       # runs in x: extend in x
+                    if not (_o[1] <= _b1 + _t and _o[3] >= _b0 - _t):
+                        continue
+                    if _a0 - _t <= _o[2] <= _a0 + _t:
+                        _x0e = min(_x0e, _a0 - _t)
+                    if _a1 - _t <= _o[0] <= _a1 + _t:
+                        _x1e = max(_x1e, _a1 + _t)
+                else:                              # runs in y
+                    if not (_o[0] <= _a1 + _t and _o[2] >= _a0 - _t):
+                        continue
+                    if _b0 - _t <= _o[3] <= _b0 + _t:
+                        _y0e = min(_y0e, _b0 - _t)
+                    if _b1 - _t <= _o[1] <= _b1 + _t:
+                        _y1e = max(_y1e, _b1 + _t)
+            _grown.append(_sbox(_x0e, _y0e, _x1e, _y1e))
+        _shapes = _grown
+        if wbox_ft is not None:            # keep only the built wing
+            _wg = _sbox(*wbox_ft)
+            _shapes = [g for g in (h.intersection(_wg) for h in _shapes)
+                       if not g.is_empty and g.area > 0]
+        _u = _uu(_shapes) if _shapes else None
+        _parts = ([] if _u is None else
+                  ([_u] if _u.geom_type == "Polygon" else list(_u.geoms)))
+        for _g in _parts:
+            if _g.geom_type != "Polygon" or _g.area < 0.5:
+                continue
+            _g = _g.simplify(0.01, preserve_topology=True)
+            walls_poly.append({
+                "id": f"wp{len(walls_poly)}",
+                "outer": [[round(px, 3), round(py, 3)]
+                          for px, py in _g.exterior.coords[:-1]],
+                "holes": [[[round(px, 3), round(py, 3)] for px, py in r.coords[:-1]]
+                          for r in _g.interiors]})
+    except Exception:
+        walls_poly = []
+    _wall_src_rects = bool(walls_poly)
+    cnts, hier = cv2.findContours(m, cv2.RETR_CCOMP, cv2.CHAIN_APPROX_SIMPLE)
+    if walls_poly:
+        cnts, hier = [], None          # rectangles won; skip the traced path
     if hier is not None:
         hier = hier[0]
         for i, c in enumerate(cnts):
@@ -3451,15 +3800,126 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # --- doors: footprint = the doorway strip ON the wall (found above, so the
     # z-band cut applies and a header remains); swing_area = the leaf+arc box,
     # kept for the viewer (door placement / swing animation later). ---
+    # DR-3 (19 Aug 2026): read hinge + swing from the DRAWN ARC, per cluster.
+    def _dft(px, py):                     # same frame ft_rect() uses here
+        return ((px - x0) / ppf, d_ft - (py - y0) / ppf)
+    # ONE DRAWING PATH = ONE DOOR SYMBOL (measured 19 Aug: FLOOR PLAN's door
+    # layer has exactly 12 paths carrying more than 5 items, and 12 doors). A
+    # bbox filter cannot separate them — every door box caught the same 25
+    # lines — but the drafter already grouped each leaf with its own arc.
+    _raw_paths = [[(_dft(it[1].x, it[1].y), _dft(it[2].x, it[2].y))
+                   for it in _d["items"] if it[0] == "l"]
+                  for _d in drawings if _is_door_layer(_d["lname"])]
+    _door_paths = []
+    for _sym in group_door_symbols(_raw_paths):
+        _cx = sum((a[0] + b[0]) / 2 for a, b in _sym) / len(_sym)
+        _cy = sum((a[1] + b[1]) / 2 for a, b in _sym) / len(_sym)
+        _door_paths.append(((_cx, _cy), _sym))
     fallback_doors = 0
+    _swing_read = 0
     for bbox_px, cl in door_hits:
+        _box = ft_rect(cl)
+        _bc = ((_box[0] + _box[2]) / 2.0, (_box[1] + _box[3]) / 2.0)
+        _sw = None
+        if _door_paths:
+            _c, _ss = min(_door_paths,
+                          key=lambda t: math.hypot(t[0][0] - _bc[0], t[0][1] - _bc[1]))
+            if math.hypot(_c[0] - _bc[0], _c[1] - _bc[1]) <= 4.0:
+                _sw = door_swing(_ss)
         rec = {"id": f"o{len(openings)}", "type": "door",
                "z": [0, DOOR_HEAD_FT], "swing_area": ft_rect(cl),
                "snapped": bool(bbox_px)}
+        if bbox_px is not None and tuple(bbox_px) in _gap_ft:
+            # a GAP opening: no drawn leaf anywhere, so `doors_placed_sound`
+            # scores it against the drawn GAP instead (leafless branch)
+            rec["gap_ft"] = list(_gap_ft[tuple(bbox_px)])
+        if _sw:
+            _swing_read += 1
+            rec["hinge"] = _sw["hinge"]
+            rec["opens_toward"] = _sw["opens_toward"]
+            rec["leaf_ft"] = _sw["leaf_ft"]
+            rec["closed"] = _sw["closed"]
+            rec["tip"] = _sw["tip"]
         fp = None
         if bbox_px:
             px0, py0, px1, py1 = bbox_px
             cand = [fx(px0), fy(py1), fx(px1), fy(py0)]
+            # STEP 1 (19 Aug 2026): the cut spans the DRAWN LEAF, not the strip.
+            # The strip is a property of the ROI close and came out 1.5-1.7 ft
+            # against leaves of 2.2-3.2 ft, so each cut removed about half its
+            # doorway and left the rest standing — the "thick wall covering the
+            # door" at four separate locations. Position and orientation still
+            # come from the strip (that is what it is good for); only the WIDTH
+            # comes from the door the drafter drew. Same class as DOOR_MIN_FT:
+            # anything sized from the strip is sized from the wrong object.
+            # the LEAF alone when the arc could be read (the swing box includes
+            # the arc and over-cuts by up to 0.6 ft); the box only as fallback
+            _bx = ft_rect(cl)
+            _lw = rec.get("leaf_ft") or max(_bx[2] - _bx[0], _bx[3] - _bx[1])
+            if DOOR_LEAF_MIN_FT <= _lw <= DOOR_LEAF_MAX_FT:
+                _rx = (cand[2] - cand[0]) >= (cand[3] - cand[1])   # runs along x?
+                # POSITION FROM THE DRAWN SYMBOL TOO (20 Aug 2026). Centring the
+                # leaf width on the STRIP left 6 of 12 FLOOR PLAN cuts shifted
+                # 0.46-1.99 ft along their wall from the door the drafter drew
+                # (measured: 12 symbols, 12 openings, 1:1, none shared, every
+                # drawn opening overlapping its cut — misplaced cuts, not
+                # mis-associated symbols). The leaf was then hinged at OUR jamb
+                # instead of the drawn one, which pierced 5 leaves with wall
+                # material and swung 3 to the side the arc does not sweep.
+                # hinge -> closed IS the doorway; the strip keeps only what it
+                # is good for, the wall's ORIENTATION and its perpendicular
+                # position.
+                # The symbol's two arc ends are the leaf SHUT (lying in the
+                # wall) and the leaf OPEN (perpendicular to it); which of
+                # `tip`/`closed` is which varies by symbol, so pick the one
+                # that runs ALONG this wall rather than assuming.
+                _hg, _k = rec.get("hinge"), (0 if _rx else 1)
+                _end = None
+                for _e in (rec.get("closed"), rec.get("tip")):
+                    if (_e and abs(abs(_hg[_k] - _e[_k]) - _lw) <= 0.35
+                            and abs(_hg[1 - _k] - _e[1 - _k]) <= 0.35):
+                        _end = _e
+                        break
+                if _hg and _end:
+                    _a, _b = sorted((_hg[_k], _end[_k]))
+                    # SWING SENSE IN PLAN (20 Aug 2026). `opens_toward` is
+                    # measured against the DRAWN LEAF, and the drafter draws
+                    # that leaf shut on some doors and open on others — so its
+                    # left/right is not a fixed frame and cannot set a rotation
+                    # sign. The two arc ends give it unambiguously: the leaf
+                    # rotates from the SHUT end (the one along this wall, above)
+                    # toward the OPEN end. Sign = the cross product of the two.
+                    _op = (rec.get("tip") if _end is rec.get("closed")
+                           else rec.get("closed"))
+                    if _op:
+                        _sd = (_end[0] - _hg[0], _end[1] - _hg[1])
+                        _od = (_op[0] - _hg[0], _op[1] - _hg[1])
+                        rec["opens_ccw"] = bool(_sd[0] * _od[1] - _sd[1] * _od[0] > 0)
+                else:                      # no readable arc: centre on the strip
+                    _c = (cand[_k] + cand[_k + 2]) / 2.0
+                    _a, _b = _c - _lw / 2.0, _c + _lw / 2.0
+                cand = ([_a, cand[1], _b, cand[3]] if _rx
+                        else [cand[0], _a, cand[2], _b])
+            # CUT DEPTH = THE WALL'S OWN MEASURED THICKNESS (20 Aug 2026). The
+            # strip's perpendicular span is the ROI close's, not the wall's:
+            # 1.06-1.55 ft against a measured 0.83 ft wall (1.3-1.9x), which
+            # centred every leaf in a band up to 0.36 ft off the wall's own
+            # centre plane. Same class as STEP 1 — sized from the wrong object.
+            _wt = _wall_thickness_ft(drawings, ppf)
+            if _wt:
+                _rx2 = (cand[2] - cand[0]) >= (cand[3] - cand[1])
+                _j = 1 if _rx2 else 0
+                # PERPENDICULAR POSITION FROM THE HINGE TOO (20 Aug 2026, DR-3).
+                # It was the last thing still taken from the strip, and the
+                # strip can land on the wrong wall: 6 of 12 FLOOR PLAN cuts sat
+                # off their symbol's wall line — five by 0.49-0.68 ft (half a
+                # wall, harmless) and flat-1's bedroom entry by 3.32 ft, a
+                # different wall entirely. The drawn hinge sits ON the doorway,
+                # so it fixes the wall line as well as the jamb; the strip is
+                # trusted only for ORIENTATION now.
+                _hg2 = rec.get("hinge")
+                _pc = (_hg2[_j] if _hg2 else (cand[_j] + cand[_j + 2]) / 2.0)
+                cand[_j], cand[_j + 2] = _pc - _wt / 2.0, _pc + _wt / 2.0
             span = max(abs(cand[2] - cand[0]), abs(cand[3] - cand[1]))
             thick = min(abs(cand[2] - cand[0]), abs(cand[3] - cand[1]))
             # VALIDATE the snapped strip: a real door cut is a plausible leaf
@@ -3749,6 +4209,177 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     elif env_src == "overall_dimension_text":
         _plot_sqft = round(float(out_w) * float(out_d), 1)
 
+    # §12 (19 Aug 2026): a cut must span the DRAWN LEAF, not the strip the ROI
+    # close happens to reveal. Six of twelve cuts came out 1.5-1.7 ft against
+    # leaves of 2.2-3.2 ft — each cutting half its doorway and leaving the rest
+    # standing, which IS the "thick wall covering the door".
+    # §0.2 ASK (19 Aug 2026): a REAL-WORLD CLASH — a column standing inside a
+    # doorway. Rahul's ruling: report the CLEAR WIDTH left after obstructions,
+    # not the overlap, because that is what decides whether a person fits. C-7
+    # says the column is where the drawing puts it, so either the drawing
+    # clashes or the door is elsewhere — both need the user. Never corrected.
+    _blocked = []
+    try:
+        for _o in openings:
+            if _o.get("type") != "door" or not _o.get("footprint"):
+                continue
+            _f = _o["footprint"]
+            _rx = (_f[2] - _f[0]) >= (_f[3] - _f[1])
+            _w = max(_f[2] - _f[0], _f[3] - _f[1])
+            _eaten = 0.0
+            for _c in columns:
+                if _c["x"] > _f[2] or _c["x"] + _c["w"] < _f[0] \
+                        or _c["y"] > _f[3] or _c["y"] + _c["d"] < _f[1]:
+                    continue
+                _eaten += (min(_c["x"] + _c["w"], _f[2]) - max(_c["x"], _f[0])) if _rx \
+                    else (min(_c["y"] + _c["d"], _f[3]) - max(_c["y"], _f[1]))
+            _clear = _w - _eaten
+            if _eaten > 0 and _clear < DOOR_LEAF_MIN_FT:
+                _blocked.append({
+                    "at_ft": [round((_f[0] + _f[2]) / 2, 2), round((_f[1] + _f[3]) / 2, 2)],
+                    "opening_ft": round(_w, 2), "obstructed_ft": round(_eaten, 2),
+                    "clear_ft": round(_clear, 2), "clear_in": round(_clear * 12, 1),
+                    "question": "A column obstructs this doorway, leaving %.0f in "
+                                "clear. Is the column or the door misplaced?"
+                                % (_clear * 12)})
+    except Exception:
+        _blocked = []
+    if _blocked:
+        warnings.append(
+            "§0.2 ASK: %d doorway(s) obstructed by a column - %s. Nobody walks "
+            "through that; the drawing clashes or the door is elsewhere. NOT "
+            "corrected" % (len(_blocked),
+                           "; ".join("%.0f in clear at (%.1f, %.1f)"
+                                     % (b["clear_in"], b["at_ft"][0], b["at_ft"][1])
+                                     for b in _blocked)))
+
+    # WALL FACE QUALITY (19 Aug 2026): a wall face is straight between its
+    # endpoints, so a clean polygon has almost no SHORT steps. Contour-traced
+    # walls carried 195 of them on FLOOR PLAN, 92 within 3 ft of a doorway —
+    # the staircase left by morphology around each punched door hole, which
+    # extruded into a lumpy mass in the wall run. Pinned so it cannot return.
+    _wall_quality = None
+    try:
+        _short = 0
+        for _w in walls_poly:
+            _o = _w["outer"]
+            for _i in range(len(_o)):
+                if math.dist(_o[_i - 1], _o[_i]) < 0.35:
+                    _short += 1
+        _wall_quality = {"polygons": len(walls_poly),
+                         "short_step_vertices": _short,
+                         "max_outline_points": max((len(w["outer"]) for w in walls_poly),
+                                                   default=0),
+                         "source": ("pair_rectangles" if _wall_src_rects else "traced_mask")}
+        # --- M-1, WALL MATERIAL CROSS-CHECK (19 Aug 2026, Rahul) -----------
+        # The model's own material against an INDEPENDENTLY MEASURED drawing
+        # quantity: the union of the pair rectangles, each painted between two
+        # measured wall faces. Built because the pair-rectangle walls_poly of
+        # 19 Aug shipped a GLB of plan-wide stacked sheets carrying 997.1 sqft
+        # of material against the rectangles' own 198.9 (5.01x) and EVERY
+        # numeric ratchet passed — R-8, R-2, carpet, rooms, doors, footprint
+        # and the golden all measure the 2D parse, none measures the model.
+        # The traced path reads ~1.9x legitimately: morphology's seal and the
+        # unpaired survivors paint beyond the measured faces. Ceiling 2.5.
+        from shapely.geometry import Polygon as _Pg
+        from shapely.geometry import box as _bx1
+        from shapely.ops import unary_union as _uu1
+        _rc, _un = wall_rects(struct, ppf)
+        _to = lambda X, Y: ((X - x0) / ppf, d_ft - (Y - y0) / ppf)
+        _rb = []
+        for _a, _b, _c, _e in _rc:
+            _p1, _q1 = _to(_a, _b), _to(_c, _e)
+            _rb.append(_bx1(min(_p1[0], _q1[0]), min(_p1[1], _q1[1]),
+                            max(_p1[0], _q1[0]), max(_p1[1], _q1[1])))
+        # DENOMINATOR CORRECTED (19 Aug 2026, Rahul): the pair rectangles UNION
+        # the UNPAIRED SURVIVORS at this sheet's own median wall — exactly what
+        # `_mask()` paints, so numerator and denominator describe the same
+        # object. With pairs alone, BRICK WORK read 3.02 for no fault of the
+        # model: 54% of its wall length is unpaired, and every square foot of
+        # it was in the numerator and absent from the denominator. Same class
+        # as R-8's flats-only basis — comparing two different objects.
+        from shapely.geometry import LineString as _LS1
+        _mt = (sorted(min(abs(r[2] - r[0]), abs(r[3] - r[1])) for r in _rc)[len(_rc) // 2]
+               / ppf) if _rc else 0.5
+        for _a, _b, _c, _e in _un:
+            _p1, _q1 = _to(_a, _b), _to(_c, _e)
+            if math.dist(_p1, _q1) > 0.01:
+                _rb.append(_LS1([_p1, _q1]).buffer(_mt / 2.0, cap_style=2,
+                                                   join_style=2))
+        if wbox_ft is not None:      # walls_poly is cropped to the built wing,
+            _wgb = _bx1(*wbox_ft)    # so the denominator must be too
+            _rb = [g for g in (r.intersection(_wgb) for r in _rb) if not g.is_empty]
+        _meas = _uu1(_rb).area if _rb else 0.0
+        _net = 0.0
+        for _w in walls_poly:
+            _net += _Pg(_w["outer"]).area - sum(_Pg(_h).area for _h in _w["holes"])
+        _wall_quality.update({
+            "material_sqft": round(_net, 1),
+            "measured_pair_sqft": round(_meas, 1),
+            "material_ratio": round(_net / _meas, 2) if _meas > 0 else None,
+            "material_ratio_max": 2.5})
+    except Exception:
+        _wall_quality = None
+
+    _doors_sound = None
+    try:
+        _lf = []
+        for _d in drawings:
+            if not _is_door_layer(_d["lname"]):
+                continue
+            _r = _d["rect"]
+            _a = ((_r.x0 - x0) / ppf - sx, d_ft - (_r.y0 - y0) / ppf - sy)
+            _b = ((_r.x1 - x0) / ppf - sx, d_ft - (_r.y1 - y0) / ppf - sy)
+            _w = max(abs(_b[0] - _a[0]), abs(_b[1] - _a[1]))
+            if _w >= 1.5:
+                _lf.append(((_a[0] + _b[0]) / 2, (_a[1] + _b[1]) / 2, _w))
+        _grp = []
+        for _p in _lf:
+            for _g in _grp:
+                if math.hypot(_p[0] - _g[0][0], _p[1] - _g[0][1]) < 3.0:
+                    _g.append(_p)
+                    break
+            else:
+                _grp.append([_p])
+        _drawn = [(sum(q[0] for q in g) / len(g), sum(q[1] for q in g) / len(g),
+                   max(q[2] for q in g)) for g in _grp]
+        _tol, _ok, _n, _leafless = 0.35, 0, 0, 0
+        for _o in openings:
+            if _o.get("type") != "door" or not _o.get("footprint"):
+                continue
+            _f = _o["footprint"]
+            _cx, _cy = (_f[0] + _f[2]) / 2, (_f[1] + _f[3]) / 2
+            _cw = max(_f[2] - _f[0], _f[3] - _f[1])
+            _n += 1
+            if _o.get("gap_ft") is not None:
+                # LEAFLESS BRANCH (20 Aug 2026, Rahul). A gap opening has no
+                # drawn leaf, so width scoring cannot apply — it would score
+                # every one of them unsound and hide a real placement fault
+                # behind a metric that simply cannot see it. Score it on what a
+                # gap opening DOES have: the cut sits on the drawn gap, it is
+                # the gap's own width, and it lies inside the plan.
+                _g = _o["gap_ft"]
+                if (math.dist((_cx, _cy), (_g[0], _g[1])) <= _tol
+                        and abs(_cw - _g[2]) <= _tol
+                        and 0.0 <= _cx <= out_w and 0.0 <= _cy <= out_d):
+                    _ok += 1
+                _leafless += 1
+                continue
+            if not _drawn:
+                _n -= 1
+                continue
+            _m = min(_drawn, key=lambda t: math.hypot(t[0] - _cx, t[1] - _cy))
+            if abs(_cw - _m[2]) <= _tol:
+                _ok += 1
+        _doors_sound = {"doors": _n, "sound": _ok, "tol_ft": _tol,
+                        "drawn_leaves": len(_drawn), "leafless": _leafless,
+                        "rule": "a cut with a DRAWN LEAF is sound when its width "
+                                "matches that leaf; a GAP opening has no leaf, so "
+                                "it is sound when the cut sits on the drawn gap, "
+                                "at the gap's own width, inside the plan"}
+    except Exception:
+        _doors_sound = None
+
     if _dim_anchors:
         # the anchors were measured before the wing shift was known, in the raw
         # frame ((X-x0)/ppf, (Y-y0)/ppf). Put them in SCENE feet so the overlay
@@ -3779,8 +4410,11 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "footprint_sqft": footprint_sqft,
             # canvas instrument: the wall extent, the railing-derived bound
             # that grew it, and the resulting raster (px). Reporting only.
+            "doors_placed_sound": _doors_sound,
+            "wall_face_quality": _wall_quality,
             "dimension_anchors": _dim_anchors,
             "open_side_regions": _open_sides,
+            "blocked_openings": _blocked,
             "canvas": {"wall_extent_ft": [0.0, 0.0, round(w_ft, 2), round(d_ft, 2)],
                        "railing_bound_ft": list(_canvas_ext) if _canvas_ext else None,
                        "raster_px": [W, H],

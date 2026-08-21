@@ -8,6 +8,7 @@ Or from the CLI:     python scene_to_glb.py scenes/bedroom.scene.json out.glb
 """
 import sys
 import json
+import math
 
 FT = 0.3048  # feet -> metres
 
@@ -50,8 +51,14 @@ def interval_boxes(w, H, openings):
 def _add_box(meshes, b, rgba, name=None):
     import trimesh
     x0, x1, y0, y1, z0, z1 = b
+    # PLAN-Y MAPS TO -Z (18 Aug 2026, Rahul's ruling). With y-up and east on
+    # the right, a camera above looking down puts +Z at the BOTTOM of the
+    # screen — so mapping plan-north to +Z rendered every top view MIRRORED
+    # north-south. No geometry axis was negated, which is why a coordinate
+    # check could not see it; the mirror lived in the view basis. Negating
+    # here is the only fix that holds from every camera (§12).
     sx, sy, sz = (x1 - x0) * FT, (z1 - z0) * FT, (y1 - y0) * FT       # Y = height
-    cx, cy, cz = (x0 + x1) / 2 * FT, (z0 + z1) / 2 * FT, (y0 + y1) / 2 * FT
+    cx, cy, cz = (x0 + x1) / 2 * FT, (z0 + z1) / 2 * FT, -(y0 + y1) / 2 * FT
     if sx <= 0 or sy <= 0 or sz <= 0:
         return
     m = trimesh.creation.box(
@@ -117,7 +124,7 @@ def _add_door_leaf(meshes, o, rect, H, name):
     """A real door LEAF standing AJAR in the opening — hinged at one jamb and
     swung ~60 deg into the swing arc — so a doorway reads as an openable
     designer door instead of an empty hole. Built for EVERY door (vector or
-    ML). glTF axes: X=plan_x, Y=height, Z=plan_y (same as _add_box)."""
+    ML). glTF axes: X=plan_x, Y=height, Z=-plan_y (same as _add_box)."""
     import math
     import trimesh
     x0, y0, x1, y1 = rect
@@ -134,14 +141,45 @@ def _add_door_leaf(meshes, o, rect, H, name):
     else:
         rdx, rdy = 0.0, 1.0
         hinge = ((x0 + x1) / 2.0, y0)        # hinge at the low-y jamb
+    # the MEASURED hinge (from the arc centre) wins over the low-jamb guess:
+    # a door hinged at the far jamb swings from the wrong post without it
+    _h = o.get("hinge")
+    if isinstance(_h, (list, tuple)) and len(_h) == 2:
+        if run_x and abs(_h[0] - x1) < abs(_h[0] - x0):
+            hinge = (x1, (y0 + y1) / 2.0)
+            rdx = -1.0
+        elif (not run_x) and abs(_h[1] - y1) < abs(_h[1] - y0):
+            hinge = ((x0 + x1) / 2.0, y1)
+            rdy = -1.0
     ang = math.radians(60.0)                 # ajar angle
-    if str(o.get("hinge", "")).endswith("1"):
-        ang = -ang                           # hint flips the swing side
+    # DR-3 (19 Aug 2026): the swing side now comes from the DRAWN ARC, read by
+    # pdf_vector.door_swing(). Before this, `hinge` was never set by the parser
+    # and every leaf defaulted to +60 deg — right by chance about half the time.
+    # `opens_toward` is measured in PLAN space; the -Z mapping already negates
+    # the whole rotation below, so the sign is applied here in plan terms.
+    # SWING SENSE (20 Aug 2026): `opens_ccw` is the cross product of the drawn
+    # symbol's SHUT and OPEN arc ends, in plan — the only unambiguous form.
+    # `opens_toward` is measured against the drawn LEAF, which the drafter
+    # draws shut on some doors and open on others, so it is not a fixed frame:
+    # FLOOR PLAN's two `right` doors needed OPPOSITE signs. Kept as the
+    # fallback for openings that carry no arc.
+    # plan angle = psi - ang (the -Z mapping negates the rotation), so a
+    # counter-clockwise swing needs a NEGATIVE ang.
+    if o.get("opens_ccw") is not None:
+        ang = -ang if o["opens_ccw"] else ang
+    elif o.get("opens_toward") == "right":
+        ang = -ang
+    elif str(o.get("hinge", "")).endswith("1"):
+        ang = -ang                           # legacy ML hint
     phi = math.atan2(-rdy, rdx)              # local +X -> run direction (about Y)
     Wm, Hm, Tm = width * FT, zt * FT, THICK * FT
     tf = trimesh.transformations
-    M = (tf.translation_matrix((hinge[0] * FT, 0.0, hinge[1] * FT))
-         @ tf.rotation_matrix(phi + ang, (0, 1, 0))
+    # plan-y -> -Z (18 Aug 2026): the hinge negates like every other point,
+    # AND the swing angle negates with it — the flip is a REFLECTION, so a
+    # rotation about Y reverses sense; without this the leaf would swing to
+    # the wrong side of its own doorway.
+    M = (tf.translation_matrix((hinge[0] * FT, 0.0, -hinge[1] * FT))
+         @ tf.rotation_matrix(-(phi + ang), (0, 1, 0))
          @ tf.translation_matrix((Wm / 2.0, Hm / 2.0, 0.0)))
     leaf = trimesh.creation.box(extents=(Wm, Hm, Tm), transform=M)
     leaf.visual.face_colors = _DOOR_LEAF
@@ -150,13 +188,14 @@ def _add_door_leaf(meshes, o, rect, H, name):
 
 def _add_poly_prism(meshes, geom, z0, z1, rgba, name=None):
     """Extrude a shapely Polygon/MultiPolygon plan footprint (feet) from z0..z1
-    and place it in glTF axes (X=x, Y=height, Z=plan-y), like _add_box."""
+    and place it in glTF axes (X=x, Y=height, Z=-plan-y), like _add_box."""
     import numpy as np
     import trimesh
     if z1 - z0 <= 0 or geom.is_empty:
         return
     polys = getattr(geom, "geoms", [geom])
-    M = np.array([[FT, 0, 0, 0], [0, 0, FT, FT * z0], [0, FT, 0, 0], [0, 0, 0, 1.0]])
+    # row 2 is NEGATED: plan-y -> -Z, so plan-north renders UP in a top view
+    M = np.array([[FT, 0, 0, 0], [0, 0, FT, FT * z0], [0, -FT, 0, 0], [0, 0, 0, 1.0]])
     for k, pg in enumerate(polys):
         if pg.is_empty or pg.area <= 0:
             continue
@@ -273,13 +312,66 @@ def _build_scene(scene):
         _add_box(meshes, (min(xs), max(xs), min(ys), max(ys), -0.25, 0),
                  _hexrgba("#e8e4da"), name="floor")
     openings = scene.get("openings", [])
+    # --- RAILINGS AND THE SPACES BEHIND THEM (20 Aug 2026, B-4) -------------
+    # `scene.railings` was read by NOTHING, so no balcony or utility reached
+    # the 3D. Flat-2's balcony looked built only because its railing is a thin
+    # double line 3.0 in apart, which is exactly `wall_rects`'s 3 in floor: it
+    # pairs as a WALL and was extruded full height on an OPEN face, against
+    # B-4. Here a classified railing run becomes a half-wall at RAIL_FT, its
+    # pocket gets a floor slab, and any wall material lying along the run is
+    # cut down to the same height instead of standing full storey.
+    RAIL_FT, RAIL_T = 3.5, 0.25
+    _rail_runs = [r for r in (scene.get("railings") or {}).get("runs", [])
+                  if r.get("classification") == "railing"]
+    _rail_zone = None
+    _pockets = []
+    try:
+        from shapely.geometry import LineString as _RL
+        from shapely.ops import unary_union as _ruu
+        _segs = []
+        for r in _rail_runs:
+            pl = r.get("polyline_ft") or []
+            for a, b in zip(pl[0::2], pl[1::2]):
+                if math.dist(a, b) > 0.1:
+                    _segs.append(_RL([a, b]).buffer(RAIL_T / 2.0, cap_style=2))
+            if r.get("pocket_ft"):
+                _pockets.append(r["pocket_ft"])
+        _rail_zone = _ruu(_segs) if _segs else None
+    except Exception:
+        _rail_zone = None
+    for k, pk in enumerate(_pockets):        # balcony / utility floor
+        _add_box(meshes, (pk[0], pk[2], pk[1], pk[3], -0.25, 0),
+                 _hexrgba("#e8e4da"), name=f"floor_open_{k}")
     for i, w in enumerate(walls):
         for j, b in enumerate(interval_boxes(w, H, openings)):
             _add_box(meshes, b, _hexrgba("#cfcabd"), name=f"wall_{i}_{j}")
     for i, w in enumerate(walls_poly):
-        for j, (geom, z0, z1) in enumerate(poly_bands(w, H, openings)):
-            _add_poly_prism(meshes, geom, z0, z1, _hexrgba("#cfcabd"),
-                            name=f"wall_p{i}_{j}")
+        _cut = None
+        if _rail_zone is not None:
+            try:
+                from shapely.geometry import Polygon as _RP
+                _g = _RP(w["outer"], w.get("holes") or [])
+                _ov = _g.intersection(_rail_zone)
+                if _ov.area > 0.05:
+                    _cut = _ov
+                    _rest = _g.difference(_rail_zone)
+                    if _rest.is_empty or _rest.area < 0.1 * _g.area:
+                        w = None            # the polygon WAS the railing
+                    elif _rest.geom_type == "Polygon":
+                        w = dict(w, outer=list(_rest.exterior.coords)[:-1],
+                                 holes=[list(r.coords)[:-1] for r in _rest.interiors])
+            except Exception:
+                _cut = None
+        if w is not None:
+            for j, (geom, z0, z1) in enumerate(poly_bands(w, H, openings)):
+                _add_poly_prism(meshes, geom, z0, z1, _hexrgba("#cfcabd"),
+                                name=f"wall_p{i}_{j}")
+        if _cut is not None and not _cut.is_empty:
+            _add_poly_prism(meshes, _cut, 0.0, RAIL_FT, _hexrgba("#b9b3a4"),
+                            name=f"rail_w{i}")
+    if _rail_zone is not None and not _rail_zone.is_empty:
+        _add_poly_prism(meshes, _rail_zone, 0.0, RAIL_FT, _hexrgba("#b9b3a4"),
+                        name="railing")
     # a real door LEAF standing ajar in every door void (D1): reads as an
     # openable designer door, not a hole. Named 'door_*' so the viewer gives it
     # a wood finish. Works for vector (footprint) and ML (wall+along) doors.
@@ -303,6 +395,11 @@ def _build_scene(scene):
         _add_box(meshes, (c["x"], c["x"] + c["w"], c["y"], c["y"] + c["d"], 0, H),
                  _hexrgba("#9aa0a6"), name=f"column_{i}")
     for i, f in enumerate(scene.get("furniture", [])):
+        # never stage furniture into a balcony/utility pocket — a bed was
+        # standing in flat-1's utility (20 Aug 2026)
+        if any(pk[0] - 0.2 <= f.get("x", 0) <= pk[2] + 0.2
+               and pk[1] - 0.2 <= f.get("y", 0) <= pk[3] + 0.2 for pk in _pockets):
+            continue
         _add_furniture(meshes, f, i)
     sc = trimesh.Scene()
     if not meshes:
