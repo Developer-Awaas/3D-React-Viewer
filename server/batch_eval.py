@@ -53,6 +53,51 @@ def door_score(actual, expected):
     return ratio, ratio >= 0.8
 
 
+def carpet_r2_verdict(prev, cur, carpet_tol=0.5, r2_tol=0.5):
+    """CARPET RISING WHILE R-2 FALLS IS A REGRESSION (24 Aug 2026, Rahul).
+
+    Found the hard way: the seal split took FLOOR PLAN's carpet 1191.1 -> 1328.1
+    (+137) and its R-2 median 98.0 -> 94.6 in the same run. Carpet alone reads
+    as a win — 137 sqft of floor we were not counting before. Read together
+    with R-2 it is the opposite: the rooms did not come back, the rooms we
+    already had GREW PAST THEIR PRINTED DIMENSIONS. Coverage and accuracy move
+    TOGETHER when the parse improves; when they move APART, a boundary moved.
+
+    `prev` / `cur` are dicts carrying `carpet_sqft` and `r2_median`. Returns a
+    short verdict string, or None when the rule does not apply (a figure
+    missing, or neither moved beyond its tolerance). Pure -> unit-tested.
+
+    THE MIRROR CASE — carpet FALLING while R-2 RISES — is UNVERIFIED, neither
+    an improvement nor a regression (Rahul, 25 Aug 2026). It is genuinely both
+    readings at once: the sign-flipped phenomenon (rooms shrinking inside their
+    printed dimensions) AND what an honest correction looks like when we stop
+    counting space we never had — which is exactly the 20 Aug footprint fix,
+    where losing 2.6 sqft was the wall material we had been claiming at twice
+    its drawn thickness. NEITHER READING CAN BE CHOSEN FROM THE NUMBERS ALONE,
+    so it is flagged for a human, the same way a blind instrument is: said out
+    loud, never silently scored either way.
+
+    Verdicts are prefixed `REGRESSION:` or `UNVERIFIED:` so a caller can route
+    them without re-parsing the sentence.
+    """
+    def _d(k):
+        a, b = (prev or {}).get(k), (cur or {}).get(k)
+        return None if a is None or b is None else b - a
+    dc, dr = _d("carpet_sqft"), _d("r2_median")
+    if dc is None or dr is None:
+        return None
+    if dc > carpet_tol and dr < -r2_tol:
+        return (f"REGRESSION: carpet +{dc:.1f} sqft while R-2 {dr:+.1f} — "
+                "rooms grew past their printed dimensions; carpet alone would "
+                "have called this a win")
+    if dc < -carpet_tol and dr > r2_tol:
+        return (f"UNVERIFIED: carpet {dc:.1f} sqft while R-2 {dr:+.1f} — this "
+                "is EITHER rooms shrinking inside their printed dimensions OR "
+                "an honest correction that stops counting space we never had. "
+                "The numbers cannot tell these apart. A human must rule.")
+    return None
+
+
 # ---- runner (I/O) ----
 
 def parse_metrics(scene):
@@ -79,7 +124,35 @@ def parse_metrics(scene):
         "wings": m.get("wing", {}).get("count", 1),
         "scale": m.get("scale", {}).get("source"),
         "mode": m.get("source"),
+        # CARPET AND R-2 ARE EMITTED TOGETHER because they must be READ
+        # together (24 Aug 2026): carpet rising while R-2 falls is a
+        # regression, and neither number can show that on its own. See
+        # carpet_r2_verdict.
+        "carpet_sqft": _carpet_sqft(scene),
+        "r2_median": _r2_median(scene),
+        # WHICH CODE PATH RAN — three absolute floors switch branches with no
+        # other trace, so a run diff can say "this plan changed ROUTE" rather
+        # than only "these numbers moved".
+        "route": m.get("route"),
     }
+
+
+def _carpet_sqft(scene):
+    try:
+        import area_statement
+        st = area_statement.compute_area_statement(scene, 1.30)
+        return (st.get("carpet_area") or {}).get("sqft")
+    except Exception:
+        return None
+
+
+def _r2_median(scene):
+    try:
+        import room_dims
+        return (room_dims.summary(scene.get("rooms", [])) or {}).get(
+            "median_match_pct")
+    except Exception:
+        return None
 
 
 def evaluate(plans_dir, ground_truth=None):

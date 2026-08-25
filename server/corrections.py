@@ -8,6 +8,8 @@ Three corrections, in priority order of value:
      (fixes Vastu + furniture + labels). "" clears it.
   3. delete_rooms  — [room_id, ...]: drop phantom rooms (shafts read as rooms)
      so carpet / efficiency stop being inflated.
+  4. plot_area_sqft — the site area. The plot comes from the drawing or from
+     the user, NEVER from the building's own envelope (21 Aug 2026).
 
 Pure functions (no I/O, no GPU) -> fully unit-tested. The /recompute endpoint
 calls apply_corrections() then re-runs area/vastu/boq/doctor on the result.
@@ -90,6 +92,21 @@ def apply_corrections(scene, corr):
             changed += 1
         if changed:
             info["applied"].append(f"retyped {changed} room(s)")
+
+    # 4) PLOT AREA — user entry (21 Aug 2026, Rahul). The plot may come from
+    # the drawing or from the user and from nowhere else: deriving it from the
+    # building's own envelope made `footprint <= plot` self-referential.
+    pa = corr.get("plot_area_sqft")
+    if pa is not None:
+        try:
+            pa = float(pa)
+        except (TypeError, ValueError):
+            raise ValueError("plot_area_sqft must be a number")
+        if not (pa > 0):
+            raise ValueError("plot_area_sqft must be positive")
+        meta["plot_sqft"] = round(pa, 1)
+        meta["plot_source"] = "user"
+        info["applied"].append(f"plot area set to {pa:.0f} sqft")
 
     # 3) DELETE phantom rooms
     dl = corr.get("delete_rooms")

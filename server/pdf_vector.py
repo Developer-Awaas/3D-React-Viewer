@@ -566,6 +566,11 @@ def group_door_symbols(paths, tol_ft=0.35, cv=0.25, min_leaf=1.2):
             arcs.append(ss)
         else:
             lines += [(a, b) for a, b in ss if math.dist(a, b) >= min_leaf]
+    # ROUTE: this decides ARC vs LEAF once per drawing path, so a count is the
+    # honest report — a flag would hide a sheet where it fires 200 times and
+    # one where it fires twice.
+    _ROUTE["door_symbol_paths"] = {"arc": len(arcs), "line": len(paths or []) - len(arcs),
+                                   "leaf_segs_kept": len(lines)}
     out = []
     for arc in arcs:
         pts = [p for a, b in arc for p in (a, b)]
@@ -1057,6 +1062,12 @@ def _drop_stair_ladders(walls, ppf, warnings, horiz):
     wall interleaved by position broke the chain - it never fired on real
     plans (the corrugated stair blob). Now the ladder is chained over
     short-strip candidates that laterally overlap, wherever they sit."""
+    # ROUTE: this fires only on the geometry branch (its one caller is
+    # `_geometry_wall_segs`), and under 5 walls it returns untouched — a
+    # staircase drawn as 4 treads is silently never de-duped.
+    _ROUTE["stair_ladder_dedupe"] = (
+        f"ran ({len(walls)} walls)" if len(walls) >= 5
+        else f"SKIPPED: {len(walls)} walls < 5")
     if len(walls) < 5:
         return walls
     cand = sorted((k for k in range(len(walls))
@@ -1096,9 +1107,100 @@ def _drop_stair_ladders(walls, ppf, warnings, horiz):
     return walls
 
 
-def _wing_groups(m, gap_ft=8.0):
+EMPTY_BAND_MIN_FT = 1.0      # noise floor only: the SIGNATURE is emptiness
+#                              across the full extent, not the band's width.
+#                              Measured 25 Aug — the only band in the corpus
+#                              that qualifies is GHATIKIA's 6.48 ft gutter.
+
+
+def _empty_bands(cover, bbox, min_ft, norm_ppx=NORM_PPX):
+    """Interior bands of a group where `cover` holds ZERO INK across the
+    group's FULL perpendicular extent (25 Aug 2026, Rahul).
+
+    The band rule of 22 Aug can only MERGE. This is its opposite, and it needs
+    a STRONGER signature than "nothing bridges it": a real interior corridor has
+    partitions crossing it somewhere along its length, while the gutter between
+    two drawings on one sheet is empty end to end. So the test is not "is this
+    band unbridged" but "is this band EMPTY, over the whole extent".
+
+    It must run on `cover` — every drawn primitive at any angle — not on the
+    wall mask. Measured 25 Aug: on the WALL MASK neelachala FIRST FLOOR shows a
+    14.01 ft empty horizontal band and would be split back into the two blocks
+    Rahul ruled are one building. On `cover` that band carries the terrace
+    hatch's 19 diagonal strokes and is not empty at all. The wall reader is
+    blind to a 45-degree stroke by construction (`_segs` keeps only H and V).
+
+    Returns [(axis, lo_px, hi_px)] with axis 0 = a VERTICAL band (splits in x),
+    1 = HORIZONTAL. Pure -> unit-tested.
+    """
+    import numpy as np
+    if cover is None:
+        return []
+    x0, y0, x1, y1 = bbox
+    sub = cover[max(0, y0):y1, max(0, x0):x1]
+    if sub.size == 0:
+        return []
+    out = []
+    for axis in (0, 1):
+        ink = sub.any(axis=axis)          # axis=0 -> one flag per COLUMN
+        i, n = 0, len(ink)
+        while i < n:
+            if ink[i]:
+                i += 1
+                continue
+            j = i
+            while j < n and not ink[j]:
+                j += 1
+            # INTERIOR only: a run touching either end is the margin, not a gutter
+            if i > 0 and j < n and (j - i) / norm_ppx >= min_ft:
+                base = x0 if axis == 0 else y0
+                out.append((axis, base + i, base + j))
+            i = j
+    return out
+
+
+def _band_bridged(cover, b1, b2):
+    """THE BAND RULE (§12, 21 Aug 2026, Rahul): an empty band splits a sheet
+    only if NOTHING covers it — and the question is what covers it
+    COLLECTIVELY, not what individually spans it.
+
+    neelachala FIRST FLOOR's two blocks are separated by a 13.1 ft band that no
+    wall line crosses and no filled path spans, yet the first-floor terrace
+    slab is drawn across it as 19 strokes at EXACTLY 45 degrees: only 2 of them
+    reach from one side to the other (a diagonal enters and leaves at different
+    y), while together they cover 100% of the band in ONE unbroken run. So the
+    test is connectivity, not spanning: is there a single connected component of
+    drawn material touching both edges of the band?
+
+    `cover` is painted from every drawn primitive, because `_segs` buckets a
+    line as horizontal or vertical and is blind to a diagonal by construction.
+    """
+    import cv2
+    import numpy as np
+    if cover is None:
+        return False
+    if b1[3] <= b2[1] or b2[3] <= b1[1]:                 # one above the other
+        lo, hi = (b1, b2) if b1[3] <= b2[1] else (b2, b1)
+        crop = cover[lo[3]:hi[1], max(lo[0], hi[0]):min(lo[2], hi[2])]
+    elif b1[2] <= b2[0] or b2[2] <= b1[0]:               # side by side
+        lf, rt = (b1, b2) if b1[2] <= b2[0] else (b2, b1)
+        crop = cover[max(lf[1], rt[1]):min(lf[3], rt[3]), lf[2]:rt[0]].T
+    else:
+        return False                    # bboxes overlap on both axes: no band
+    if crop.shape[0] < 3 or crop.shape[1] < 1:
+        return False
+    _n, lab = cv2.connectedComponents(np.ascontiguousarray(crop), 8)
+    return bool(set(lab[0][lab[0] > 0]) & set(lab[-1][lab[-1] > 0]))
+
+
+def _wing_groups(m, gap_ft=8.0, cover=None):
     """Split the wall mask into spatially separate building wings.
-    Returns [(labels_set, bbox_px, area)] sorted largest first."""
+    Returns [(labels_set, bbox_px, area)] sorted largest first.
+
+    Two blocks of ONE building can sit further apart than `gap_ft` and still be
+    one building — the slab bridges them. `cover`, when given, applies the band
+    rule to the groups this leaves, and merges any pair whose separating band is
+    bridged by drawn material (`_band_bridged`)."""
     import cv2
     n, lab, stt, _ = cv2.connectedComponentsWithStats(m, 8)
     comps = [(i, (stt[i, 0], stt[i, 1], stt[i, 0] + stt[i, 2],
@@ -1135,6 +1237,61 @@ def _wing_groups(m, gap_ft=8.0):
         by1 = max(bb[3] for _, bb, _ in struct)
         groups.append([set(i for i, _, _ in struct), (bx0, by0, bx1, by1),
                        sum(a for _, _, a in struct)])
+    # BAND RULE pass — merge groups the slab joins. Done on GROUPS, not on the
+    # raw components: the ruling is about BLOCKS, and there are only a handful
+    # of groups, so the O(n^2) connectivity test costs nothing.
+    if cover is not None and len(groups) > 1:
+        merged = True
+        while merged and len(groups) > 1:
+            merged = False
+            for i in range(len(groups)):
+                for j in range(i + 1, len(groups)):
+                    if not _band_bridged(cover, groups[i][1], groups[j][1]):
+                        continue
+                    a, b = groups[i], groups[j]
+                    groups[i] = [a[0] | b[0],
+                                 (min(a[1][0], b[1][0]), min(a[1][1], b[1][1]),
+                                  max(a[1][2], b[1][2]), max(a[1][3], b[1][3])),
+                                 a[2] + b[2]]
+                    groups.pop(j)
+                    merged = True
+                    break
+                if merged:
+                    break
+    # SPLIT PASS — the opposite operation to the merge above (25 Aug 2026,
+    # Rahul). GHATIKIA draws TWO VIEWS on one sheet (FIRST FLOOR left, TYPICAL
+    # FLOOR right) and they union into ONE group at the 8 ft proximity stage,
+    # so `_band_bridged` never even sees them. A group is divided when its
+    # interior holds a band with ZERO ink across its full perpendicular extent.
+    # Measured on `cover`, min 1 ft: GHATIKIA one vertical band of 6.48 ft;
+    # FLOOR PLAN, BRICK WORK and FIRST FLOOR NONE — the rule is inert on every
+    # single-view sheet in the corpus, which is the failure mode that matters.
+    if cover is not None:
+        cbb = {i: bb for i, bb, _a in comps}
+        out = []
+        for labs, bb, area in groups:
+            bands = _empty_bands(cover, bb, EMPTY_BAND_MIN_FT)
+            if not bands:
+                out.append([labs, bb, area])
+                continue
+            axis, lo, hi = max(bands, key=lambda b: b[2] - b[1])
+            side = {0: [], 1: []}
+            for i in labs:
+                c = cbb.get(i)
+                if c is None:
+                    continue
+                mid = (c[0] + c[2]) / 2.0 if axis == 0 else (c[1] + c[3]) / 2.0
+                side[0 if mid < lo else 1].append(i)
+            if not (side[0] and side[1]):
+                out.append([labs, bb, area])       # nothing either side: keep
+                continue
+            for part in (side[0], side[1]):
+                bxs = [cbb[i] for i in part]
+                out.append([set(part),
+                            (min(b[0] for b in bxs), min(b[1] for b in bxs),
+                             max(b[2] for b in bxs), max(b[3] for b in bxs)),
+                            sum(a for i, _b, a in comps if i in part)])
+        groups = out
     return sorted(groups, key=lambda g: -g[2])
 
 
@@ -1408,6 +1565,120 @@ def _free_ring_endpoints(seg_px, join_tol, min_gap):
     return pairs
 
 
+SEAL_DEFAULT_FT = 4.0        # only when the sheet states nothing: see below
+
+
+def derived_seal_ft(leaf_widths_ft, schedule_widths_ft=None,
+                    default_ft=SEAL_DEFAULT_FT, min_n=5):
+    """The seal's job is to close a DOORWAY, so its size is the sheet's own
+    widest ordinary opening — not a constant (24 Aug 2026, Rahul).
+
+    Order, and it is a §0.1 order: DRAWN LEAVES first (p90, so one freak
+    sliding door does not set it), then the PRINTED OPENING SCHEDULE where a
+    sheet draws too few leaves to give a p90 — a printed schedule is drawn data
+    and outranks any default. NEVER our own cut widths: those come out of the
+    mask this seal produces, so deriving from them is circular.
+
+    A sheet with neither is UNDERIVED: it keeps `default_ft` and SAYS SO, so a
+    silent default can never masquerade as a measurement.
+
+    Returns (seal_ft, source). Pure -> unit-tested.
+    """
+    def p90(a):
+        a = sorted(x for x in (a or []) if x and x > 0)
+        return (round(a[int(0.9 * (len(a) - 1))], 2), len(a)) if a else (None, 0)
+    w, n = p90(leaf_widths_ft)
+    if n >= min_n:
+        return w, f"p90 of {n} drawn leaves"
+    sw, sn = p90(schedule_widths_ft)
+    if sn:
+        return sw, f"p90 of {sn} printed schedule widths ({n} drawn leaves < {min_n})"
+    return default_ft, (f"UNDERIVED: {n} drawn leaves and no printed schedule "
+                        f"— keeping the {default_ft} ft default")
+
+
+def door_position_checks(openings, footprint_poly=None, tol_ft=0.35):
+    """B — `doors_placed_sound` extended from WIDTH to POSITION (25 Aug 2026).
+
+    The existing rule scores a cut against the width of its drawn leaf, and a
+    cut can match that width perfectly while sitting on the wrong wall. Three
+    position questions, each answerable from data the opening already carries:
+
+      hinge_on_cut        — is the leaf's measured HINGE on its own cut
+                            opening? It can fail and it did: 6 of 12 before the
+                            20 Aug fix, 12 of 12 after, and nothing pinned it.
+      leaf_inside_plan    — is any part of the leaf outside the building
+                            footprint?
+
+    A THIRD CHECK WAS WRITTEN AND DROPPED: "does the leaf lie in the quadrant
+    the drawn arc sweeps". `swing_area` is COMPUTED FROM the arc and `hinge` /
+    `tip` ARE the arc's two ends, so the test asks whether the arc's endpoints
+    lie in the arc's own bounding box. It read 12/12 and it cannot read
+    anything else. A check that cannot fail is not a check — testing the BUILT
+    leaf against the drawn quadrant needs the leaf the GLB builder makes, which
+    does not exist at this layer.
+
+    ROUTE: all three need the drawn ARC (`hinge`, `tip`, `swing_area`), which
+    only the door-symbol path produces. A sheet whose `meta.route
+    .door_symbol_paths.arc` is 0 reaches NONE of them, and its doors are
+    reported as `not_scorable` rather than as passes — an absent branch is not
+    a green result. Pure -> unit-tested.
+    """
+    def _inside(poly, pt):
+        if not poly:
+            return True                      # no footprint -> not a failure
+        x, y = pt
+        hit = False
+        for i in range(len(poly)):
+            (x0, y0), (x1, y1) = poly[i - 1], poly[i]
+            if (y0 > y) != (y1 > y):
+                if x < x0 + (y - y0) * (x1 - x0) / ((y1 - y0) or 1e-12):
+                    hit = not hit
+        return hit
+
+    res = {"hinge_on_cut": 0, "leaf_inside_plan": 0,
+           "scored": 0, "not_scorable": 0, "outside_plan": []}
+    for o in openings or []:
+        if o.get("type") != "door":
+            continue
+        h, t, fp = o.get("hinge"), o.get("tip"), o.get("footprint")
+        if not (h and t and fp):
+            res["not_scorable"] += 1         # no arc on this sheet's route
+            continue
+        res["scored"] += 1
+        x0, y0, x1, y1 = min(fp[0], fp[2]), min(fp[1], fp[3]), max(fp[0], fp[2]), max(fp[1], fp[3])
+        dx = max(x0 - h[0], 0.0, h[0] - x1)
+        dy = max(y0 - h[1], 0.0, h[1] - y1)
+        if math.hypot(dx, dy) <= tol_ft:
+            res["hinge_on_cut"] += 1
+        mid = ((h[0] + t[0]) / 2.0, (h[1] + t[1]) / 2.0)
+        if all(_inside(footprint_poly, p) for p in (h, t, mid)):
+            res["leaf_inside_plan"] += 1
+        else:
+            res["outside_plan"].append(o.get("id"))
+    return res
+
+
+def _closest_pair(a, b, chunk=512):
+    """Exact closest pair of points between two sets, in bounded memory.
+
+    The whole matrix is what the old code built, and it is what forced the
+    400-point decimation: two 6,700-point components would need a 6700x6700
+    float64 matrix. Chunking the rows gives the same answer at 512 rows at a
+    time, so the cap is not needed. Pure. Returns (dist, point_in_a, point_in_b).
+    """
+    import numpy as np
+    best = None
+    for s in range(0, len(a), chunk):
+        blk = a[s:s + chunk]
+        d = np.linalg.norm(blk[:, None, :] - b[None, :, :], axis=2)
+        k = int(d.argmin())
+        i, j = divmod(k, d.shape[1])
+        if best is None or d[i, j] < best[0]:
+            best = (float(d[i, j]), blk[i], b[j])
+    return best
+
+
 def _footprint_from_walls(wall_mask, seg_px=None, norm_ppx=NORM_PPX,
                           min_frac=FOOTPRINT_MIN_COMP_FRAC):
     """The building footprint, from the OUTER WALL RING (W-1).
@@ -1465,32 +1736,38 @@ def _footprint_from_walls(wall_mask, seg_px=None, norm_ppx=NORM_PPX,
                  255, thick)
         bridges.append(round(dist / norm_ppx, 2))
 
-    # 2) boundary points per component (subsampled: only the nearest PAIR matters)
+    # 2) boundary points per component. THE 400-POINT DECIMATION IS GONE
+    # (22 Aug 2026, Rahul). It read "subsampled: only the nearest PAIR matters"
+    # — but these points are exactly what DECIDES the nearest pair, so keeping
+    # every Nth one moves the bridge to whichever sampled point happened to
+    # survive, and the bridge LENGTH then decides accept-or-reject against
+    # `max_bridge`. Every sheet in the corpus was over the cap: FLOOR PLAN
+    # 1491, GHATIKIA 2101, BRICK WORK 4159, FIRST FLOOR 6719 points in a single
+    # component — 3.7x to 16.8x. Same family as `rooms[:16]`: an absolute cap
+    # on a parsed quantity, invisible to every metric downstream of it.
     pts = []
     for i in keep:
         comp = np.zeros_like(wall_mask)
         comp[lab == i] = 255
         cnts, _h = cv2.findContours(comp, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         p = np.vstack([c.reshape(-1, 2) for c in cnts]) if cnts else np.empty((0, 2))
-        if len(p) > 400:
-            p = p[:: max(1, len(p) // 400)]
         pts.append(p.astype(np.float64))
 
     # 3) Prim's MST over components, weight = distance between closest points
     if len(pts) > 1:
         inside, outside = {0}, set(range(1, len(pts)))
+        _cp = {}          # (i, j) -> closest pair, computed once per component
         while outside:
             best = None                   # (dist, i, j, pi, pj)
             for i in inside:
                 for j in outside:
                     if len(pts[i]) == 0 or len(pts[j]) == 0:
                         continue
-                    d = np.linalg.norm(pts[i][:, None, :] - pts[j][None, :, :],
-                                       axis=2)
-                    k = int(d.argmin())
-                    a, b = divmod(k, d.shape[1])
-                    if best is None or d[a, b] < best[0]:
-                        best = (float(d[a, b]), i, j, pts[i][a], pts[j][b])
+                    cp = _cp.get((i, j))
+                    if cp is None:
+                        cp = _cp[(i, j)] = _closest_pair(pts[i], pts[j])
+                    if best is None or cp[0] < best[0]:
+                        best = (cp[0], i, j, cp[1], cp[2])
             if best is None:
                 break
             dist, _i, j, pa, pb = best
@@ -1996,6 +2273,11 @@ def _door_median_ft(openings):
         if o.get("type") == "door" and o.get("snapped") and o.get("footprint"):
             x0, y0, x1, y1 = o["footprint"]
             widths.append(max(x1 - x0, y1 - y0))
+    # ROUTE: under 5 snapped doors this returns None and every caller falls
+    # back to NOMINAL_DOOR_FT — a different scale source, recorded nowhere.
+    _ROUTE["door_median"] = (f"median of {len(widths)} snapped doors"
+                             if len(widths) >= 5
+                             else f"NONE: only {len(widths)} snapped doors < 5")
     return statistics.median(widths) if len(widths) >= 5 else None
 
 
@@ -2272,6 +2554,17 @@ def _apply_scale_correction(scene):
 
 _DEBUG_MASKS = {}          # instrument only: set DRISHTI_DEBUG_MASK=1
 
+# ROUTE FINGERPRINT (22 Aug 2026, Rahul). Nine absolute FLOORS switch which
+# code path runs, and a floor is worse than a cap: a cap deletes data, a floor
+# reroutes the whole parse, so every number downstream then describes a
+# DIFFERENT ALGORITHM and a run diff can only say "these numbers moved". Six of
+# the nine are already visible in output we emit (meta.source, meta.scale.
+# source, the OCR and anchor warnings, meta.wing, built_up_branch.fired). These
+# three left NO TRACE. Purely additive: nothing here is read back by the parser.
+# ponytail: module-level like _DEBUG_MASKS, so not thread-safe across concurrent
+# parse() calls; make it a threaded parameter if parse ever runs in parallel.
+_ROUTE = {}
+
 
 def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
@@ -2283,6 +2576,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     parallel-line geometry over ALL drawings — the retry for sheets whose real
     walls live on unnamed layers ('0', '6') while a named wall layer carries
     only fragments/decoys (the layers-mode result comes out unhealthy)."""
+    # ROUTE FINGERPRINT for THIS parse (additive; read by nothing here). Seeded
+    # so the shape is CONSTANT across sheets: for a run diff, "this key is
+    # missing" and "this key changed" are different findings, and a branch that
+    # was never reached is itself a route fact worth stating.
+    _ROUTE.clear()
+    _ROUTE.update({"stair_ladder_dedupe": "not reached",
+                   "door_median": "not reached",
+                   "door_symbol_paths": "not reached",
+                   "seal": "not reached"})
     import cv2
     import fitz
     import numpy as np
@@ -2835,7 +3137,91 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # sealed mask used ONLY for wing-grouping + room free-space: bridges wall
     # gaps so a fragmented building is one region and rooms enclose. walls_poly
     # stays from the unsealed `m`, so stairs/open features are never filled.
+    # THE SEAL IS DERIVED FROM THE DRAWING (24 Aug 2026, Rahul), not a
+    # constant. Inputs must be seal-INDEPENDENT or the derivation is circular:
+    # drawn door-layer leaves come straight from the linework, and the printed
+    # opening schedule is text. Our own cut widths are NOT usable — they come
+    # out of the very mask this seal produces.
+    _leaf_w = []
+    try:
+        _lf = []
+        for _d in drawings:
+            if not _is_door_layer(_d["lname"]):
+                continue
+            _r = _d["rect"]
+            _w = max(abs(_r.x1 - _r.x0), abs(_r.y1 - _r.y0)) / ppf
+            if _w >= 1.5:                     # below this it is arc linework
+                _lf.append(((_r.x0 + _r.x1) / 2 / ppf,
+                            (_r.y0 + _r.y1) / 2 / ppf, _w))
+        _g = []                               # one leaf per door symbol
+        for _q in _lf:
+            for _grp in _g:
+                if math.hypot(_q[0] - _grp[0][0], _q[1] - _grp[0][1]) < 3.0:
+                    _grp.append(_q)
+                    break
+            else:
+                _g.append([_q])
+        _leaf_w = [max(_q[2] for _q in _grp) for _grp in _g]
+    except Exception:
+        _leaf_w = []
+    _sched_w = []
+    try:                                      # TG-5, live text then OCR
+        import opening_schedule as _os5
+        _stoks = [{"text": _w[4], "x0": _w[0], "y0": _w[1],
+                   "x1": _w[2], "y1": _w[3]} for _w in page.get_text("words")]
+        _sc = _os5.parse_opening_schedule(_stoks)
+        if not _sc:
+            _sc = _os5.parse_opening_schedule(ocr_words())
+        _sched_w = _os5.door_widths_ft(_sc)     # DOORS ONLY — a window is not
+        #                                         a doorway and cannot size one
+    except Exception:
+        _sched_w = []
+    # BUILT, MEASURED AND NOT WIRED (24 Aug 2026). Deriving the seal from the
+    # sheet's own openings DISPROVED ITSELF the moment it ran on real data:
+    # FLOOR PLAN R-2 98.0 -> 94.6, GHATIKIA 14 rooms -> 1, FIRST FLOOR 19 -> 10
+    # with R-2 96.9 -> 57.1. Reason, and it is the 17 Aug finding measured from
+    # the other side: the drawn leaves are 2.2-3.1 ft on every sheet, so a
+    # leaf-derived seal serves only the BREAK CLOSE job and abandons the
+    # FRAGMENT WELD job that the 4.0 ft kernel is silently also doing. The gap
+    # between this number and 4.0 IS the weld, and it is now visible per sheet.
+    # Reported, never applied: `_SEAL_FT` is unchanged.
+    # THE SEAL SPLIT, SHIPPED (24 Aug 2026, Rahul). One kernel was doing two
+    # jobs, and 17 Aug named the second one wrongly. The two jobs are:
+    #   BREAK CLOSE     — doorways and drafting breaks. Sized from the sheet's
+    #                     own drawn leaves (2.2-3.1 ft on every sheet here).
+    #                     THAT is what this kernel is for, and all it is for.
+    #   OUTER-RING CLOSURE — envelope gaps. ALREADY BUILT and better derived:
+    #                     `_footprint_from_walls` bridges the ring jamb-to-jamb
+    #                     with a RELATIVE bound (each bridge no longer than the
+    #                     wall run it sits in), and rooms already come from
+    #                     `_foot AND NOT m_env`, so the envelope never depended
+    #                     on this kernel — it only looked as if it did.
+    # Measured 24 Aug: going 3.1 -> 4.0 ft moves FLOOR PLAN's outside free space
+    # by TWO sqft (its envelope is already closed) while costing it 111 sqft of
+    # interior. The headroom above a doorway was buying nothing there and
+    # eating rooms.
+    # THE SPLIT WAS BUILT AND IT FAILED ITS OWN PREDICTION (24 Aug 2026).
+    # Predicted before building: FLOOR PLAN recovers the 111 sqft the headroom
+    # eats, and the fragmented sheets keep enclosure because the ring bridger
+    # closes the envelope explicitly. THE SECOND HALF IS FALSE, and the reason
+    # is one line of plumbing: `_footprint_from_walls` is fed `m_env` — the
+    # SEALED mask — so the ring is DOWNSTREAM of the seal, not independent of
+    # it. Shrink the seal and the ring's own input gets gappier, its relative
+    # `max_bridge` rejects the wider spans, and the footprint itself collapses:
+    # GHATIKIA 2647.7 -> 2034.2 sqft and 14 rooms -> 1; FIRST FLOOR 4472.1 ->
+    # 4079.7 and 19 rooms -> 10, rooms_checked 16 -> 9.
+    # FLOOR PLAN's half held only in part: carpet DID rise 1191.1 -> 1328.1,
+    # but R-2 fell 98.0 -> 94.6 — the recovered space is rooms growing past
+    # their printed dimensions, not rooms coming back.
+    # Reverted under standing rule 6. The split is still right; it cannot be
+    # made by moving this number while the ring eats its output.
+    _seal_derived, _seal_src = derived_seal_ft(_leaf_w, _sched_w)
     _SEAL_FT = float(os.getenv("DRISHTI_SEAL_FT", "4") or 0)
+    _ROUTE["seal"] = {"applied_ft": _SEAL_FT, "derived_ft": _seal_derived,
+                      "derived_from": _seal_src,
+                      "status": "REPORTED, NOT APPLIED",
+                      "break_close_headroom_ft": (round(_SEAL_FT - _seal_derived, 2)
+                                                  if _seal_derived else None)}
     m_env = _mask("RECT", 5, 5, seal_ft=_SEAL_FT) if _SEAL_FT > 0 else m
 
     # door clusters are needed BEFORE the wing split: the default wing is the
@@ -2854,8 +3240,29 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # --- wing split: a sheet can hold several separate building blocks; keep
     # ONE per scene (user directive: no overlapping modules). Coordinates stay
     # in the full-sheet frame; meta reports the wing bbox + count. ---
-    wing_groups = _wing_groups(m_env)        # sealed: a fragmented building
-    wing_count = len(wing_groups)            # groups as ONE wing, not slivers
+    # COVER mask for the band rule: every drawn primitive on a non-annotation
+    # layer, at any angle. The terrace hatch that joins neelachala FIRST
+    # FLOOR's two blocks is 19 strokes at exactly 45 degrees, and the wall
+    # reader drops anything that is not horizontal or vertical, so it needs a
+    # raster of its own. Measured 21 Aug: all-layers, non-text and layer-`0`
+    # input sets give the SAME answer there (bridged, 100% of rows), and the
+    # other three sheets resolve to a single wing before the test is reached.
+    _cover = np.zeros((H, W), np.uint8)
+    for _d in drawings:
+        if any(k in _d["lname"] for k in GEOM_SKIP):
+            continue
+        for _it in _d["items"]:
+            if _it[0] == "l":
+                cv2.line(_cover, tp(_it[1].x, _it[1].y),
+                         tp(_it[2].x, _it[2].y), 255, 2)
+            elif _it[0] == "re":
+                _r = _it[1]
+                cv2.rectangle(_cover, tp(_r.x0, _r.y0), tp(_r.x1, _r.y1), 255, 2)
+            elif _it[0] == "qu":
+                cv2.polylines(_cover, [np.array([tp(_q.x, _q.y) for _q in _it[1]],
+                                                np.int32)], True, 255, 2)
+    wing_groups = _wing_groups(m_env, cover=_cover)   # sealed: a fragmented
+    wing_count = len(wing_groups)            # building groups as ONE wing
     wbox_ft = None
     w_idx = 0
     if wing_count > 1:
@@ -3518,7 +3925,18 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                     f"rooms recovered by footprint sealing ({len(rooms)} "
                     "room(s); the outer wall had gaps on this sheet)")
     rooms.sort(key=lambda r: -r["area_sqft"])
-    rooms = rooms[:16]
+    # THE 16-ROOM CAP IS GONE (22 Aug 2026, Rahul). It was an absolute count
+    # sized for a one-plate sheet, applied to a sheet that now holds five flats
+    # on two blocks: neelachala FIRST FLOOR finds NINETEEN rooms and the cap
+    # deleted the three smallest — 34.0, 33.5 and 29.1 sqft — of which the
+    # first two are its two BALCONIES. That is why B-5 read 0.0 there while the
+    # sheet prints `balcony 9'-7" X 4'-0"` twice. Same family as
+    # BORDER_MAXLEN_PT: a constant that is not derived from the drawing will
+    # one day meet a drawing it was not sized for, and it fails SILENTLY
+    # because the survivors all look reasonable.
+    # Rooms are already bounded by a DERIVED floor — `_min_room_px`, the
+    # sheet's own minimum room area — so the cap was a second, blunter filter
+    # on the same thing. FLOOR PLAN finds exactly 16 and is unchanged.
     for k, r in enumerate(rooms):
         r["id"] = f"r{k}"
 
@@ -4203,11 +4621,26 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         _railings = None
 
-    _plot_sqft = None
+    # THE PLOT MUST COME FROM THE DRAWING OR THE USER — NEVER FROM THE
+    # BUILDING (21 Aug 2026, Rahul). The old fallback took `out_w * out_d`
+    # whenever the envelope came from overall-dimension text, i.e. the
+    # BUILDING'S OWN BOUNDING BOX, and `footprint <= plot` — our only physics
+    # check — was then comparing the building to itself. It can only fail that
+    # way if the footprint exceeds its own extent. neelachala FIRST FLOOR read
+    # a "plot" of 2454.4 sqft, which is exactly its 38.2 x 64.2 ft envelope and
+    # exactly the BOTTOM BLOCK's printed 64'-2" x 38'-3": with both blocks kept
+    # the pair would read 182% of a plot that was never a plot, failing a
+    # CORRECT build. Rahul's real figure for that site is 11,500 sqft (39%).
+    # Same class as measuring wall connectivity against a network that contains
+    # the tile grid: the instrument's reference was the thing under test.
+    #
+    # Where the sheet states no plot, plot is UNKNOWN and the check is BLIND —
+    # said out loud on `meta.plot_source`, never quietly passed. A user can
+    # supply it (`corrections.plot_area_sqft`).
+    _plot_sqft, _plot_src = None, "unknown"
     if printed_areas and printed_areas.get("plot_area_sqft"):
         _plot_sqft = round(float(printed_areas["plot_area_sqft"]), 1)
-    elif env_src == "overall_dimension_text":
-        _plot_sqft = round(float(out_w) * float(out_d), 1)
+        _plot_src = "printed_area_statement"
 
     # §12 (19 Aug 2026): a cut must span the DRAWN LEAF, not the strip the ROI
     # close happens to reveal. Six of twelve cuts came out 1.5-1.7 ft against
@@ -4371,7 +4804,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _m = min(_drawn, key=lambda t: math.hypot(t[0] - _cx, t[1] - _cy))
             if abs(_cw - _m[2]) <= _tol:
                 _ok += 1
+        # footprint_poly is still in the UNSHIFTED frame here (the sx/sy
+        # re-origin is applied to `scene["footprint_ft"]` later), while the
+        # openings above are already shifted — so shift it to match.
+        _fpoly = [[p[0] - sx, p[1] - sy] for p in (footprint_poly or [])]
+        _pos = door_position_checks(openings, _fpoly, _tol)
         _doors_sound = {"doors": _n, "sound": _ok, "tol_ft": _tol,
+                        "position": _pos,
                         "drawn_leaves": len(_drawn), "leafless": _leafless,
                         "rule": "a cut with a DRAWN LEAF is sound when its width "
                                 "matches that leaf; a GAP opening has no leaf, so "
@@ -4411,6 +4850,11 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # canvas instrument: the wall extent, the railing-derived bound
             # that grew it, and the resulting raster (px). Reporting only.
             "doors_placed_sound": _doors_sound,
+            # WHICH CODE PATH RAN (22 Aug 2026). Three absolute FLOORS switch
+            # branches with no trace in any output, so two similar drawings can
+            # be parsed by different code and a run diff can only say "these
+            # numbers moved". Read by nothing in the parser.
+            "route": dict(_ROUTE),
             "wall_face_quality": _wall_quality,
             "dimension_anchors": _dim_anchors,
             "open_side_regions": _open_sides,
@@ -4420,6 +4864,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                        "raster_px": [W, H],
                        "pads_px": [pad_x, pad_y, pad_r, pad_b]},
             "plot_sqft": _plot_sqft,
+            # where the plot came from, or "unknown" — the physics check is
+            # BLIND when unknown and says so rather than passing (21 Aug 2026)
+            "plot_source": _plot_src,
             # REGISTRATION for the wall overlay (instrument, Phase 0): how to
             # put a scene coordinate (FEET, origin bottom-left) back onto the
             # rendered page. page_px = (x0_pt + (X_ft + shift) * ppf) * dpi/72,

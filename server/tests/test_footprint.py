@@ -110,15 +110,52 @@ class TestFreeEndpoints:
 def test_footprint_never_exceeds_the_plot(name):
     """PHYSICS (§0.1): a building cannot be larger than its land. This is the
     check that disqualified the fixed-kernel footprint — at a 14 ft seal
-    neelachala FIRST FLOOR came out 2563 sqft on a 2455 sqft plot."""
+    neelachala FIRST FLOOR came out 2563 sqft on a 2455 sqft plot.
+
+    THAT 2455 WAS NEVER A PLOT (21 Aug 2026). `_plot_sqft` used to fall back to
+    `out_w * out_d` — the BUILDING's own envelope — whenever the envelope came
+    from overall-dimension text, so on that sheet the check was comparing the
+    building to itself and could only fail if the footprint exceeded its own
+    bounding box. The 2454.4 is exactly its 38.2 x 64.2 ft extent, and exactly
+    the BOTTOM BLOCK's printed 64'-2" x 38'-3". The plot now comes from the
+    drawing or the user and from nowhere else; where neither states one the
+    check is BLIND and says so (`plan_doctor` raises `plot_area_unknown` as an
+    ask). Rahul's real figure for that site is 11,500 sqft."""
     path = os.path.join(PLANS, name)
     if not os.path.exists(path):
         pytest.skip(f"corpus file not present: {name}")
     with open(path, "rb") as f:
         meta = pdf_vector.parse(f.read())["meta"]
     fp, plot = meta.get("footprint_sqft"), meta.get("plot_sqft")
-    assert fp and plot, "both sheets state a plot; the check must be live"
+    assert fp
+    if not plot:
+        assert meta.get("plot_source") == "unknown", meta.get("plot_source")
+        return                                  # BLIND, and it says so
+    assert meta.get("plot_source") in ("printed_area_statement", "user")
     assert fp <= plot, f"{name}: footprint {fp} sqft on a {plot} sqft plot"
+
+
+def test_a_user_supplied_plot_makes_the_physics_check_live_again():
+    """The plot may come from the drawing or the USER, never from the building.
+    Rahul supplied 11,500 sqft for neelachala FIRST FLOOR, and ground_truth.json
+    is not read at runtime, so there has to be a way in (21 Aug 2026)."""
+    import corrections
+    import plan_doctor
+    scene = {"meta": {"plan_width_ft": 38.2, "plan_depth_ft": 64.2,
+                      "footprint_sqft": 1652.2, "plot_sqft": None,
+                      "plot_source": "unknown",
+                      "scale": {"source": "dimension_text"}},
+             "rooms": [{"id": "r0", "type": "bedroom", "area_sqft": 120}],
+             "openings": [], "walls": []}
+    tags = {i["tag"] for i in plan_doctor.diagnose(scene)["issues"]}
+    assert "plot_area_unknown" in tags          # blind, and said out loud
+    out, info = corrections.apply_corrections(scene, {"plot_area_sqft": 11500})
+    assert out["meta"]["plot_sqft"] == 11500.0
+    assert out["meta"]["plot_source"] == "user"
+    assert "11500" in "".join(info["applied"]).replace(",", "")
+    tags = {i["tag"] for i in plan_doctor.diagnose(out)["issues"]}
+    assert "plot_area_unknown" not in tags      # a REAL check now, and it passes
+    assert "footprint_exceeds_plot" not in tags
 
 
 def test_doctor_fails_a_footprint_above_its_plot():
@@ -371,3 +408,70 @@ class TestWeldVsBreak:
         candidate pairs. Segments a long way apart must never be compared."""
         far = [(0, 0, 10, 0), (500, 500, 510, 500)]
         assert pdf_vector.weld_bridges(far, 4.0) == []
+
+
+def test_closest_pair_is_exact_and_uncapped():
+    """The MST that bridges footprint components used to search a DECIMATED
+    400-point sample of each component's contour (22 Aug 2026, removed). Those
+    points are what DECIDES the nearest pair, and the resulting bridge length
+    is what `max_bridge` accepts or rejects — so subsampling them moves the
+    bridge to whichever sampled point happened to survive. Every sheet in the
+    corpus was over the cap: 1491 / 2101 / 4159 / 6719 points in one component.
+
+    The cap existed because the old code built the whole distance matrix.
+    `_closest_pair` chunks the rows instead, so it is exact at any size."""
+    import numpy as np
+    from pdf_vector import _closest_pair
+    a = np.array([[0.0, 0.0], [10.0, 10.0]])
+    b = np.array([[3.0, 4.0], [100.0, 100.0]])
+    assert abs(_closest_pair(a, b, chunk=1)[0] - 5.0) < 1e-9
+
+    rng = np.random.default_rng(0)                 # bigger than any one chunk
+    A, B = rng.random((1500, 2)) * 100, rng.random((1300, 2)) * 100
+    full = float(np.linalg.norm(A[:, None, :] - B[None, :, :], axis=2).min())
+    assert abs(_closest_pair(A, B)[0] - full) < 1e-9
+    assert abs(_closest_pair(A, B, chunk=7)[0] - full) < 1e-9   # chunk-invariant
+
+
+def test_derived_seal_prefers_drawn_then_printed_then_says_underived():
+    """The seal's source order is a §0.1 order (24 Aug 2026): DRAWN leaves,
+    then the PRINTED opening schedule, then UNDERIVED — never a silent default,
+    and never our own cut widths, which come out of the mask the seal makes.
+
+    The derivation is REPORTED, not applied: on real sheets the drawn leaves
+    measure 2.2-3.1 ft while the working seal is 4.0, and the difference is the
+    FRAGMENT WELD job the same kernel is silently also doing. Wiring it dropped
+    GHATIKIA to 1 room and FIRST FLOOR's R-2 to 57.1."""
+    from pdf_vector import derived_seal_ft
+    ft, src = derived_seal_ft([2.2, 2.5, 3.0, 3.1, 3.2, 7.0])
+    assert (ft, src.split()[0]) == (3.2, "p90")      # p90 drops the freak 7 ft
+    ft, src = derived_seal_ft([2.5, 3.0], [2.5, 3.0, 3.25, 3.75, 7.0])
+    assert ft == 3.75 and "printed schedule" in src  # too few leaves -> schedule
+    ft, src = derived_seal_ft([], None)
+    assert ft == 4.0 and src.startswith("UNDERIVED")  # said, not defaulted
+
+
+def test_the_seal_actually_applied_is_still_the_default():
+    """Guard on the revert: the derivation is reported only."""
+    import os
+    path = os.path.join(PLANS, "FLOOR PLAN.pdf")
+    if not os.path.exists(path):
+        pytest.skip("corpus file not present")
+    with open(path, "rb") as f:
+        seal = pdf_vector.parse(f.read())["meta"]["route"]["seal"]
+    assert seal["applied_ft"] == 4.0
+    assert seal["status"] == "REPORTED, NOT APPLIED"
+    assert seal["derived_ft"] < seal["applied_ft"]
+
+
+def test_schedule_door_widths_exclude_windows_and_ventilators():
+    """A window cannot be a doorway, so it cannot size a doorway derivation
+    (24 Aug 2026). BRICK WORK's schedule reads eight rows and three of them —
+    a ventilator and two windows — were entering its p90 and taking it to
+    6.0 ft where the doors alone give 3.75."""
+    from opening_schedule import door_widths_ft
+    sched = {"D": {"w_ft": 3.75}, "D1": {"w_ft": 3.25}, "D2": {"w_ft": 3.0},
+             "D3": {"w_ft": 2.5}, "SD": {"w_ft": 7.0},
+             "V": {"w_ft": 2.0}, "W": {"w_ft": 5.0}, "W1": {"w_ft": 6.0}}
+    assert door_widths_ft(sched) == [2.5, 3.0, 3.25, 3.75, 7.0]
+    assert door_widths_ft(None) == []

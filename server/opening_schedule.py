@@ -188,3 +188,19 @@ def door_width(schedule, tag, default):
     """Door leaf width for a tag: the sheet's schedule, else `default`. Pure."""
     rec = (schedule or {}).get((tag or "").upper())
     return rec.get("w_ft", default) if rec else default
+
+_DOOR_TAG_RE = re.compile(r"^(SD|D\d?)$")
+
+
+def door_widths_ft(schedule):
+    """Widths of the DOOR rows only, ascending (24 Aug 2026).
+
+    A window or a ventilator cannot be a doorway, so it must never enter a
+    doorway derivation. BRICK WORK's schedule reads eight rows — 2.0, 2.5, 3.0,
+    3.25, 3.75, 5.0, 6.0, 7.0 ft — of which 2.0 is a ventilator and 5.0/6.0 are
+    windows; taking a p90 over all eight gave 6.0 ft where the doors alone give
+    3.75. This module owns the tag vocabulary (`_TAG_RE`), so the filter belongs
+    here rather than in the caller. Pure."""
+    return sorted(v["w_ft"] for t, v in (schedule or {}).items()
+                  if _DOOR_TAG_RE.match(t or "") and v.get("w_ft"))
+

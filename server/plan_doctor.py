@@ -168,9 +168,14 @@ def diagnose(scene):
                    "~3 ft). Re-upload with the true plan width to fix every "
                    "measurement, or the areas/₹ cost will be off.")
     if scale_meta.get("envelope") == "overall_dimension_text":
+        # "Plot size" was the wrong word and it hid the bug beneath it: an
+        # overall dimension measures the BUILDING, and calling it the plot is
+        # what let `footprint <= plot` compare the building to itself
+        # (21 Aug 2026).
         _issue(issues, "ok", "envelope_verified",
-               "Plot size was taken from the architect's own overall dimension "
-               "on the sheet (more trustworthy than raw linework).")
+               "The building's overall size was taken from the architect's own "
+               "overall dimension on the sheet (more trustworthy than raw "
+               "linework). That dimension measures the BUILDING, not the plot.")
 
     # --- PHYSICS: the building cannot be bigger than the land it stands on.
     # Not a warning — a footprint above the plot is impossible, so something in
@@ -240,6 +245,17 @@ def diagnose(scene):
                    f"for the printed figure, and the utility is not in it. The "
                    f"drawing is internally inconsistent here; we have not "
                    f"reconciled it. Which is right?")
+
+    # BLIND, NOT PASSING (21 Aug 2026). Until now an unknown plot silently
+    # skipped the only physics check we have, and worse, `plot_sqft` used to
+    # fall back to the BUILDING's own envelope — so the check compared the
+    # building to itself and could not fail. Say so on the report instead.
+    if fp_sqft and not plot_sqft:
+        _issue(issues, "ask", "plot_area_unknown",
+               f"This sheet states no plot area, so the footprint of "
+               f"{fp_sqft:.0f} sqft cannot be checked against its land — our "
+               "only physics check is BLIND here, not passing. What is the "
+               "plot area?")
 
     if fp_sqft and plot_sqft and fp_sqft > plot_sqft:
         _issue(issues, "fail", "footprint_exceeds_plot",

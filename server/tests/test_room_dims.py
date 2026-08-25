@@ -195,8 +195,34 @@ def test_first_floor_r2_ratchet():
     # a printed, verifiable toilet was DELETED — the room left the SAMPLE
     # instead of lowering the score. A median cannot see a room that stops
     # existing, so the sample size is pinned beside it.
-    assert s and s["rooms_checked"] >= 8
-    assert s["median_match_pct"] >= 96.8, s
+    # RAISED TWICE ON 22 Aug 2026 (Rahul), and the second time the MEDIAN FELL.
+    #   8 -> 14: the second block arriving (the band rule).
+    #  14 -> 16: the 16-room cap removed, which had been deleting three rooms.
+    # The median went 98.4 -> 96.9 as those rooms entered the sample honestly.
+    # A FALLING MEDIAN WITH A RISING SAMPLE IS AN IMPROVEMENT — pre-authorised
+    # by Rahul, because the alternative is a score that stays high by not
+    # looking. `rooms_off` (7 of 16) is what sees the two ~590 sqft blobs.
+    assert s and s["rooms_checked"] >= 16, s
+    assert s["median_match_pct"] >= 96.9, s
+
+
+@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf")),
+                    reason="confidential corpus not present")
+def test_no_absolute_room_cap():
+    """`rooms = rooms[:16]` deleted the three smallest rooms on any sheet that
+    found more (22 Aug 2026). On neelachala FIRST FLOOR — five flats over two
+    blocks — it found NINETEEN and threw away 34.0, 33.5 and 29.1 sqft: BOTH
+    of that sheet's balconies, and a bathroom that matched its printed
+    dimension at 96.9%. A verifiable room was being destroyed silently, and
+    B-5 read 0.0 while the sheet prints `balcony 9'-7" X 4'-0"` twice.
+
+    Rooms are bounded by a DERIVED floor (the sheet's own minimum room area);
+    an absolute count is a second, blunter filter on the same thing."""
+    with open(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf"), "rb") as f:
+        rooms = pdf_vector.parse(f.read())["rooms"]
+    assert len(rooms) > 16, f"the room cap is back: {len(rooms)}"
+    small = sorted(r["area_sqft"] for r in rooms)[:3]
+    assert max(small) < 35.0, small          # the three the cap used to eat
 
 
 @pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "FLOOR PLAN.pdf")),
@@ -213,8 +239,17 @@ def test_floor_plan_r2_sample_is_ratcheted():
 @pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")),
                     reason="confidential corpus not present")
 def test_ghatikia_r2_sample_is_ratcheted():
-    """GHATIKIA's median is 60.1 and is NOT ratcheted (that sheet is two views
-    parsed as one). Its SAMPLE is: losing rooms there must still be visible."""
+    """RE-DERIVED 2026-08-25: sample 14 -> 7, because the sheet's TWO VIEWS are
+    now split and we no longer count the same rooms twice. Expected, not a
+    regression (Rahul).
+
+    The median is still NOT ratcheted, and the split shows why: it moved only
+    60.1 -> 60.7 even though the 541.9 sqft blob that straddled the gutter is
+    GONE (the largest room is now 168.6 sqft). What DID move is what a median
+    cannot show — `worst_match_pct` 0.0 -> 57.2 and `rooms_off` 12 -> 6. The
+    median is held near 60 by this sheet's UNTOUCHED 19% scale error, which is
+    a separate one-variable change."""
     with open(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), "rb") as f:
         s = R.summary(pdf_vector.parse(f.read())["rooms"])
-    assert s["rooms_checked"] >= 14, s
+    assert s["rooms_checked"] >= 7, s
+    assert s["worst_match_pct"] >= 57.2, s     # was 0.0: the blob is gone

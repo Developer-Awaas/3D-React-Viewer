@@ -62,42 +62,78 @@ def test_floor_plan_golden():
 
 
 def test_combined_sheet_golden():
+    """RE-BASELINED 2026-08-25 per §0.1 (Rahul): width 80.0 -> 36.6 ft.
+
+    This sheet draws TWO VIEWS — FIRST FLOOR left, TYPICAL FLOOR (2nd/3rd/4th)
+    right — separated by a vertical gutter. Parsed as one building it measured
+    80.0 x 47.8 ft, which is two ~40 ft plans side by side: every room appeared
+    TWICE at dx ~43.5 ft, and the counts were doubles, not measurements. The
+    old numbers were never wrong about the pixels; they were counting the same
+    building twice.
+
+    The split is the empty-band rule's opposite operation: a group is divided
+    when its interior holds a band with ZERO ink across the full perpendicular
+    extent (`_empty_bands`). Evidence + superseded values:
+    plans/ground_truth.json -> two_views_SPLIT_2026_08_25."""
     from pdf_vector import parse
     c = _counts(parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None))
-    assert c["w"] == pytest.approx(80.0, abs=1.5)
-    assert c["d"] == pytest.approx(47.8, abs=1.5)
+    assert c["w"] == pytest.approx(36.6, abs=1.5)     # was 80.0 = two plans
+    assert c["d"] == pytest.approx(48.2, abs=1.5)     # depth is unchanged
     assert c["doors"] >= 20
     # snapped lowered 15 -> 10: door-strip VALIDATION (23 Jul 2026) demotes
     # oversize/fat strips (>5.5 ft wide or >1.6 ft thick = merged walls, not
     # doors) to unsnapped, so the count now reflects only PLAUSIBLE door cuts.
-    assert c["snapped"] >= 9           # golden: 10/20 plausible
-    assert c["windows"] >= 27          # golden: 27
+    assert c["snapped"] >= 4           # golden: 6/22 (was 10/20 over BOTH views)
+    assert c["windows"] >= 15          # golden: 19 (was 27 over BOTH views)
 
 
 def test_first_floor_default_wing_golden():
-    """The DEFAULT wing pick must now be the REAL floor plan (wing 1), not the
-    tall door-schedule/legend block it used to wrongly pick (which inflated
-    depth to 96.9 ft). Fixed 23 Jul 2026: wings are scored by enclosed ROOMS
-    first, so the actual plan wins even without a door layer."""
+    """RE-BASELINED 2026-08-22 per §0.1 (Rahul): depth 64.167 -> 177.347 ft.
+
+    The old assertion was not a verified observation, it was a misunderstanding
+    written down twice. It pinned ONE of the sheet's two blocks and this test's
+    own docstring called the other "the tall door-schedule/legend block". That
+    was measured false on 21 Aug: the discarded block is the LARGER one —
+    38.2 x 96.9 ft, 2812.1 sqft of footprint, 10 rooms, 31 doors, R-2 96.9 over
+    8 rooms. Rahul ruled 15 Aug that this is ONE BUILDING IN TWO BLOCKS, five
+    flats on one floor, joined at first floor by the terrace slab, and the band
+    rule now keeps both.
+
+    The old figure also called 38'-3" x 64'-2" "the user-confirmed plot". It is
+    the BOTTOM BLOCK's own printed dimension, and reading it as a plot is what
+    made `footprint <= plot` compare the building to itself. The real plot is
+    11,500 sqft (Rahul). Evidence + superseded values: plans/ground_truth.json
+    -> "neelachala FIRST FLOOR.pdf" -> envelope_rebaseline_2026_08_22.
+
+    WIDTH IS UNCHANGED at 38.25 — both blocks are the same width, which is why
+    38'-3" is printed twice on the sheet.
+    """
     from pdf_vector import parse
     c = _counts(parse(_load("neelachala FIRST FLOOR.pdf"), None))
-    # default now matches the user-confirmed plot (38'3" x 64'2"), like wing=1
     assert abs(c["w"] - 38.25) / 38.25 < 0.025
-    assert abs(c["d"] - 64.167) / 64.167 < 0.035
-    assert c["doors"] >= 12            # real plan doors (was 28 from the schedule)
-    assert c["snapped"] >= 6           # golden: 9/16
-    assert c["windows"] >= 15          # golden: 19
+    assert abs(c["d"] - 177.347) / 177.347 < 0.035   # both blocks + the 13.1 ft band
+    assert c["doors"] >= 12            # golden: 54 (23 on the bottom block alone)
+    assert c["snapped"] >= 6           # golden: 28
+    assert c["windows"] >= 15          # golden: 47
 
 
-def test_first_floor_wing1_matches_confirmed_envelope():
-    """THE accuracy anchor: wing 1 is the titled FIRST FLOOR PLAN and the
-    user confirmed the real plot is 38'3\" x 64'2\" (38.25 x 64.167 ft).
-    Parsed size must stay within 2.5%."""
+def test_first_floor_has_exactly_one_wing():
+    """RE-BASELINED 2026-08-22 per §0.1 (Rahul). Was
+    `test_first_floor_wing1_matches_confirmed_envelope`, which pinned "wing 1"
+    to 38.25 x 64.167 ft as "the user-confirmed plot". Both halves of that were
+    wrong: 38'-3" x 64'-2" is the BOTTOM BLOCK's printed dimension, not a plot,
+    and there is no wing 1 to select — the two blocks are one building, so the
+    sheet now yields ONE wing and the `wing=` argument has nothing to choose.
+
+    What is worth pinning is that: the sheet must not go back to offering a
+    sub-block, because picking one silently discarded 63% of the footprint."""
     from pdf_vector import parse
-    c = _counts(parse(_load("neelachala FIRST FLOOR.pdf"), None, wing=1))
-    assert abs(c["w"] - 38.25) / 38.25 < 0.025
-    assert abs(c["d"] - 64.167) / 64.167 < 0.035   # depth incl. chhajja ~65.5
-    assert c["snapped"] >= 4           # golden: 4/12 on this wing
+    raw = _load("neelachala FIRST FLOOR.pdf")
+    a = parse(raw, None)
+    assert a["meta"]["wing"]["count"] == 1
+    b = _counts(parse(raw, None, wing=1))      # no-op: there is only wing 0
+    assert (b["w"], b["d"]) == (_counts(a)["w"], _counts(a)["d"])
+    assert b["snapped"] >= 4           # golden: 28
 
 
 # --- COLUMNS (12 Aug 2026) ---------------------------------------------------
@@ -143,5 +179,76 @@ def test_ghatikia_columns():
     to zero. Pinned because that margin is the only thing keeping them."""
     from pdf_vector import parse
     cols = parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None)["columns"]
-    assert len(cols) == 40
+    # RE-BASELINED 2026-08-25: 40 -> 20. The 40 counted this sheet's TWO VIEWS,
+    # i.e. the same 20 columns twice. The C-4 margin this test exists to guard
+    # is unchanged — it is still the only thing keeping them.
+    assert len(cols) == 20
     assert all(min(c["w"], c["d"]) >= 0.9 * 8 / 12 for c in cols)
+
+
+# --- ROUTE FINGERPRINT (22 Aug 2026) -----------------------------------------
+# Nine absolute FLOORS switch which code path runs. Six are already visible in
+# output (meta.source, meta.scale.source, the OCR/anchor warnings, meta.wing,
+# built_up_branch.fired); THREE left no trace at all, so two similar drawings
+# could be parsed by different code with nothing recording which route each
+# took. Purely additive — the parser reads none of it back.
+def test_route_fingerprint_has_a_constant_shape():
+    """A run diff needs 'this key CHANGED' and 'this key is MISSING' to be
+    different findings, so every branch reports even when never reached."""
+    from pdf_vector import parse
+    m = parse(_load("FLOOR PLAN.pdf"), None)["meta"]
+    assert set(m["route"]) == {"stair_ladder_dedupe", "door_median",
+                               "door_symbol_paths", "seal"}
+
+
+def test_route_fingerprint_separates_the_corpus():
+    """It earns its place immediately: FLOOR PLAN is the ONLY sheet where the
+    arc branch fires (12 arc paths), which is why door swing can be read there
+    and nowhere else; and BRICK WORK hands the symbol grouper NOTHING at all,
+    which is why 15 of its 17 doors are leafless."""
+    from pdf_vector import parse
+    fp = parse(_load("FLOOR PLAN.pdf"), None)["meta"]["route"]
+    bw = parse(_load("BRICK WORK LAYOUT.pdf"), None)["meta"]["route"]
+    assert fp["door_symbol_paths"]["arc"] > 0
+    assert bw["door_symbol_paths"] == {"arc": 0, "line": 0, "leaf_segs_kept": 0}
+    # the ladder de-dupe has ONE caller, on the geometry branch, so a
+    # layers-route sheet must say so rather than silently omitting it
+    assert fp["stair_ladder_dedupe"] == "not reached"
+    ff = parse(_load("neelachala FIRST FLOOR.pdf"), None)["meta"]["route"]
+    assert ff["stair_ladder_dedupe"].startswith("ran ")
+
+
+# --- B: doors_placed_sound EXTENDED TO POSITION (25 Aug 2026) ----------------
+def test_door_position_is_pinned_and_states_its_route():
+    """The width rule scores a cut against its drawn leaf, and a cut can match
+    that width perfectly while sitting on the wrong wall. `hinge_on_cut` is the
+    check that catches it, and it is a real one: 6 of 12 before the 20 Aug fix
+    put the hinge on the drawn symbol's wall line, 12 of 12 after.
+
+    ROUTE (the 24 Aug standing rule): every position check needs the drawn ARC,
+    which only the door-symbol path produces. FLOOR PLAN is the ONLY sheet in
+    the corpus that reaches it — 12 arc paths against 0 on the other three — so
+    this test pins ONE ROUTE and says so. The other sheets report their doors
+    as `not_scorable`, never as passes: an absent branch is not a green result.
+    """
+    from pdf_vector import parse
+    m = parse(_load("FLOOR PLAN.pdf"), None)["meta"]
+    pos = m["doors_placed_sound"]["position"]
+    assert m["route"]["door_symbol_paths"]["arc"] == 12
+    assert pos["scored"] == 12                  # the 12 leafed doors
+    assert pos["not_scorable"] == 4             # the 4 leafless gap openings
+    assert pos["hinge_on_cut"] == 12            # RATCHET: was 6 before 20 Aug
+    # leaf_inside_plan is REPORTED, NOT RATCHETED. Its one miss is o6, the door
+    # onto flat-1's UTILITY, and a utility projects beyond the wall ring by
+    # design (§10.1 / CE-5) — so a leaf outside the footprint is correct there.
+    # Pinning 12/12 would demand a wrong answer.
+    assert pos["leaf_inside_plan"] == 11 and pos["outside_plan"] == ["o6"]
+
+
+def test_sheets_without_arcs_report_not_scorable_never_pass():
+    from pdf_vector import parse
+    for name in ("neelachala FIRST FLOOR.pdf", "BRICK WORK LAYOUT.pdf"):
+        m = parse(_load(name), None)["meta"]
+        assert m["route"]["door_symbol_paths"]["arc"] == 0
+        pos = m["doors_placed_sound"]["position"]
+        assert pos["scored"] == 0 and pos["not_scorable"] > 0
