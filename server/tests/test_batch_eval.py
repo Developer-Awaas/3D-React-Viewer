@@ -95,3 +95,14 @@ class TestCarpetR2Together:
                                   {"carpet_sqft": 100.0, "r2_median": 98.0})
         assert up.split(":")[0] == "REGRESSION"
         assert dn.split(":")[0] == "UNVERIFIED"
+
+
+def test_r2_is_emitted_as_a_quartet_never_a_median_alone():
+    """STANDING RULE (25 Aug 2026, Rahul). The median has hidden a real change
+    three times: a DELETED room left the sample (17 Aug), a MERGED blob matched
+    no printed dimension so it never entered it (22 Aug), and a REMOVED blob
+    moved the median 0.6 while `worst_match_pct` went 0.0 -> 57.2 (25 Aug).
+    A median that cannot move is not evidence of stability."""
+    m = be.parse_metrics({"meta": {}, "openings": [], "rooms": []})
+    for k in ("r2_median", "r2_checked", "r2_off", "r2_worst"):
+        assert k in m, k

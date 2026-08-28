@@ -129,7 +129,13 @@ def parse_metrics(scene):
         # regression, and neither number can show that on its own. See
         # carpet_r2_verdict.
         "carpet_sqft": _carpet_sqft(scene),
-        "r2_median": _r2_median(scene),
+        # R-2 IS A QUARTET, NEVER A MEDIAN ALONE (standing rule, 25 Aug 2026).
+        # Three times the median stayed still while the parse changed under it:
+        # a DELETED room left the sample (17 Aug), a MERGED blob matched no
+        # printed dimension (22 Aug), and a REMOVED blob moved it 0.6 while
+        # `worst` went 0.0 -> 57.2 (25 Aug). A median that cannot move is not
+        # evidence of stability.
+        **_r2_quartet(scene),
         # WHICH CODE PATH RAN — three absolute floors switch branches with no
         # other trace, so a run diff can say "this plan changed ROUTE" rather
         # than only "these numbers moved".
@@ -146,13 +152,19 @@ def _carpet_sqft(scene):
         return None
 
 
-def _r2_median(scene):
+def _r2_quartet(scene):
+    """R-2's four numbers, always together: median, sample size, how many are
+    off, and the worst. Reporting the median alone has hidden a real change
+    three times."""
     try:
         import room_dims
-        return (room_dims.summary(scene.get("rooms", [])) or {}).get(
-            "median_match_pct")
+        s = room_dims.summary(scene.get("rooms", [])) or {}
     except Exception:
-        return None
+        s = {}
+    return {"r2_median": s.get("median_match_pct"),
+            "r2_checked": s.get("rooms_checked"),
+            "r2_off": s.get("rooms_off"),
+            "r2_worst": s.get("worst_match_pct")}
 
 
 def evaluate(plans_dir, ground_truth=None):

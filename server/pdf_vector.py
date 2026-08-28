@@ -1107,6 +1107,55 @@ def _drop_stair_ladders(walls, ppf, warnings, horiz):
     return walls
 
 
+def scale_refit_ratio(rooms, min_sides=8):
+    """§0.1: the dimensions the architect PRINTED outrank any guess we make.
+
+    `_room_dim_scale` votes on room extents between walls and on GHATIKIA that
+    gives 33.69 pt/ft from TWO votes — rightly rejected by the consistency
+    guard, since it would ship a 2.75 ft building. This uses the same printed
+    data seven times over instead: the measured/printed ratio of BOTH SIDES of
+    every room R-2 already matched, 14 samples on 7 rooms there.
+
+    WHEN TO ACT is derived, not chosen. A scale error is SYSTEMATIC, so the
+    deviation from 1.0 must exceed the sample's own SCATTER — otherwise what we
+    are seeing is boundary noise and a multiplier cannot fix it. Measured on
+    the corpus: GHATIKIA |median-1|/stdev = 0.183/0.105 = 1.74, FLOOR PLAN
+    0.005/0.164 = 0.03, neelachala FIRST FLOOR 0.095/0.771 = 0.12. The one
+    sheet with a real scale error stands 14x clear of the nearest other.
+
+    Returns (ratio, info) where ratio is None when no refit is warranted.
+    Pure -> unit-tested.
+    """
+    import statistics
+    rs = []
+    for r in rooms or []:
+        pd = r.get("printed_dim_ft")
+        poly = r.get("polygon_ft")
+        if not pd or not poly or len(pd) < 2:
+            continue
+        xs = [q[0] for q in poly]
+        ys = [q[1] for q in poly]
+        mw, mh = sorted((max(xs) - min(xs), max(ys) - min(ys)))
+        pw, ph = sorted(pd[:2])
+        if pw > 0 and ph > 0:
+            rs += [mw / pw, mh / ph]
+    info = {"sides": len(rs)}
+    if len(rs) < min_sides:
+        info["verdict"] = f"no refit: {len(rs)} side samples < {min_sides}"
+        return None, info
+    med, sd = statistics.median(rs), statistics.pstdev(rs)
+    info.update(median=round(med, 3), stdev=round(sd, 3),
+                signal_to_noise=round(abs(med - 1.0) / sd, 2) if sd else None)
+    # NOT `if not sd or ...`: a stdev of ZERO is a PERFECT scale error, which
+    # is the case that most deserves a refit, not the one to skip.
+    if abs(med - 1.0) <= sd:
+        info["verdict"] = ("no refit: the deviation from 1.0 does not exceed "
+                           "the sample's own scatter — boundary noise, not scale")
+        return None, info
+    info["verdict"] = f"REFIT: ppf x {med:.3f}"
+    return med, info
+
+
 EMPTY_BAND_MIN_FT = 1.0      # noise floor only: the SIGNATURE is emptiness
 #                              across the full extent, not the band's width.
 #                              Measured 25 Aug — the only band in the corpus
@@ -2566,7 +2615,8 @@ _DEBUG_MASKS = {}          # instrument only: set DRISHTI_DEBUG_MASK=1
 _ROUTE = {}
 
 
-def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False):
+def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False,
+          _refit=True):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
     wing: "largest" or an int index - which building wing to build when the
     sheet holds several separate blocks (sorted largest first).
@@ -2584,7 +2634,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     _ROUTE.update({"stair_ladder_dedupe": "not reached",
                    "door_median": "not reached",
                    "door_symbol_paths": "not reached",
-                   "seal": "not reached"})
+                   "seal": "not reached",
+                   "scale_refit": "not reached"})
     import cv2
     import fitz
     import numpy as np
@@ -4903,6 +4954,27 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # NB: the discard pile itself is NOT put in the scene — 2,500 segments is
     # ~200 KB on every /scene response and every Supabase log. /overlay derives
     # it from the PDF on demand (rejected_lines_ft), which is where it is used.
+    # SCALE REFIT (25 Aug 2026, Rahul) — §0.1: the printed room dimensions
+    # outrank the column-box guess, and matching them to rooms needs a parse,
+    # so this is a SECOND PASS, run at most once (`_refit`). Fires only when the
+    # ratio sample is systematic — deviation from 1.0 greater than its own
+    # scatter — which on this corpus is GHATIKIA alone (1.74 against 0.03 and
+    # 0.12). ACCEPTANCE IS NOT R-2: fitting ppf to the printed dims makes R-2's
+    # median ~100 by construction, exactly the circular-p90 trap. The
+    # independent judge is the §10.2 DIMENSION ANCHORS, which read printed
+    # dimension VALUES against detected wall faces and never touch a room label.
+    if _refit and not ppf_hint:
+        _ratio, _rinfo = scale_refit_ratio(rooms)
+        _ROUTE["scale_refit"] = _rinfo
+        # `meta["route"]` was snapshotted from _ROUTE above, so write through
+        scene["meta"]["route"]["scale_refit"] = _rinfo
+        if _ratio:
+            _re = parse(raw, width_ft, wing, ppf_hint=ppf * _ratio,
+                        force_geometry=force_geometry, _refit=False)
+            _re["meta"]["route"]["scale_refit"] = dict(
+                _rinfo, applied_ppf=round(ppf * _ratio, 3), was_ppf=round(ppf, 3))
+            return _re
+
     if footprint_poly:
         scene["footprint_ft"] = [[round(p[0] - sx, 3), round(p[1] - sy, 3)]
                                  for p in footprint_poly]

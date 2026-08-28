@@ -77,14 +77,19 @@ def test_combined_sheet_golden():
     plans/ground_truth.json -> two_views_SPLIT_2026_08_25."""
     from pdf_vector import parse
     c = _counts(parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None))
-    assert c["w"] == pytest.approx(36.6, abs=1.5)     # was 80.0 = two plans
-    assert c["d"] == pytest.approx(48.2, abs=1.5)     # depth is unchanged
-    assert c["doors"] >= 20
+    # RE-DERIVED AGAIN 2026-08-25, and this time it is the SCALE, not the
+    # split: the sheet's own printed room dimensions imply 7.19 pt/ft where the
+    # column box guessed 8.80, so every measurement grows by 8.80/7.19 = 1.224.
+    # Accepted on the INDEPENDENT dimension-anchor instrument (56% -> 69%),
+    # never on R-2, which a scale fitted to printed dims cannot judge.
+    assert c["w"] == pytest.approx(43.9, abs=1.5)     # 36.6 x 1.224
+    assert c["d"] == pytest.approx(58.9, abs=1.5)     # 48.2 x 1.224
     # snapped lowered 15 -> 10: door-strip VALIDATION (23 Jul 2026) demotes
     # oversize/fat strips (>5.5 ft wide or >1.6 ft thick = merged walls, not
     # doors) to unsnapped, so the count now reflects only PLAUSIBLE door cuts.
-    assert c["snapped"] >= 4           # golden: 6/22 (was 10/20 over BOTH views)
-    assert c["windows"] >= 15          # golden: 19 (was 27 over BOTH views)
+    assert c["doors"] >= 15            # golden: 18 (was 22 at the wrong scale)
+    assert c["snapped"] >= 3           # golden: 5/18
+    assert c["windows"] >= 12          # golden: 14
 
 
 def test_first_floor_default_wing_golden():
@@ -198,7 +203,7 @@ def test_route_fingerprint_has_a_constant_shape():
     from pdf_vector import parse
     m = parse(_load("FLOOR PLAN.pdf"), None)["meta"]
     assert set(m["route"]) == {"stair_ladder_dedupe", "door_median",
-                               "door_symbol_paths", "seal"}
+                               "door_symbol_paths", "seal", "scale_refit"}
 
 
 def test_route_fingerprint_separates_the_corpus():

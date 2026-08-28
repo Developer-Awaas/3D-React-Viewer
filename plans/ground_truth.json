@@ -283,6 +283,69 @@
     },
     "untouched": "the 19% scale overestimate (printed room dims imply ppf 7.14 against the column-box 8.80). It comes from the column box, is independent of the extent, and a halved extent is not a reason to touch it. CONFIRMED with Rahul.",
     "other_three_sheets": "IDENTICAL to every decimal: FLOOR PLAN 95.2x29.8, fp 1796.8, R-8 96.5, R-2 98.0 (n=8), doors 16, sound 16/16, M-1 1.06; FIRST FLOOR 38.2x177.3, fp 4472.1, R-2 96.9 (n=16); BRICK WORK 29.6x48.7, fp 1247.1."
+   },
+   "scale_error_REMEASURED_ON_THE_SPLIT_SHEET_2026_08_25": {
+    "status": "MEASURED + PROPOSED. NOTHING BUILT, awaiting Rahul.",
+    "R_2_quartet_today": {
+     "median": 60.7,
+     "rooms_checked": 7,
+     "rooms_off": 6,
+     "worst": 57.2
+    },
+    "the_split_changed_NOTHING_about_the_scale_which_confirms_independence": "side ratios measured/printed: median 0.817 (17 Aug on the unsplit sheet: 0.812), stdev 0.105 (0.106), range 0.745-1.090 (0.73-1.08). Implied ppf median 7.19 (7.14), range 6.56-9.59 (6.45-9.52). The two-views artefact and the scale error were genuinely independent, as ruled.",
+    "WHAT_THE_SCALE_PATH_ACTUALLY_DOES_HERE": "`_room_dim_scale` derives 33.69 pt/ft from TWO agreeing votes; the §0.1 consistency cross-check rejects it against the column box's 8.8 as a 3.8x disagreement and says NEEDS REVIEW. The cross-check is RIGHT to reject it - 33.69 would ship a 2.75 ft building. The fault is the DERIVATION (2 votes from room-extent voting), not the guard.",
+    "A_SCALE_ERROR_IS_ISOTROPIC_AND_THIS_IS_ONLY_MOSTLY_SO": "within a single room the two sides should be off by the SAME factor. Five of seven rooms behave: at ppf 7.19 their side ratios are 0.95-1.02 on BOTH sides. Two do not - dining 1.334/1.246 and one bedroom 0.912/1.214 (spread 0.246). So the 17 Aug 'two diseases' reading SURVIVES, but the boundary disease is now confined to 2 of 7 rooms instead of being general.",
+    "SIMULATED_CORRECTION": {
+     "method": "rescale every measured room area by (8.80/ppf)^2 and re-run room_dims.match_pct. CAVEAT: computed from the room's BBOX, not its polygon, so absolute values differ from the live R-2 (this method reads 68.6 where the parser reads 60.7). Directional, not exact.",
+     "ppf 8.80 (today)": "median 68.6 · worst 57.7 · off 6 of 7",
+     "ppf 7.19 (printed dims)": "median 89.3 · worst 33.7 · off 1 of 7",
+     "ppf 7.14 (17 Aug figure)": "median 87.7 · worst 31.4 · off 1 of 7",
+     "note": "WORST gets WORSE (57.7 -> 33.7) because `dining` goes from slightly over to 33% over. A large net win that costs the worst room - report both, per the quartet rule."
+    },
+    "PROPOSAL": "derive ppf from the R-2 matched pairs themselves - the median measured/printed SIDE ratio over all matched rooms (14 side samples on 7 rooms) - instead of `_room_dim_scale`'s 2-vote room-extent voting. Per §0.1 the printed dimensions outrank the column-box guess, and this uses 7x more of them.",
+    "THE_OBJECTION_I_MUST_RAISE_AGAINST_MY_OWN_PROPOSAL": "IT IS CIRCULAR IN EXACTLY THE WAY THE p90 WAS. If ppf is fitted so the median measured/printed ratio is 1.0, then R-2's MEDIAN becomes ~100 BY CONSTRUCTION and can no longer judge the scale. What survives as a real measurement is R-2's SCATTER - `rooms_off` and `worst_match_pct` - which is not fitted. Any such change must be judged by an INDEPENDENT instrument.",
+    "THE_INDEPENDENT_JUDGE": "the §10.2 DIMENSION-ANCHOR instrument: it compares printed dimension VALUES against distances between detected wall faces, using the `dim` text route, and does NOT read room labels. GHATIKIA reads 29/52 endpoints = 56% today. If 7.19 is the right scale, that number must RISE; if it does not, the scale change is not supported by anything independent and must not ship. THAT is the acceptance test, not R-2's median."
+   },
+   "scale_refit_SHIPPED_2026_08_25": {
+    "what": "ppf 8.80 (column_box_12in, a §C-6 weak anchor) -> 7.189, derived from the sheet's OWN printed room dimensions: the median measured/printed SIDE ratio over every room R-2 matched, 14 samples on 7 rooms. §0.1 - printed data outranks a guess.",
+    "mechanism": "a SECOND PASS. Matching rooms to printed dims needs a parse, so `parse` re-enters itself once with `ppf_hint = ppf x ratio` (`_refit=False` guards it). Reported on meta.route.scale_refit.",
+    "WHEN_IT_FIRES_IS_DERIVED_NOT_CHOSEN": "a scale error is SYSTEMATIC, so the deviation from 1.0 must exceed the sample's own SCATTER. Measured: GHATIKIA |median-1|/stdev = 0.183/0.105 = 1.74; FLOOR PLAN 0.005/0.164 = 0.03; neelachala FIRST FLOOR 0.095/0.771 = 0.12. The one sheet with a real scale error stands 14x clear of the nearest other, and BRICK WORK prints no room dims so it has 0 samples.",
+    "ACCEPTED_ON_THE_INDEPENDENT_TEST_NOT_ON_R_2": "DIMENSION ANCHORS (§10.2) 29/52 = 56% -> 36/52 = 69%. That instrument reads printed dimension VALUES against detected wall faces and never touches a room label, so it is not fitted by this change. R-2 CANNOT judge it: fitting ppf to the printed dims makes R-2's median ~100 by construction - the circular-p90 trap, named in advance.",
+    "R_2_QUARTET_before_after": {
+     "median": "60.7 -> 83.5",
+     "rooms_checked": "7 -> 12",
+     "rooms_off": "6 -> 3",
+     "worst": "57.2 -> 0.0"
+    },
+    "worst_went_DOWN_and_that_is_honest": "the SAMPLE grew by five rooms. `worst` is 0.0 because of ONE room - `stairs`, measured 4.85 x 11.71 against a printed 5.15 x 5.35, sides 0.942 / 2.189. ANISOTROPIC, therefore a MERGE, not scale. Reporting the quartet is what makes this readable; the median alone would have said 60.7 -> 83.5 and hidden it.",
+    "the_correction_is_ISOTROPIC_where_it_should_be": "NINE of the twelve matched rooms now read 0.907-1.036 on BOTH sides. Before the refit, five of seven did not.",
+    "THE_THREE_THAT_RESIST_ARE_THE_RESIDUAL_BOUNDARY_DISEASE_NOT_SCALE": [
+     {
+      "room": "dining 292.9 sqft",
+      "printed": "12.99 x 14.66",
+      "measured": "18.27 x 22.46",
+      "sides": "1.406 / 1.531",
+      "reading": "both sides ~1.4-1.5x -> a MERGE"
+     },
+     {
+      "room": "dining 271.7 sqft",
+      "printed": "11.91 x 13.75",
+      "measured": "19.88 x 20.96",
+      "sides": "1.669 / 1.525",
+      "reading": "both sides ~1.5-1.7x -> a MERGE"
+     },
+     {
+      "room": "stairs 57.1 sqft",
+      "printed": "5.15 x 5.35",
+      "measured": "4.85 x 11.71",
+      "sides": "0.942 / 2.189",
+      "reading": "ONE side correct, the other 2.19x -> anisotropic, a stair run merged along its length. This is the 0.0 worst."
+     }
+    ],
+    "a_SECOND_pass_correctly_does_NOT_fire": "re-running the derivation on the corrected sheet gives median 0.913, stdev 0.326, S/N 0.27 - below 1.0, so no refit. The residual 9% is NOT extractable by a multiplier because the scatter is now dominated by those three merges. The guard behaves exactly as designed.",
+    "what_moved_on_this_sheet": "extent 36.6 x 48.2 -> 43.9 x 58.9 ft, footprint 1161.8 -> 1997.0, rooms 8 -> 14, doors 22 -> 18, windows 19 -> 14, columns 20 (unchanged), M-1 1.15 -> 1.07, carpet 707.4 -> 1428.0.",
+    "other_sheets": "IDENTICAL to every decimal. FLOOR PLAN 95.2x29.8, fp 1796.8, R-8 96.5, R-2 98.0/8/0/90.4, doors 16, sound 16/16, M-1 1.06, anchors 79%. FIRST FLOOR 38.2x177.3, fp 4472.1, R-2 96.9/16/7/0.0, M-1 1.09, anchors 60%. BRICK WORK fp 1247.1, M-1 1.13, anchors 70%.",
+    "goldens_re_derived": "test_combined_sheet_golden w 36.6 -> 43.9, d 48.2 -> 58.9, doors >= 15, snapped >= 3, windows >= 12; test_ghatikia_r2_sample_is_ratcheted rooms_checked >= 12, median >= 83.5, rooms_off <= 3."
    }
   },
   "neelachala FIRST FLOOR.pdf": {
