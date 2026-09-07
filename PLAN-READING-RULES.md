@@ -1161,3 +1161,142 @@ Stated honestly, so nobody expects more from this section than it gives:
 | Date | Change |
 |---|---|
 | 6 Sep 2026 | T-1..T-7 written. Sources: AIA CAD Layer Guidelines (US NCS v3.1), ISO 13567, standard drafting workflow references, RCC column-layout convention (Indian practice). Cross-checked against the ten-sheet corpus. |
+| 7 Sep 2026 | **T-2a MEASURED ON ALL TEN SHEETS: THE JUNCTION GATE IS A REAL SIGNAL AND IT STILL FAILS THE JUDGED CRITERION.** Distance from each clustered candidate to the nearest wall junction, **my numbers** (they are not the ones quoted to me: I measure **known-good columns at p50 0.76 / 0.79 / 10.47 ft and FLOOR PLAN's glyphs at p50 11.20**, not 0.02/0.71 against 6.7/1.75). **The signal is strong where it works: of FLOOR PLAN's 108 non-column-layer candidates only THREE sit within 1.0 ft of a junction - a 97% rejection of the glyphs that defeated both earlier routes.** **But it cannot be applied to the existing columns**: a 1.0 ft gate passes only **17 of 26 on FLOOR PLAN, 10 of 14 on BRICK WORK and 13 of 40 on GHATIKIA**, so gating the layer route would break all three. **And applied ADDITIVELY it still moves every golden sheet: BRICK WORK 15 -> 18, FLOOR PLAN 26 -> 28, GHATIKIA 20 -> 22** - 2 to 3 boxes per sheet sit at a junction, are in C-4's band, and are not already columns. **The criterion is EXACTLY, so A stops here. B and C are not started: both run through A's gate.** Whether those 2-3 are columns we currently MISS is the open question, and it is a question about the golden sheets' own truth, not about the gate | Rahul |
+| 7 Sep 2026 | **RECORDED FOR LATER FROM T-1, BOTH REAL DEFECTS, NEITHER STARTED.** (1) **WE IGNORE LINE WEIGHT ALMOST ENTIRELY** - it is the primary signal in every drafting convention, and heaviest = cut = structure. Nothing in the parser reads stroke width; every wall, column and glyph is judged on geometry alone, which is why a letter and a column have been indistinguishable in three separate attempts. (2) **CHHAJJA IS ABOVE THE CUT PLANE**, so it should be dashed or omitted, never built as cut material - which is the reason it had no business at storey height and the reason it is absent from every model rather than merely mis-sized. **T-1b generalises it: a dashed line inside the envelope is something ABOVE the plane, and it is neither a wall nor a room boundary** | Rahul |
+# M — THE READING METHOD
+
+**Purpose.** Sections 1-12 are a lookup table: sixty rules, each derived from a drawing that broke us. Section T is the theory underneath them. This section is the **method** — how the tool should think when it meets a drawing, so that an unfamiliar convention produces a question rather than a failure.
+
+**The model.** A junior architect does not memorise sheets. They carry a mental model, state what they expect, read, notice where the drawing disagrees, form a hypothesis, and ask when unsure. They get better by being told the answer once, not by being shown the same drawing again.
+
+**Why this section exists.** Every rule in §1-12 cost a session because we read first and reasoned afterwards. The junction test (T-2a, 6 Sep) is the one case where we reasoned first: theory said *look at wall junctions*, the data separated on the first attempt, no tuning and no reverts. The seal, by contrast, cost four sessions of guessing. The difference was the order.
+
+---
+
+## M-1. THE FIVE STEPS
+
+Every reading, in this order. The tool must be able to report each step, not only the result.
+
+### 1. EXPECT
+
+Before reading anything, state what this drawing should contain, from theory alone:
+
+> This is a horizontal section at ~4 ft. I expect: walls **cut** and therefore filled or hatched, heaviest line weight; openings **within** the wall thickness, not holes through it; furniture and fixtures **below** the cut, drawn light; chhajja, lofts and beams **above** the cut, dashed or omitted. Columns placed **before** walls, so at junctions and on a grid. Annotation added **last**, on its own layers, mostly outside the envelope.
+
+This costs nothing and it is the frame every later step is judged against.
+
+### 2. READ
+
+Extract what is actually on the sheet — geometry, fills, line weights, colours, text, layers. **No interpretation at this step.** A census, not a reading.
+
+### 3. COMPARE
+
+Match what was read against what was expected. Three outcomes, and they need different responses:
+
+| Outcome | Meaning | Response |
+|---|---|---|
+| **AS EXPECTED** | The drafter followed convention | Read it |
+| **DIFFERENT** | A convention we have not met | Hypothesise (step 4) |
+| **IMPOSSIBLE** | A building could not be like this | CONTRADICTS — ask (§0.2) |
+
+**M-3a.** The distinction between DIFFERENT and IMPOSSIBLE is the whole value of step 1. A 15.7 ft opening in an external wall on an upper floor is IMPOSSIBLE — a building cannot be open there. A wall drawn as a filled shape is DIFFERENT — unusual to us, entirely normal in practice. We spent two weeks treating the second as a defect.
+
+### 4. HYPOTHESISE
+
+Where the drawing differs, reason from **what the drafter was trying to express**, not from our rule list.
+
+The questions, in order:
+- What does this mark mean *physically* — what would it be on site?
+- Which drafting stage produced it (T-2)?
+- Is it cut, below, or above the plane (T-1)?
+- Does it repeat? A family is material or annotation; a singleton is usually an element.
+- Where is it? Position separates almost everything shape cannot.
+
+**M-4a.** A hypothesis must be **testable on this sheet** before it is adopted. The tool states it, tests it, and reports both — never adopts an untested reading.
+
+**M-4b.** State the hypothesis in the output. "28 strips of 0.93 ft inside filled shapes — probably wall material, not ducts" is a useful thing for a user to see, and it is how a drafting error surfaces.
+
+### 5. ASK
+
+Where the drawing genuinely does not say, ask. Per §0.2, and this is the standing principle:
+
+> **A question to the user is a result, not a failure to measure.**
+
+Ask when: the drawing is silent (balcony railing type, wall height); the drawing is contradictory (CONTRADICTS); or two readings are equally supported and the choice matters (which of two plans to build).
+
+Never ask when the drawing states it. Read the printed figure.
+
+---
+
+## M-2. CONFIDENCE, NOT VERDICTS
+
+Today the tool emits `duct` or `column` with nothing between. A junior architect says *"probably a duct — it's beside the toilet and off the column grid, but I'm not certain."*
+
+**M-2a.** Every classified element carries a confidence and the evidence behind it:
+
+```
+element: duct
+confidence: 0.7
+because: off the column grid (nearest 8.2 ft) · adjacent to a toilet ·
+         0.93 x 1.34 ft, within duct range
+against: same marker as the columns on this sheet
+```
+
+**M-2b.** Confidence is what makes an ASK meaningful. Without it, everything is either certain or invisible, and the tool cannot tell the user which of its readings to check.
+
+**M-2c.** Low confidence on a high-consequence element is an ASK. Low confidence on a piece of furniture is a footnote. Consequence and confidence together decide whether to interrupt the user.
+
+---
+
+## M-3. LEARNING — every answer becomes a rule
+
+**The problem.** Rahul has taught this tool a dozen general facts: railings are 2-3 in steel, columns follow the drawn orientation, a stilt is a different sheet type, blue fill is toilet tile, poché is wall, plot boundaries are the outermost line. Each was a **general fact about Indian residential drawings**, given once. Most exist only in a chat log.
+
+**M-3a — THE RULE.** An answer to an ASK is a general fact until proven otherwise. It is written into this document, with its date and its source, and it is never asked again.
+
+**M-3b.** Record with every learned rule:
+- what was asked, and on which sheet
+- the answer, in the user's words
+- whether it is general (applies to all drawings) or **sheet-specific** (this drafter only)
+- what it changed
+
+**M-3c — SHEET-SPECIFIC ANSWERS ARE NOT RULES.** "The lobby's south wall is missing on this sheet" is a drafting error on one drawing. "A space enclosed on an upper floor cannot have an open side" is a rule. The tool must ask which, or infer it and say which it assumed.
+
+**M-3d.** A learned rule that later fails is a finding, not an embarrassment. Record the failure beside the rule with the sheet that broke it — that is how the 10-inch/5-inch wall assumption became "measure the gap, never assume it."
+
+---
+
+## M-4. WHAT THE TOOL SHOULD SAY WHEN IT IS UNSURE
+
+The output must distinguish four states, and never collapse them:
+
+| State | Meaning | Example |
+|---|---|---|
+| **READ** | The drawing states it | Built-up 1705 sqft, printed |
+| **DERIVED** | We measured it, and it can be checked | Carpet 1370 sqft, from room polygons |
+| **ASSUMED** | We chose a default; the drawing is silent | Wall height 9.84 ft |
+| **UNKNOWN** | We cannot say, and we will not guess | Plot area, no figure printed |
+
+**M-4a.** An ASSUMED value must always show what it assumed and offer the correction. An UNKNOWN must never be filled with a plausible number.
+
+**M-4b.** This is the difference between the two promises Drishti can make. On a sheet that prints enough: *the rooms and walls we report match the drawing*. On a sheet that prints nothing: *this is a faithful reading of the lines, and we cannot confirm the building's size*. The second is honest and still valuable. A number presented without its state turns the first promise into a lie.
+
+---
+
+## M-5. HOW THE TOOL GROWS
+
+**M-5a.** More drawings, not more rules. Each new drawing is read by the method, not matched against a list. Where it differs, the tool hypothesises; where it cannot, it asks; the answer becomes a rule and is never asked again.
+
+**M-5b.** A convention met twice is a rule. A convention met once is a hypothesis with one supporting case. State which.
+
+**M-5c.** The measure of progress is not how many rules exist but **how many questions a new drawing raises**. A drawing that raises three good questions is a better outcome than one that raises none because the tool guessed.
+
+**M-5d.** The tool should be able to say, on any sheet: *here is what I expected, here is what I found, here is where they differ, and here is what I am unsure about.* That report is the product as much as the model is.
+
+---
+
+## M-6. CHANGE LOG
+
+| Date | Change |
+|---|---|
+| 6 Sep 2026 | M-1..M-5 written. The reading method — expect, read, compare, hypothesise, ask — with confidence, learned rules, and the four states of a reported value. Follows section T (drawing theory) and reframes §1-12 as its rule base rather than its method. |
