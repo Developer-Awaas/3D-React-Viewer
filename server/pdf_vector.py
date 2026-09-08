@@ -14,6 +14,9 @@ as footprints + columns. FEET, origin bottom-left, z-up. Scale: dominant
 column box = 12 in, else PPF env, else the width_ft parameter.
 """
 import math
+
+import stairs as _stairs
+import plausibility as _plaus
 import os
 
 import furnish
@@ -85,6 +88,13 @@ def _page_drawings(page):
             elif it[0] == "c":
                 items.append(("c",) + tuple(fitz.Point(p) * mat for p in it[1:]))
         out.append({"layer": d.get("layer"), "lname": _lname(d),
+                    # FILL CARRIED THROUGH (7 Sep 2026). It was dropped here, so
+                    # every consumer that asked `d.get("fill")` silently saw
+                    # None - which is why a column reader extended to accept
+                    # filled shapes was a NO-OP and looked like a clean pass on
+                    # the golden sheets. A rebuilt dict must carry what its
+                    # consumers read, or the absence reads as a negative result.
+                    "fill": d.get("fill"),
                     "rect": (fitz.Rect(d["rect"]) * mat).normalize(), "items": items})
     return out
 
@@ -537,6 +547,146 @@ def enclosed_boxes(segs, min_sqft=2.0, max_sqft=18.0, max_side_ft=6.0, tol=0.12,
     return kept
 
 
+def chhajja_bands(strokes, join_ft=0.35, min_sqft=0.05):
+    """Sunshade bands from the drawn hatch. `strokes` are [((x0,y0),(x1,y1))]
+    in scene feet from the sheet's chhajja layer -> [(x0, y0, x1, y1)].
+
+    A chhajja is drawn as a HATCHED BAND on the outer wall at a window or door
+    (recorded 16 Aug), not as an outline: neelachala FIRST FLOOR carries 403
+    strokes with a median length of 0.40 ft, which group into 42 bands of
+    0.57 ft median depth. So the band is the connected GROUP's bounding box,
+    and 158 ft of stroke becomes 45 sqft of sunshade.
+
+    T-1 places a chhajja ABOVE the cut plane, so it is never cut material: the
+    builder puts it at lintel level as a thin projecting slab, and the plan
+    only ever states its EXTENT. Pure -> unit-tested.
+    """
+    n = len(strokes or [])
+    if not n:
+        return []
+    par = list(range(n))
+
+    def find(i):
+        while par[i] != i:
+            par[i] = par[par[i]]
+            i = par[i]
+        return i
+
+    for i in range(n):
+        for j in range(i + 1, n):
+            if min(math.dist(u, v) for u in strokes[i] for v in strokes[j]) < join_ft:
+                par[find(i)] = find(j)
+    groups = {}
+    for i, sg in enumerate(strokes):
+        groups.setdefault(find(i), []).extend(sg)
+    out = []
+    for pts in groups.values():
+        xs = [q[0] for q in pts]
+        ys = [q[1] for q in pts]
+        b = (round(min(xs), 2), round(min(ys), 2), round(max(xs), 2), round(max(ys), 2))
+        if (b[2] - b[0]) * (b[3] - b[1]) >= min_sqft:
+            out.append(b)
+    return sorted(out)
+
+
+def north_arrow_deg(shapes, n_label=None, plan_boxes=(), min_aspect=2.0,
+                    min_ft=0.5, max_ft=12.0, circles=()):
+    """RUNG 1 OF THE ORIENTATION ANCHOR CHAIN: the bearing the sheet DRAWS.
+
+    `shapes` is [[(x, y), ...]] - CLOSED symbol outlines in scene feet (first
+    point == last). `n_label` is the centre of the sheet's lone "N" glyph, or
+    None. `plan_boxes` are the boxes the building occupies; a north arrow never
+    sits inside one.
+
+    A north arrow is a NARROW SPIKE that stands alone: 3-6 vertices, at least
+    `min_aspect` times longer than it is wide, small, and clear of the plan.
+    The bearing is the direction from the spike's base to its apex - the vertex
+    farthest from the centroid - measured CLOCKWISE FROM SHEET-UP, so 0 means
+    the sheet is already north-up and the plan needs no rotation.
+
+    THE "N" IS REQUIRED, and that is a measurement not a preference. Run on
+    FLOOR PLAN without it, the only surviving spike is a 5.0 ft sliver of the
+    ARCHITRAVE LOGO at (74.3, -10.7) below the sheet, and it reported a
+    confident 81.8 deg. A spike alone is indistinguishable from a leader, a
+    logo edge or a dimension tick; the letter is what makes it a north arrow.
+
+    Returns (deg, why). `deg` is None whenever the sheet does not say so
+    unambiguously. A guessed north is worse than an absent one: every corner
+    room and balcony argument below it in the chain would inherit it silently.
+    Pure -> unit-tested.
+    """
+    # THE COMPASS FORM (7 Sep 2026, Rahul): a near-circular rose with an `N`
+    # beside its needle. `shapes` carries only closed polylines, so a rose was
+    # invisible to the spike test and `Typical Floor Plan - (1st,2nd,3rd)` -
+    # which DOES print one - read None. `circles` is [(cx, cy, radius)] in the
+    # same scene feet. The bearing is centre -> `N`, which is what a compass
+    # MEANS and needs no needle parsing.
+    if n_label is not None:
+        for cx, cy, rad in (circles or []):
+            d = math.hypot(n_label[0] - cx, n_label[1] - cy)
+            # THE `N` MUST SIT NEAR THE RIM, NOT THE CENTRE. Measured 7 Sep:
+            # four sheets place an `N` at 0.16-0.26 radii - essentially AT the
+            # centre, where the bearing is numerically meaningless and the
+            # letter is a TITLE for the rose, not a needle tip. They returned
+            # 0.0, 1.1, 162.9 and 164.6 deg, two of them the SAME DRAWING at
+            # two scales disagreeing by 1.7 deg on a quantity that should be
+            # identical. Only `Typical Floor Plan - (1st,2nd,3rd)` places it at
+            # 0.75 radii, and that is the sheet that demonstrably prints a
+            # compass. A ratio, so it holds at any scale.
+            if rad <= 0 or not (0.4 * rad <= d <= 1.6 * rad):
+                continue
+            deg = math.degrees(math.atan2(n_label[0] - cx,
+                                          n_label[1] - cy)) % 360.0
+            return round(deg, 1), (f"compass rose r={rad:.2f} ft at "
+                                   f"({cx:.1f}, {cy:.1f}) with `N` {d:.2f} ft "
+                                   f"from its centre")
+
+    cands = []
+    for pts in shapes or []:
+        p = list(pts)
+        if len(p) > 1 and p[0] == p[-1]:
+            p = p[:-1]
+        if not (3 <= len(p) <= 6):
+            continue
+        cx = sum(q[0] for q in p) / len(p)
+        cy = sum(q[1] for q in p) / len(p)
+        if any(b[0] <= cx <= b[2] and b[1] <= cy <= b[3] for b in plan_boxes):
+            continue                        # inside the building: not a symbol
+        far = max(range(len(p)),
+                  key=lambda k: (p[k][0] - cx) ** 2 + (p[k][1] - cy) ** 2)
+        apex = p[far]
+        base = [q for k, q in enumerate(p) if k != far]
+        bx = sum(q[0] for q in base) / len(base)
+        by = sum(q[1] for q in base) / len(base)
+        if apex[0] == bx and apex[1] == by:
+            continue
+        # ASPECT ALONG THE SHAPE'S OWN AXIS, never its bounding box: the box of
+        # a spike drawn at 45 deg is nearly square, so a bbox aspect would
+        # reject exactly the sheets whose north is not orthogonal.
+        long_ = math.dist(apex, (bx, by))
+        ux, uy = (apex[0] - bx) / long_, (apex[1] - by) / long_
+        short = 2.0 * max(abs((q[0] - bx) * uy - (q[1] - by) * ux) for q in base)
+        if not (min_ft <= long_ <= max_ft) or short <= 0:
+            continue
+        if long_ / short < min_aspect:
+            continue
+        deg = math.degrees(math.atan2(apex[0] - bx, apex[1] - by)) % 360.0
+        cands.append((deg, (cx, cy), long_))
+    if not cands:
+        return None, "no north-arrow candidate on this sheet"
+    if n_label is None:
+        return None, (f"{len(cands)} spike candidate(s) but no `N` label on the "
+                      f"sheet - a spike alone is not a north arrow")
+    cands.sort(key=lambda c: (c[1][0] - n_label[0]) ** 2
+               + (c[1][1] - n_label[1]) ** 2)
+    d = math.dist(cands[0][1], n_label)
+    if d > 3.0 * cands[0][2]:
+        return None, (f"nearest spike is {d:.1f} ft from the `N` - too far to "
+                      f"be its arrow")
+    return round(cands[0][0], 1), ("spike %.1f ft at (%.1f, %.1f), `N` %.1f ft away"
+                                   % (cands[0][2], cands[0][1][0], cands[0][1][1], d))
+
+
 def _wall_thickness_ft(drawings, ppf):
     """This sheet's own wall thickness: the median measured pair gap. Used
     wherever a tolerance is really "one wall" — never a constant (§0.1)."""
@@ -829,6 +979,8 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
     3-11 in apart overlapping >= 2 ft = a masonry wall. Lines identified as
     dimension lines (text hugging them) never count. Returns the paired
     spans as segments for the normal raster pipeline."""
+    th_min, th_max = 0.25 * ppf, 0.92 * ppf     # 3..11 inch
+    min_ovl = 2.0 * ppf
     H, V = [], []
     for d in drawings:
         if any(k in d["lname"] for k in GEOM_SKIP):
@@ -841,14 +993,29 @@ def _geometry_wall_segs(drawings, ppf, warnings, dim_keys=frozenset()):
                 continue
             dx, dy = b.x - a.x, b.y - a.y
             L = math.hypot(dx, dy)
-            if L < 6 or L > BORDER_MAXLEN_PT:
+            # THE TWELFTH CONSTANT IS GONE (1 Sep 2026, Rahul). This read
+            # `L < 6` - SIX PAGE POINTS, which is 0.12 ft on BRICK WORK and
+            # 1.05 ft on neelachala FIRST FLOOR: the same filter meaning nine
+            # times as much building on one sheet as on another, for no reason
+            # but the scale it happens to be drawn at.
+            #
+            # DERIVED FROM THE PAIRING RULE IN THIS FUNCTION, not from the
+            # page and not from the lengths it filters (26 Aug rule 4: never
+            # derive a SELECTING threshold from a statistic of the population
+            # it selects from - and line length is exactly that population).
+            # Two faces must OVERLAP `min_ovl` to be a wall, so a line shorter
+            # than `min_ovl` can never be a wall face whatever it pairs with:
+            # the floor is provably redundant with a test already made below,
+            # which is why no wall moves on any sheet. `wall_gap_pairs` has
+            # used its own `min_ovl_ft * ppf` this way since July; this is the
+            # same rule, applied at the sixth site the 21 Aug unification
+            # missed.
+            if L < min_ovl or L > BORDER_MAXLEN_PT:
                 continue
             if abs(dy) < 0.5:
                 H.append(((a.y + b.y) / 2, min(a.x, b.x), max(a.x, b.x)))
             elif abs(dx) < 0.5:
                 V.append(((a.x + b.x) / 2, min(a.y, b.y), max(a.y, b.y)))
-    th_min, th_max = 0.25 * ppf, 0.92 * ppf     # 3..11 inch
-    min_ovl = 2.0 * ppf
 
     def pairs(runs, horiz):
         runs = sorted(runs)
@@ -1096,6 +1263,35 @@ def _drop_stair_ladders(walls, ppf, warnings, horiz):
                         if ps[t] - ps[t - 1] >= 0.35 * ppf)
         if rungs >= 4:                      # a stair flight
             used.update(chain)
+            # S-4 says the tread lines are not walls, and MEASURED 1 Sep 2026
+            # the chain's endpoints are not enclosure either: every rung on
+            # every sheet has thickness == 1.00x the ladder's own pitch (26 of
+            # 26 across GHATIKIA's 2 flights and FIRST FLOOR's 3), so the
+            # comment's premise - "the outermost rungs are usually the stair
+            # enclosure walls" - is FALSE. Dropping them anyway was built and
+            # REVERTED: on FIRST FLOOR those two rungs are the only thing
+            # enclosing both stair cores, and without them common area falls
+            # 335.0 -> 40.8 sqft, built-up 4505.9 -> 4291.2, carpet RISES
+            # 3010.1 -> 3195.8 as the stair leaks into it and R-2 falls
+            # 96.9 -> 95.7 - the 24 Aug carpet/R-2 verdict's REGRESSION
+            # signature. It gains GHATIKIA (its 3.22 ft bar across the flight
+            # goes, footprint 1738.4 -> 1720.0) and costs the judged sheet, so
+            # the HARD LINE applies. A fake wall doing an envelope job, the
+            # same shape as the seal. Awaiting Rahul's ruling.
+            # S-6 NEEDS THE DRAWN TREADS, not a room bbox: record the ladder
+            # in the same pt frame `walls` uses. Position, width, count and
+            # pitch of every step are the DRAWING's - the only assumed number
+            # left is the riser, and that is the storey divided by these.
+            _gaps = [ps[t] - ps[t - 1] for t in range(1, len(ps))
+                     if ps[t] - ps[t - 1] >= 0.35 * ppf]
+            _sp = (min(walls[k][1] for k in chain),
+                   max(walls[k][2] for k in chain))
+            _STAIR_LADDERS.append({
+                "horiz": bool(horiz), "treads": rungs + 1,
+                "pitch_pt": float(sorted(_gaps)[len(_gaps) // 2]) if _gaps else 0.0,
+                "along": [float(ps[0] - _gaps[0] / 2.0) if _gaps else float(ps[0]),
+                          float(ps[-1] + (_gaps[-1] / 2.0 if _gaps else 0.0))],
+                "across": [float(_sp[0]), float(_sp[1])]})
             lo, hi = ps[0], ps[-1]
             for k in chain:                 # keep outermost = enclosure walls
                 if walls[k][0] - lo > 0.2 * ppf and hi - walls[k][0] > 0.2 * ppf:
@@ -1107,7 +1303,15 @@ def _drop_stair_ladders(walls, ppf, warnings, horiz):
     return walls
 
 
-def scale_refit_ratio(rooms, min_sides=8):
+SCALE_REFIT_MIN_SIDES = 8    # the eleventh constant; see §12 31 Aug
+
+
+def _apply_scale_guard(scene, refit_info=None):
+    """ONE DEFINITION, in `plausibility.scale_guard` - the ML/raster path needs
+    the same refusal and must not import the parser to get it (2 Sep 2026)."""
+    return _plaus.scale_guard(scene, refit_info, min_sides=SCALE_REFIT_MIN_SIDES)
+
+def scale_refit_ratio(rooms, min_sides=SCALE_REFIT_MIN_SIDES):
     """§0.1: the dimensions the architect PRINTED outrank any guess we make.
 
     `_room_dim_scale` votes on room extents between walls and on GHATIKIA that
@@ -1123,6 +1327,12 @@ def scale_refit_ratio(rooms, min_sides=8):
     0.005/0.164 = 0.03, neelachala FIRST FLOOR 0.095/0.771 = 0.12. The one
     sheet with a real scale error stands 14x clear of the nearest other.
 
+    ROUTE: the sample comes from rooms that already carry a printed dimension,
+    i.e. whatever route fed R-2 on this sheet — live text where the sheet has
+    it (GHATIKIA: 231 tokens, 42 dimension labels), OCR where it does not.
+    A sheet that yields no printed dimensions at all (BRICK WORK) gets no
+    sample and no refit, which is reported rather than defaulted.
+
     Returns (ratio, info) where ratio is None when no refit is warranted.
     Pure -> unit-tested.
     """
@@ -1133,13 +1343,28 @@ def scale_refit_ratio(rooms, min_sides=8):
         poly = r.get("polygon_ft")
         if not pd or not poly or len(pd) < 2:
             continue
+        # THE SINGLE-LABEL FILTER WAS BUILT HERE AND REVERTED (28 Aug 2026).
+        # Excluding merged rooms tightens the sample exactly as predicted —
+        # GHATIKIA goes from 7 rooms / stdev 0.105 / S/N 1.74 to 5 rooms /
+        # stdev 0.045 / S/N 4.35, and R-2 rises 83.5 -> 86.0 — but the
+        # INDEPENDENT judge went the other way: DIMENSION ANCHORS 36/52 = 69%
+        # -> 34/52 = 65%. R-2 cannot arbitrate a scale fitted to the printed
+        # dimensions it scores with, so the anchors decide, and they said no.
+        # `printed_labels_in_room` is still counted and REPORTED on
+        # meta.route.scale_refit, because the merge count is the corrected
+        # discriminator and is worth seeing; it just does not select the sample.
         xs = [q[0] for q in poly]
         ys = [q[1] for q in poly]
         mw, mh = sorted((max(xs) - min(xs), max(ys) - min(ys)))
         pw, ph = sorted(pd[:2])
         if pw > 0 and ph > 0:
             rs += [mw / pw, mh / ph]
-    info = {"sides": len(rs)}
+    _merged = sum(1 for r in (rooms or [])
+                  if r.get("printed_dim_ft") and r.get("printed_labels_in_room", 1) > 1)
+    info = {"sides": len(rs), "rooms": len(rs) // 2, "merged_rooms_in_sample": _merged,
+            "sample": "every matched room; merged rooms are COUNTED, not excluded "
+                      "— excluding them was tried 28 Aug and the dimension "
+                      "anchors fell 69% -> 65%"}
     if len(rs) < min_sides:
         info["verdict"] = f"no refit: {len(rs)} side samples < {min_sides}"
         return None, info
@@ -1208,6 +1433,61 @@ def _empty_bands(cover, bbox, min_ft, norm_ppx=NORM_PPX):
     return out
 
 
+def _band_ink(cover, b1, b2):
+    """Is there ANY drawn ink in the band between two groups? (31 Aug 2026,
+    Rahul.) THE SEPARATOR MUST NOT BE A DISTANCE IN FEET.
+
+    Region separation used to rest on `gap_ft = 8` feet - two groups further
+    apart than that were simply different regions. But feet move with ppf,
+    so GHATIKIA separated for a DIFFERENT REASON on each parse pass: a
+    zero-ink band at ppf 8.80, and mere proximity at 7.189, where every
+    distance in feet is larger. The two passes agreed on TWO REGIONS by
+    coincidence, not by agreement.
+
+    Ink is ink at any scale. A band with nothing drawn in it is a GUTTER
+    between two drawings; a band with anything drawn across it belongs to
+    one drawing. Returns True when the band carries ink, and True when the
+    two bboxes overlap on both axes (there is no band at all, so they cannot
+    be separate regions). Pure.
+    """
+    crop = _band_crop(cover, b1, b2)
+    if crop is None or crop.size == 0:
+        return True                      # no band -> not separable
+    # NOT "is there any ink in the band" - that is too strict, and a single
+    # stray dimension line lying in the gutter would merge two drawings.
+    # The test is the one `_empty_bands` already uses and the one the
+    # ruling names: is there a CLEAN LINE of zero ink running the full
+    # width of the band? `_band_crop` orients the crop so axis 0 runs
+    # ACROSS the band, so an all-zero row is such a line.
+    # A RUN of clean lines at least `EMPTY_BAND_MIN_FT` wide - the SAME
+    # predicate `_empty_bands` uses for the split pass, so the separator
+    # and the splitter can never disagree about whether a gutter exists.
+    import numpy as np
+    clean = ~crop.any(axis=1)
+    need = max(1, int(EMPTY_BAND_MIN_FT * NORM_PPX))
+    run = 0
+    for c in clean:
+        run = run + 1 if c else 0
+        if run >= need:
+            return False                 # a real gutter: separable
+    return True
+
+
+def _band_crop(cover, b1, b2):
+    """The band between two bboxes, or None when they overlap on both axes.
+    Shared by `_band_ink` and `_band_bridged` so the two can never disagree
+    about WHERE the band is. Pure."""
+    if cover is None:
+        return None
+    if b1[3] <= b2[1] or b2[3] <= b1[1]:                 # one above the other
+        lo, hi = (b1, b2) if b1[3] <= b2[1] else (b2, b1)
+        return cover[lo[3]:hi[1], max(lo[0], hi[0]):min(lo[2], hi[2])]
+    if b1[2] <= b2[0] or b2[2] <= b1[0]:                 # side by side
+        lf, rt = (b1, b2) if b1[2] <= b2[0] else (b2, b1)
+        return cover[max(lf[1], rt[1]):min(lf[3], rt[3]), lf[2]:rt[0]].T
+    return None
+
+
 def _band_bridged(cover, b1, b2):
     """THE BAND RULE (§12, 21 Aug 2026, Rahul): an empty band splits a sheet
     only if NOTHING covers it — and the question is what covers it
@@ -1242,7 +1522,7 @@ def _band_bridged(cover, b1, b2):
     return bool(set(lab[0][lab[0] > 0]) & set(lab[-1][lab[-1] > 0]))
 
 
-def _wing_groups(m, gap_ft=8.0, cover=None):
+def _wing_groups(m, gap_ft=8.0, cover=None, report=None):
     """Split the wall mask into spatially separate building wings.
     Returns [(labels_set, bbox_px, area)] sorted largest first.
 
@@ -1295,14 +1575,52 @@ def _wing_groups(m, gap_ft=8.0, cover=None):
             merged = False
             for i in range(len(groups)):
                 for j in range(i + 1, len(groups)):
-                    if not _band_bridged(cover, groups[i][1], groups[j][1]):
-                        continue
+                    # SEPARATE ONLY ON AN EMPTY BAND (31 Aug 2026, Rahul).
+                    # Was `_band_bridged` - merge when a CONNECTED run of
+                    # ink spans the band - which left everything else to be
+                    # decided by the 8 ft proximity stage, a distance in
+                    # FEET that moves with ppf. Now the ink decides: any
+                    # ink in the band and these are one region.
+                    if not _band_ink(cover, groups[i][1], groups[j][1]):
+                        continue                # a true gutter: keep apart
                     a, b = groups[i], groups[j]
+                    # CAPTURE THE BAND BEFORE MERGING - `groups[i]` is replaced
+                    # and `groups[j]` popped on the next lines, so reading them
+                    # afterwards reads the merged box (or raises).
+                    _b1, _b2 = a[1], b[1]
+                    if _b1[3] <= _b2[1] or _b2[3] <= _b1[1]:
+                        _lo, _hi = (_b1, _b2) if _b1[3] <= _b2[1] else (_b2, _b1)
+                        _band = (max(_lo[0], _hi[0]), _lo[3],
+                                 min(_lo[2], _hi[2]), _hi[1])
+                    elif _b1[2] <= _b2[0] or _b2[2] <= _b1[0]:
+                        _lf, _rt = (_b1, _b2) if _b1[2] <= _b2[0] else (_b2, _b1)
+                        _band = (_lf[2], max(_lf[1], _rt[1]),
+                                 _rt[0], min(_lf[3], _rt[3]))
+                    else:
+                        _band = None
+                    # PLAIN ints: these come from cv2 component stats as numpy
+                    # int32, which reaches `meta` and is NOT JSON serialisable -
+                    # it broke two cascade tests before this coercion.
+                    if _band is not None:
+                        _band = tuple(int(v) for v in _band)
                     groups[i] = [a[0] | b[0],
                                  (min(a[1][0], b[1][0]), min(a[1][1], b[1][1]),
                                   max(a[1][2], b[1][2]), max(a[1][3], b[1][3])),
                                  a[2] + b[2]]
                     groups.pop(j)
+                    # WHY it merged, recorded for the region ENUMERATION
+                    # (31 Aug 2026, Rahul). The splitter's job is to enumerate
+                    # regions, never to pick one, so a merge is evidence the
+                    # user is entitled to see - and on FIRST FLOOR the join is
+                    # STRUCTURAL, a terrace carrying a parking count under a
+                    # FAR limit, not decoration.
+                    if report is not None:
+                        # `_band` was captured above, before the merge. Q3:
+                        # FIRST FLOOR's gap is a TERRACE and gets a slab.
+                        report.setdefault("joins", []).append(
+                            {"kept": i, "absorbed": j,
+                             "by": "ink is drawn in the band between them",
+                             "band_px": _band})
                     merged = True
                     break
                 if merged:
@@ -1334,6 +1652,10 @@ def _wing_groups(m, gap_ft=8.0, cover=None):
             if not (side[0] and side[1]):
                 out.append([labs, bb, area])       # nothing either side: keep
                 continue
+            if report is not None:
+                report.setdefault("splits", []).append(
+                    {"axis": "vertical" if axis == 0 else "horizontal",
+                     "by": "a band of zero ink across the region's full extent"})
             for part in (side[0], side[1]):
                 bxs = [cbb[i] for i in part]
                 out.append([set(part),
@@ -1398,15 +1720,41 @@ def is_vector_plan(raw):
 
 
 def _column_rects(drawings):
-    """Square-ish boxes on column layers (hatch strokes share the box bbox,
-    which only reinforces the dominant size)."""
+    """Square-ish boxes that are columns: on a column LAYER, or drawn as a
+    FILLED shape (7 Sep 2026, Rahul).
+
+    Hatch strokes share the box bbox, which only reinforces the dominant size.
+
+    THE LAYER NAME IS NOT THE ONLY ROUTE. Measured 7 Sep, `_column_rects`
+    returned candidates ONLY where a layer was literally named `COLUMN` -
+    BRICK WORK 38, FLOOR PLAN 3,352, GHATIKIA 80, and ZERO on the other six
+    sheets, none of which has a column-ish layer at all. Five of those six draw
+    their structure as POCHE: a filled shape, not an outlined rectangle. That
+    is the third wall convention (outline, poche, and layer-named) arriving in
+    a SECOND reader, four days after it was removed from the first.
+    ADMITTING A FILLED SHAPE WAS BUILT AND REVERTED THE SAME DAY. Once `fill`
+    was carried through `_page_drawings` (it had been dropped, so the first
+    attempt was a silent NO-OP) the route fires - and it breaks the judged set:
+    FLOOR PLAN goes 26 -> 80 columns on 113 square fills that are LETTER
+    GLYPHS at its scale, Typical Floor Plan and First Floor Plan lose their
+    envelope (footprint 1101 -> 785, rooms 9 -> 4), and BRICK WORK and DHAL-02
+    RAISE outright. Aspect and size alone do not separate a column from a
+    glyph. What C-2/C-4 also name and neither attempt used - REPEATING ON A
+    10-20 FT GRID and SITTING ON A WALL JUNCTION - is the discriminator, and
+    it is the next attempt.
+
+    NOT the corner-to-corner X: that was tried the same day and REVERTED
+    because it moved FLOOR PLAN 26 -> 37 columns, admitting square glyph cells
+    from `Text` and `Boundary Limit`, and because GHATIKIA carries 20 columns
+    and ZERO X-marked boxes. The X is one drafter's convention, not the
+    signature."""
     out = []
     for d in drawings:
-        if not _is_column_layer(d["lname"]):
-            continue
         r = d["rect"]
         w, h = r.width, r.height
-        if 0.6 < (w / (h + 1e-6)) < 1.6 and 4 < max(w, h) < 200:
+        if not (0.6 < (w / (h + 1e-6)) < 1.6 and 4 < max(w, h) < 200):
+            continue
+        if _is_column_layer(d["lname"]):
             out.append(r)
     return out
 
@@ -1706,6 +2054,67 @@ def door_position_checks(openings, footprint_poly=None, tol_ft=0.35):
         else:
             res["outside_plan"].append(o.get("id"))
     return res
+
+
+def gap_peaks_in(gaps_in, min_count=8):
+    """The wall-gap histogram's PEAKS, in inches — the sheet's own wall classes.
+
+    Measured 29 Aug 2026: FLOOR PLAN peaks at 5, 10 and 12 in; GHATIKIA at 4,
+    5, 9 and 11; neelachala FIRST FLOOR at 4, 5 and 10; BRICK WORK at 1, 2, 3,
+    6 and 8. THREE OF FOUR SHEETS SHOW THE SAME TWO CLASSES — roughly 4-5 in
+    partitions and 9-11 in external walls — because masonry dimensions are
+    ABSOLUTE and do not scale with anything on the drawing. Pure.
+    """
+    import collections
+    h = collections.Counter(int(round(g)) for g in (gaps_in or []) if g > 0)
+    return sorted(k for k, v in h.items() if v >= min_count)
+
+
+def threshold_margins(gaps_in, thresholds_in, near_frac=0.05, min_count=8,
+                      sizing=()):
+    """NO THRESHOLD MAY SIT ON A CLUSTER (29 Aug 2026, Rahul) — as an
+    instrument rather than a principle.
+
+    The whole ppf cliff reduces to one sentence: `_geometry_wall_segs`'s
+    private 11.04 in ceiling sat ON TOP of GHATIKIA's 11 in external-wall peak
+    (30 pairs at 11 in, 86 at 9 in), so 26 pairs sat within 1% above it and a
+    0.28% scale change moved them across EN MASSE — footprint +28.4%.
+
+    A threshold's distance to the nearest histogram peak is therefore a
+    MEASURABLE SAFETY MARGIN, and one sitting inside a peak is a LATENT CLIFF.
+    Reports, per threshold: the nearest peak, the distance in inches, and how
+    many pairs sit within `near_frac` of the threshold — the population that
+    would cross together.
+
+    `sizing` names the thresholds that MEASURE rather than SELECT. A median
+    wall thickness necessarily lands on its own dominant peak — that is what a
+    median does, not a cliff — and everything derived from it inherits the
+    position. Only a SELECTING threshold (a band edge, admit-or-reject) is a
+    latent cliff when it sits on a cluster. Without this split the instrument
+    cries wolf on every sheet. Pure -> unit-tested.
+    """
+    peaks = gap_peaks_in(gaps_in, min_count)
+    out = []
+    for name, t in (thresholds_in or {}).items():
+        if not t or t <= 0:
+            continue
+        near = min(peaks, key=lambda p: abs(p - t)) if peaks else None
+        d = abs(near - t) if near is not None else None
+        pop = sum(1 for g in gaps_in if abs(g - t) <= near_frac * t)
+        out.append({"threshold": name, "value_in": round(float(t), 2),
+                    "nearest_peak_in": near,
+                    "distance_in": round(float(d), 2) if d is not None else None,
+                    # ON A CLUSTER when the nearest peak is within half an inch
+                    # — half the histogram bin, so "inside the peak itself"
+                    "kind": "sizing" if name in sizing else "selecting",
+                    # a SELECTING threshold on a peak, with a population to
+                    # move, is a latent cliff. A SIZING one is meant to be there
+                    "latent_cliff": bool(name not in sizing and d is not None
+                                         and d <= 0.5 and pop > 0),
+                    "on_a_cluster": bool(d is not None and d <= 0.5),
+                    "pairs_within_5pct": pop})
+    return sorted(out, key=lambda r: (r["distance_in"] is None,
+                                      r["distance_in"]))
 
 
 def _closest_pair(a, b, chunk=512):
@@ -2575,18 +2984,79 @@ def _apply_scale_correction(scene):
     building on a door-width guess, we tell the user to confirm width_ft."""
     m = scene.get("meta", {}) or {}
     scale = m.get("scale", {}) or {}
-    if scale.get("source") not in GUESSED_SCALES:
-        return scene
+    # UNGATED 2 Sep 2026 (Rahul). This used to run only when
+    # `scale.source in GUESSED_SCALES` - ONE sheet of four - which had it
+    # backwards: a door being 2.5-3.5 ft wide is a FACT ABOUT BUILDINGS, not
+    # about how we happened to derive the scale, and a printed dimension can be
+    # misread as easily as a column can be assumed. It is the ONLY plausibility
+    # test that catches a 2x scale error in BOTH directions, and on a sheet
+    # with nothing printed it is the only judge of scale there is.
+    # SECOND CHECK, INDEPENDENT OF THE DOORS: a stair tread is 7-15 in. It
+    # reads EVERY ladder drawn, accepted and rejected - reading only the
+    # accepted ones would be circular, since that list is filtered BY the tread
+    # band and at a 2x scale would come back empty and innocent.
+    _tv, _tmed, _tover = _stairs.tread_scale_check(
+        [L.get("pitch_ft") for L in (m.get("stair_ladders") or [])]
+        + [L.get("pitch_ft") for L in (m.get("stair_ladders_rejected") or [])])
+    scale["tread_median_in"] = _tmed
+    scale["tread_check"] = ("no tread ladder drawn - blind" if _tv is None
+                            else "treads look right" if _tv else
+                            f"treads imply the plan is ~{_tover}x off "
+                            f"(median tread {_tmed} in, real treads are 7-15 in)")
+    if _tv is False:
+        scale["needs_review"] = True
+        scale["tread_implied_oversize"] = _tover
+
+    # THIRD CHECK, AND THE ONLY ONE THAT ESCAPES RULE 4: a room is found by
+    # ENCLOSURE, never by a size band in feet, so unlike the door median and
+    # the measured wall its area is free to come out absurd - and on a
+    # 2x-wrong parse it does. Band and source in `plausibility.py`.
+    _rv, _rmed, _rwhy = _plaus.room_median_check(
+        [r.get("area_sqft") for r in (scene.get("rooms") or [])])
+    m["plausibility"] = {"room_median_sqft": _rmed, "verdict": _rv, "why": _rwhy,
+                         "band_sqft": [_plaus.ROOM_MEDIAN_MIN_SQFT,
+                                       _plaus.ROOM_MEDIAN_MAX_SQFT],
+                         "source": "NBC of India 2016 minimum room areas; "
+                                   "PMAY/RERA 1-BHK carpet minimum"}
+    if _rv is False:
+        scene.setdefault("refusals", []).append(
+            {"code": "rooms_implausible", "message": _rwhy})
+    # FOURTH CHECK, same escape from rule 4: the footprint is a TRACED RING,
+    # not a quantity chosen by a size threshold in feet.
+    # DID WE FIND A BUILDING, OR A CORNER OF ONE? (7 Sep 2026, Rahul). The ink
+    # extent is the drawing's own statement of how big the drawing is, so this
+    # needs nothing printed. DHAL-01 offers a 15.6 x 11.5 ft plan from 88 x 47
+    # ft of ink - 4.3% - and every other sheet reads 41.8-76.1%.
+    _ie = (m.get("canvas") or {}).get("ink_extent_ft")
+    _ink = (_ie[2] - _ie[0]) * (_ie[3] - _ie[1]) if _ie else None
+    _ev, _epct, _ewhy = _plaus.envelope_vs_ink_check(
+        m.get("plan_width_ft", 0) * m.get("plan_depth_ft", 0), _ink)
+    m["plausibility"]["plan_vs_ink_pct"] = _epct
+    m["plausibility"]["plan_vs_ink_why"] = _ewhy
+    if _ev is False:
+        scene.setdefault("refusals", []).append(
+            {"code": "envelope_fragment", "message": _ewhy})
+    _bv, _bsq, _bwhy = _plaus.builtup_check(m.get("footprint_sqft"))
+    m["plausibility"]["builtup_sqft"] = _bsq
+    m["plausibility"]["builtup_why"] = _bwhy
+    if _bv is False:
+        scene.setdefault("refusals", []).append(
+            {"code": "builtup_implausible", "message": _bwhy})
+
     med = _door_median_ft(scene.get("openings", []) or [])
+    scale["door_median_ft"] = round(med, 2) if med is not None else None
     if med is None or 2.2 <= med <= 4.0:
         return scene                             # no doors, or doors look right
     oversize = round(med / NOMINAL_DOOR_FT, 3)   # >1 = scene too big
     k = round(NOMINAL_DOOR_FT / med, 4)          # multiply feet by this to fix
     scale["needs_review"] = True
-    scale["door_median_ft"] = round(med, 2)
     scale["suggested_factor"] = k
     scale["implied_oversize"] = oversize
-    if os.getenv("DRISHTI_AUTOSCALE", "0").lower() in ("1", "true", "yes"):
+    # AUTO-CORRECTION STAYS GATED TO A GUESS. Flagging a verified scale is
+    # right; silently reshaping a building whose scale the sheet PRINTS would
+    # let a door-width guess overrule the drawing's own statement (§0.1).
+    if (scale.get("source") in GUESSED_SCALES
+            and os.getenv("DRISHTI_AUTOSCALE", "0").lower() in ("1", "true", "yes")):
         _rescale_scene_ft(scene, k)
         scale["source"] = f"{scale.get('source')}+door_corrected"
         scale["pt_per_ft"] = round(float(scale.get("pt_per_ft", 0)) / k, 3)
@@ -2612,11 +3082,13 @@ _DEBUG_MASKS = {}          # instrument only: set DRISHTI_DEBUG_MASK=1
 # three left NO TRACE. Purely additive: nothing here is read back by the parser.
 # ponytail: module-level like _DEBUG_MASKS, so not thread-safe across concurrent
 # parse() calls; make it a threaded parameter if parse ever runs in parallel.
+_FLATNO_RE = None            # compiled lazily; `re` is imported per-call site
 _ROUTE = {}
+_STAIR_LADDERS = []      # drawn tread ladders, pt frame; see _drop_stair_ladders
 
 
 def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=False,
-          _refit=True):
+          _refit=True, _pass=1):
     """Vector PDF bytes -> canonical scene dict. Raises ValueError if unusable.
     wing: "largest" or an int index - which building wing to build when the
     sheet holds several separate blocks (sorted largest first).
@@ -2631,11 +3103,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # missing" and "this key changed" are different findings, and a branch that
     # was never reached is itself a route fact worth stating.
     _ROUTE.clear()
+    _STAIR_LADDERS.clear()
     _ROUTE.update({"stair_ladder_dedupe": "not reached",
                    "door_median": "not reached",
                    "door_symbol_paths": "not reached",
                    "seal": "not reached",
-                   "scale_refit": "not reached"})
+                   "scale_refit": "not reached",
+                   "wing_pick": "not reached (single wing)"})
     import cv2
     import fitz
     import numpy as np
@@ -3312,17 +3786,22 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             elif _it[0] == "qu":
                 cv2.polylines(_cover, [np.array([tp(_q.x, _q.y) for _q in _it[1]],
                                                 np.int32)], True, 255, 2)
-    wing_groups = _wing_groups(m_env, cover=_cover)   # sealed: a fragmented
+    def _ft_box(wb):
+        """A wing/region bbox in raster px -> feet, UNSHIFTED (the sx/sy
+        re-origin does not exist yet here)."""
+        return ((wb[0] - pad_x) / NORM_PPX,
+                d_ft - (wb[3] - pad_y) / NORM_PPX,
+                (wb[2] - pad_x) / NORM_PPX,
+                d_ft - (wb[1] - pad_y) / NORM_PPX)
+
+    _region_report = {}
+    wing_groups = _wing_groups(m_env, cover=_cover,
+                               report=_region_report)   # a fragmented
     wing_count = len(wing_groups)            # building groups as ONE wing
     wbox_ft = None
     w_idx = 0
     if wing_count > 1:
         if wing == "largest":
-            def _ft_box(wb):
-                return ((wb[0] - pad_x) / NORM_PPX,
-                        d_ft - (wb[3] - pad_y) / NORM_PPX,
-                        (wb[2] - pad_x) / NORM_PPX,
-                        d_ft - (wb[1] - pad_y) / NORM_PPX)
             # score every wing by (enclosed ROOMS, doors, area). Rooms are the
             # strongest 'this is the floor plan' signal — a section/detail block
             # or a door SCHEDULE (many door symbols, NO rooms) has none, so
@@ -3338,6 +3817,59 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                 pockets = _wing_room_pockets(m_env, g[1], _min_room_px)
                 scores.append((pockets, dsc, g[2]))
             w_idx = max(range(wing_count), key=lambda i: scores[i])
+            # THE PICK MUST BE ANNOUNCED (28 Aug 2026, Rahul). On a sheet
+            # holding two near-identical views this score is nearly TIED, and a
+            # 0.3% ppf change was measured swapping which view gets built —
+            # GHATIKIA builds its RIGHT view at ppf 7.15 and its LEFT at 7.13,
+            # 7.17 and 7.19. Every number on the sheet then describes a
+            # DIFFERENT DRAWING, and nothing in any output said so. A magnitude
+            # error can be measured; an IDENTITY swap cannot.
+            _order = sorted(range(wing_count), key=lambda i: scores[i],
+                            reverse=True)
+            _win, _run = scores[_order[0]], (scores[_order[1]]
+                                             if wing_count > 1 else None)
+            # THIN when ONE ROOM OR ONE DOOR WOULD FLIP THE PICK. That is not
+            # an invented tolerance — the unit IS a room and a door, and the
+            # measured failure is exactly a one-unit swing: GHATIKIA scores
+            # 9 rooms / 14 doors against 8 / 13, and at ppf 7.15 the order
+            # reverses. The tie is REPORTED, never resolved (§0.2).
+            _dr = (_win[0] - _run[0]) if _run else None
+            _dd = (_win[1] - _run[1]) if _run else None
+            _thin = bool(_run and _dr <= 1 and _dd <= 1)
+            # INDEX IS NOT IDENTITY (28 Aug 2026, Rahul + the scorecard
+            # session). At ppf 7.150 GHATIKIA builds its RIGHT view — bbox
+            # x 53.6-96.7 instead of -0.2-43.0 — while `wing.index` stays 0 and
+            # `count` stays 2, and it FLICKERS: right at 7.1485 and 7.1500,
+            # left either side. Footprint moves under 1% across a swap that
+            # built the opposite half of the sheet, so NO NUMERIC INSTRUMENT
+            # CAN SEE IT. The bbox ORIGIN is what identifies which half was
+            # built, and two sessions must not disagree about that.
+            _obx = _ft_box(wing_groups[w_idx][1])
+            _ROUTE["wing_pick"] = {
+                "chosen": w_idx, "of": wing_count,
+                "origin_ft": [round(float(_obx[0]), 1), round(float(_obx[1]), 1)],
+                "bbox_ft": [round(float(v), 1) for v in _obx],
+                "score": {"rooms": _win[0], "doors": _win[1],
+                          "area_px": int(_win[2])},
+                "runner_up": ({"wing": _order[1], "rooms": _run[0],
+                               "doors": _run[1], "area_px": int(_run[2]),
+                               "origin_ft": [round(float(v), 1) for v in
+                                              _ft_box(wing_groups[_order[1]][1])[:2]]}
+                              if _run else None),
+                "margin": ({"rooms": _dr, "doors": _dd} if _run else None),
+                "near_tie": _thin,
+                "rule": "wings are scored by enclosed rooms, then doors, then area",
+            }
+            if _thin:
+                warnings.append(
+                    f"§0.2 ASK: wing {w_idx} beat wing {_order[1]} by only "
+                    f"{_dr} room(s) and {_dd} door(s) ({_win[0]}/{_win[1]} vs "
+                    f"{_run[0]}/{_run[1]}). ONE ROOM OR ONE DOOR WOULD SWAP "
+                    "WHICH DRAWING EVERY NUMBER ON THIS SHEET DESCRIBES, and a "
+                    "0.3% change in scale was measured doing exactly that. If "
+                    "this sheet holds two views of the same plan there is no "
+                    "basis in the drawing to prefer one. Which view do you want "
+                    "measured?")
             if w_idx != 0:
                 warnings.append(
                     f"wing auto-pick: wing {w_idx} is the floor plan "
@@ -3762,15 +4294,52 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # balcony -> outside. See _footprint_from_walls for why the ring is bridged
     # rather than dilated.
     footprint_sqft, footprint_poly = None, []
-    _seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct]
+    # WING-FILTERED (31 Aug 2026). `_footprint_from_walls` is handed these
+    # segments to bridge the outer ring jamb-to-jamb, and they were built
+    # from ALL of `struct` with NO wing filter - so on a multi-wing sheet
+    # the ring reached into the view we did NOT build. Every mask is cropped
+    # to the wing bbox; this was the one input that was not.
+    #
+    # Seen in the overlay before it was measured: GHATIKIA's `footprint_ext`
+    # runs diagonally across the gutter to a column in the discarded view,
+    # and a door is drawn there. Its footprint spanned x 0.0..53.7 while the
+    # built wing ends at 43.7 - ten feet of footprint in another drawing.
+    #
+    # `fx`/`fy` are used, not a hand-rolled conversion: `wbox_ft` is in the
+    # UNSHIFTED feet frame those two produce, and the sx/sy re-origin does
+    # not exist yet at this point in `parse`.
+    # `_in_wing` is a no-op when `wbox_ft is None`, so a single-wing sheet is
+    # untouched BY CONSTRUCTION - FLOOR PLAN, FIRST FLOOR and BRICK WORK all
+    # parse to one wing.
+    def _seg_in_wing(ax, ay, bx, by):
+        (px0, py0), (px1, py1) = tp(ax, ay), tp(bx, by)
+        return _in_wing(fx((px0 + px1) / 2.0), fy((py0 + py1) / 2.0), pad=2.0)
+
+    _seg_px = [(*tp(ax, ay), *tp(bx, by)) for ax, ay, bx, by in struct
+               if _seg_in_wing(ax, ay, bx, by)]
     _foot, _bridges, _rejected, _foot_ext, _rej_lines = _footprint_from_walls(
         m_env, seg_px=_seg_px)
+    # THE THIRTEENTH CONSTANT (2 Sep 2026, Rahul). The outline simplification
+    # ran at a FIXED 2.0 raster px = 0.039 ft, which is 0.05x to 0.16x of each
+    # sheet's own measured wall (0.83 / 0.83 / 0.42 / 0.33 / 0.25 ft across the
+    # corpus). A TOLERANCE FINER THAN A WALL CANNOT REMOVE STEPS SHORTER THAN A
+    # WALL - it was preserving the raster noise by construction, and outline
+    # noise read 36-61% of corners on every sheet we have ever parsed,
+    # including the cold one none of our constants had seen.
+    #
+    # W/2 is the same reading already used for `face_tol`: past half a wall you
+    # are at the other face, so a step under that cannot be a real corner.
+    # The floor of 2.0 px keeps the old behaviour on a sheet whose wall we
+    # cannot measure. THIS CHANGES SHAPE ONLY, NEVER AREA: `footprint_sqft` is
+    # the PIXEL COUNT of `_foot`, not the polygon's area.
+    _eps_px = max(2.0, 0.5 * (_wall_thickness_ft(drawings, ppf) or 0.0) * NORM_PPX)
     footprint_ext_poly = []
     if _foot is not None:                     # outline, for the wall overlay
         _fc, _fh = cv2.findContours(_foot, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
         if _fc:
-            _fp = cv2.approxPolyDP(max(_fc, key=cv2.contourArea), 2.0, True)
+            _fp = cv2.approxPolyDP(max(_fc, key=cv2.contourArea),
+                                   _eps_px, True)
             footprint_poly = [[fx(int(p[0][0])), fy(int(p[0][1]))] for p in _fp]
     # INSTRUMENT (measurement only): the EXTENDED ring — the ring closed across
     # the rejected open faces. Balcony area is currently `ext MINUS foot`, so
@@ -3780,7 +4349,8 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _ec, _eh = cv2.findContours(_foot_ext, cv2.RETR_EXTERNAL,
                                     cv2.CHAIN_APPROX_SIMPLE)
         if _ec:
-            _ep = cv2.approxPolyDP(max(_ec, key=cv2.contourArea), 2.0, True)
+            _ep = cv2.approxPolyDP(max(_ec, key=cv2.contourArea),
+                                   _eps_px, True)
             footprint_ext_poly = [[fx(int(q[0][0])), fy(int(q[0][1]))] for q in _ep]
     rooms, rlab = [], None
     if _foot is not None:
@@ -3814,6 +4384,20 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _bals = []
         _kinds0 = printed_open_widths()
         for _r in _rail_runs_raw:
+            # WING-FILTERED AT THE CONSUMER (31 Aug 2026). `_rail_runs_raw`
+            # is traced BEFORE the wing split, and must be: it sizes the
+            # canvas, which has to cover the whole sheet. But the BALCONY
+            # builder is a consumer that must respect the built wing, and it
+            # did not - GHATIKIA's right view is a mirror of its left, so a
+            # mirrored run at dx ~53.3 ft became a 20.0 sqft balcony ROOM at
+            # x 57.7-60.8, in a drawing we did not build.
+            # `_rf` is translation-only and y-DOWN, so y flips to compare
+            # against `wbox_ft`, which is y-UP.
+            _pk0 = _r.get("pocket_ft")   # the SAME value the loop uses below
+            if _pk0 and not _in_wing((_pk0[0] + _pk0[2]) / 2.0,
+                                     d_ft - (_pk0[1] + _pk0[3]) / 2.0,
+                                     pad=2.0):
+                continue
             if _rail0.classify(_r, _pw0) != "railing":
                 continue
             _kind, _mw = _rail0.matched_kind(_r, _kinds0)
@@ -3931,8 +4515,76 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                             _gaps.append(_g)
                             break
         _wall_ft = (sorted(_gaps)[len(_gaps) // 2] if _gaps else None)
+        # BOUNDARY PROVENANCE (5 Sep 2026, Rahul). `enclosed_boxes` finds a
+        # CLOSED RECTANGLE in the linework, and on a sheet that draws its walls
+        # as solid POCHE the outline of the wall material is exactly that - so
+        # we traced the wall and called the material a shaft (30, 30 and 31
+        # bogus ducts on three sheets, 82% of their "rooms").
+        #
+        # A real shaft is bounded by faces of SEVERAL DIFFERENT WALL RUNS; a
+        # poche box is the boundary of ONE FILLED SHAPE. That is the signal,
+        # and it is the only one left: width, pairing, hatch-proximity and
+        # wall-containment were each measured and each deletes FLOOR PLAN's two
+        # real ducts (a real duct is a void RINGED by wall, so it reads solid
+        # by design - §4 D-5).
+        #
+        # Filtered at the CONSUMER, so `enclosed_boxes` stays pure and the
+        # fills are evidence added beside it rather than a new rule inside it.
+        # Frame: raw feet WITHOUT the wing shift, matching `_seg_ft` above.
+        _fill_polys = []
+        try:
+            from shapely.geometry import Polygon as _Poly
+            _fmat = page.rotation_matrix
+            for _d in page.get_drawings():
+                if _d.get("fill") is None:
+                    continue
+                _pts = []
+                for _it in _d["items"]:
+                    if _it[0] == "l":
+                        _pts += [fitz.Point(_it[1]) * _fmat, fitz.Point(_it[2]) * _fmat]
+                    elif _it[0] == "re":
+                        _R = (fitz.Rect(_it[1]) * _fmat).normalize()
+                        _pts += [fitz.Point(_R.x0, _R.y0), fitz.Point(_R.x1, _R.y0),
+                                 fitz.Point(_R.x1, _R.y1), fitz.Point(_R.x0, _R.y1)]
+                    elif _it[0] == "qu":
+                        _pts += [fitz.Point(_q) * _fmat for _q in _it[1]]
+                if len(_pts) < 3:
+                    continue
+                try:
+                    _g = _Poly([((_q.x - x0) / ppf, d_ft - (_q.y - y0) / ppf)
+                                for _q in _pts]).buffer(0)
+                except Exception:
+                    continue
+                if _g.area > 0.02:
+                    _fill_polys.append(_g)
+        except Exception:
+            _fill_polys = []
+
+        def _is_poche(_b):
+            """Is this box the outline of a filled shape rather than a void?
+
+            MEASURED 5 Sep on five sheets: the overlap between a box and the
+            single filled shape it sits in reads 50.0-50.3% on the three sheets
+            that draw poche and 0.0-0.6% on FLOOR PLAN and BRICK WORK, whose
+            two real ducts each survive. The threshold sits in a 49-point empty
+            band, which is the cluster rule satisfied by a wide margin."""
+            if not _fill_polys:
+                return False
+            try:
+                from shapely.geometry import box as _bx
+                _g = _bx(_b[0], _b[1], _b[2], _b[3])
+                _a = _g.area or 1e-9
+                return any(_g.intersection(_f).area / _a >= 0.25
+                           for _f in _fill_polys)
+            except Exception:
+                return False
+
         _ducts = []
+        _poche_rejected = 0
         for _b in enclosed_boxes(_seg_ft, wall_ft=_wall_ft):
+            if _is_poche(_b):
+                _poche_rejected += 1
+                continue                       # wall material, not a shaft
             _cx, _cy = (_b[0] + _b[2]) / 2.0, (_b[1] + _b[3]) / 2.0
             # A duct INSIDE a larger room is still a duct (17 Aug 2026): a
             # void is not a room and containment must not suppress it. The
@@ -4613,9 +5265,18 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             _live_toks.append({"text": _w[4], "x0": _r.x0, "y0": _r.y0,
                                "x1": _r.x1, "y1": _r.y1, "conf": 100})
         printed_areas = area_compare.parse_area_statement(_live_toks)
+        # A PRINTED AREA STATEMENT NEED NOT BE A TABLE (2 Sep 2026, Rahul).
+        # Patrapada's sheets print `B.U.A=1129.27 sq.ft.` as live text INSIDE
+        # the drawing beside each flat, with no header and no columns - so the
+        # table reader returned None and two FULLY INSTRUMENTED sheets read as
+        # blind, R-8 among them. Tried second, never first: where a table
+        # exists it is the stronger evidence.
+        if not printed_areas:
+            printed_areas = area_compare.parse_free_text_areas(_live_toks)
         _dead_text = len(_live_toks) < 50
         if not printed_areas and (_dead_text or "t" in _ocr_cache):
-            printed_areas = area_compare.parse_area_statement(ocr_words())
+            printed_areas = (area_compare.parse_area_statement(ocr_words())
+                             or area_compare.parse_free_text_areas(ocr_words()))
         if printed_areas:
             _bits = []
             if printed_areas.get("built_up_total_sqft"):
@@ -4654,6 +5315,23 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                   if it[0] == "l"
                   and math.hypot(it[2].x - it[1].x, it[2].y - it[1].y) / ppf >= 0.8]
         _wl = [(_ftp(g[0], g[1]), _ftp(g[2], g[3])) for g in struct]
+        # WING-FILTERED, same cause as `_seg_px` and the second consumer of
+        # it (31 Aug 2026): `trace` was fed lines from the WHOLE SHEET, so
+        # on a multi-wing sheet it traced the DISCARDED view's runs too.
+        # GHATIKIA's come in mirrored pairs at dx ~53.3 ft, and one of the
+        # right view's was classified `railing` and became a 20.0 sqft
+        # BALCONY ROOM at x 57.7-60.8 - a room in a drawing we did not
+        # build. Filtering the INPUT lines, not the output runs, so a
+        # cross-view run can never be assembled in the first place.
+        # `_ftp` output is SHIFTED by sx/sy; `_in_wing` wants the unshifted
+        # frame, hence the + sx / + sy.
+        def _rl_in_wing(seg):
+            (ax, ay), (bx, by) = seg
+            return _in_wing((ax + bx) / 2.0 + sx, (ay + by) / 2.0 + sy,
+                            pad=2.0)
+
+        _lines = [q for q in _lines if _rl_in_wing(q)]
+        _wl = [q for q in _wl if _rl_in_wing(q)]
         _railings = _rail.trace(_lines, _wl)
         _pw = printed_balcony_widths()
         _railings["printed_widths_ft"] = _pw
@@ -4805,6 +5483,196 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         _wall_quality = None
 
+    # AN UNSNAPPED DOOR IS NOT A DOOR (31 Aug 2026, Rahul). `snapped` means
+    # the strip finder placed the opening on an actual gap in the wall; an
+    # UNSNAPPED one is a tag we read and could not place, and emitting it as
+    # a door is a wrong number presented as fact, which §0 forbids.
+    # neelachala FIRST FLOOR was emitting 26 of 54 that way, and building
+    # every one of them in 3D at an unverified position.
+    #
+    # They are KEPT in `openings` so they stay visible and countable - the
+    # drawing does say a door is somewhere near there - but retyped, which
+    # removes them from every `type == "door"` count in one move, and from
+    # the 3D leaf. `scene_to_glb` drops them before `poly_bands` so they cut
+    # no wall either: a cut at an unverified position is the same claim as a
+    # leaf at one.
+    for _o in openings:
+        if _o.get("type") == "door" and not _o.get("snapped"):
+            _o["type"] = "door_unverified"
+            _o["unverified"] = True
+    _nunv = sum(1 for _o in openings if _o.get("unverified"))
+    if _nunv:
+        warnings.append(
+            f"{_nunv} door tag(s) could not be placed against a wall gap and "
+            "are reported as UNVERIFIED: they are not counted as doors and "
+            "are not built in 3D. The drawing says a door is near each of "
+            "them; we cannot say where.")
+
+    # REGION ENUMERATION (31 Aug 2026). Emission only - read by nothing.
+    _regions = []
+    try:
+        _TITLE = ("PLAN", "FLOOR", "TERRACE", "STILT", "BASEMENT",
+                  "TYPICAL", "GROUND", "PARKING", "ROOF")
+        _tt = []
+        for _t in (_live_toks or []):
+            _u = (_t.get("text") or "").upper()
+            if any(_k in _u for _k in _TITLE):
+                _tt.append((( _t["x0"] + _t["x1"]) / 2.0,
+                            (_t["y0"] + _t["y1"]) / 2.0, _t["text"]))
+        for _i, _g in enumerate(wing_groups):
+            _bx = _ft_box(_g[1])
+            _near = sorted(
+                ((abs((_x - x0) / ppf - (_bx[0] + _bx[2]) / 2.0), _s)
+                 for _x, _y, _s in _tt
+                 if _bx[0] - 5 <= (_x - x0) / ppf <= _bx[2] + 5))[:6]
+            _regions.append({
+                "index": _i,
+                # KEYED BY ORIGIN, NEVER BY INDEX (31 Aug 2026, Rahul +
+                # the scorecard). An index reorders the moment enumeration
+                # changes, and every pinned number then silently refers to
+                # a different building. The origin is the region's
+                # identity - the same lesson as `wing_pick.origin_ft`.
+                "key": "r@%.0f,%.0f" % (round(float(_bx[0])),
+                                        round(float(_bx[1]))),
+                # WHICH PASS produced this, and at what scale. `parse`
+                # re-enters itself for the scale refit and THE TWO
+                # PASSES DISAGREE - on GHATIKIA pass 1 (ppf 8.80)
+                # builds the RIGHT view and pass 2 (7.189) the LEFT.
+                # A region without its pass is ambiguous.
+                "pass": _pass,
+                "ppf": round(float(ppf), 3),
+                "extent_ft": [round(float(v), 1) for v in _bx],
+                "size_ft": [round(float(_bx[2] - _bx[0]), 1),
+                             round(float(_bx[3] - _bx[1]), 1)],
+                "mask_area_px": int(_g[2]),
+                "built": bool(_i == w_idx),
+                "title_text_near": [_s for _d, _s in _near],
+            })
+        if _regions:
+            # HOW the regions came to be separate, stated rather than left
+            # to an empty dict. Note `parse` re-enters itself for the scale
+            # refit, so this describes the pass that PRODUCED this scene:
+            # GHATIKIA needs the empty-band split at ppf 8.80 but not at
+            # 7.189, where the gutter already exceeds the 8 ft proximity
+            # threshold because every distance in FEET is larger.
+            _ev = dict(_region_report or {})
+            _ev.setdefault("joins", [])
+            _ev.setdefault("splits", [])
+            # THE BASIS MUST DESCRIBE THE FINAL REGIONS, not merely that
+            # some merging happened on the way (31 Aug 2026). Merges of
+            # FRAGMENTS inside one drawing are routine; what a reader needs
+            # to know is why the regions that SURVIVED are apart, and the
+            # only admissible answer is a band with no ink in it.
+            if len(_regions) > 1:
+                _ep, _ip = 0, 0
+                for _p1 in range(len(wing_groups)):
+                    for _p2 in range(_p1 + 1, len(wing_groups)):
+                        if _band_ink(_cover, wing_groups[_p1][1],
+                                     wing_groups[_p2][1]):
+                            _ip += 1
+                        else:
+                            _ep += 1
+                _ev["separated_by"] = {"empty_band_pairs": _ep,
+                                       "ink_in_band_pairs": _ip}
+                _ev["basis"] = (
+                    "separate: a band with NO INK between them"
+                    if _ep and not _ip else
+                    "MIXED: %d pair(s) on an empty band, %d across ink"
+                    % (_ep, _ip))
+            else:
+                _ev["basis"] = ("merged: ink in the band between them"
+                                if _ev["joins"] else "one region")
+            # the joined band in FEET, for the terrace slab (Q3). Kept on
+            # the region record so the 3D builder never has to re-derive
+            # where two blocks were joined.
+            _bands = []
+            for _j in _ev.get("joins") or []:
+                _bp = _j.get("band_px")
+                if not _bp:
+                    continue
+                _bf = _ft_box(_bp)
+                _j["band_ft"] = [round(float(v), 2) for v in _bf]
+                _bands.append(_j["band_ft"])
+            _ev["joined_bands_ft"] = _bands
+            _regions[0]["join_evidence"] = _ev
+    except Exception:
+        _regions = []
+
+    # §13 R-4 THE REGION ASK (31 Aug 2026, Rahul). Enumeration cannot say
+    # WHAT a region is: the JOIN test and the TITLE test disagree in the
+    # real case - a master plan with three towers has ONE title and GAPS
+    # between the towers, so one test says one plan and the other says
+    # three. The drawing does not say which, so we ask, exactly as §0.2
+    # asks about an open side or an unknown plot.
+    if len(_regions) > 1:
+        _lines_ask = []
+        for _rg in _regions:
+            _ti = " ".join(_rg["title_text_near"]) or "no title text found"
+            _lines_ask.append(
+                "%s (%.0f x %.0f ft at x %.0f): %s%s"
+                % (_rg["key"], _rg["size_ft"][0], _rg["size_ft"][1],
+                   _rg["extent_ft"][0], _ti,
+                   " - BUILT" if _rg["built"] else ""))
+        warnings.append(
+            "§0.2 ASK: this sheet carries %d PLAN REGIONS and the drawing "
+            "does not say what they are. %s. A sheet may hold several "
+            "floors of one building, or several blocks of one floor, and "
+            "the two signals we have DISAGREE on the general case: a "
+            "master plan with three towers prints ONE title over gaps "
+            "between them. What is each region - a floor (stilt, basement, "
+            "first, typical, terrace) or a block of one floor? Where a "
+            "title cannot be read: WHAT FLOOR IS IT?"
+            % (len(_regions), "; ".join(_lines_ask)))
+
+        # R-8 READS BLIND WHEN THE STATEMENT CANNOT BE ATTRIBUTED (Rahul).
+        # If the regions are two FLOORS, a printed area statement belongs
+        # to one of them and enumeration cannot say which. Attaching it to
+        # the built region - or to the larger - would be a guess presented
+        # as a measurement. The PLOT survives: a site area is not
+        # per-region. NOT EXERCISED BY THIS CORPUS: the only sheet with a
+        # printed statement (FLOOR PLAN) has ONE region.
+        _per_floor = ("built_up_total_sqft", "carpet_total_sqft",
+                      "common_area_sqft", "stilt_area_sqft", "flats")
+        if printed_areas and any(printed_areas.get(_k) for _k in _per_floor):
+            for _k in _per_floor:
+                printed_areas.pop(_k, None)
+            warnings.append(
+                "§0.2 ASK: a printed AREA STATEMENT was read, but this "
+                "sheet has %d plan regions and nothing says which one the "
+                "statement describes. R-8 is BLIND on this sheet until you "
+                "say - it is not attached to the region we built, and not "
+                "to the larger one. The plot area is kept: a site area is "
+                "not per-region." % len(_regions))
+
+    # THRESHOLD-vs-CLUSTER MARGINS (12, 29 Aug 2026). The whole ppf cliff
+    # reduced to one sentence: `_geometry_wall_segs`'s private 11.04 in
+    # ceiling sat ON GHATIKIA's 11 in external-wall peak, so 26 pairs sat
+    # within 1% above it and a 0.28% scale change moved them across en masse.
+    _th_margins = None
+    try:
+        _tg = [g['gap_in'] for g in
+               (wall_gap_pairs(drawings, ppf, max_in=60.0) or [])]
+        _tw = (_wall_thickness_ft(drawings, ppf) or 0.0) * 12.0
+        _th_margins = {
+            'gap_peaks_in': gap_peaks_in(_tg),
+            'wall_in': round(_tw, 2) or None,
+            'thresholds': threshold_margins(_tg, {
+                'W3_min': WALL_GAP_MIN_IN,      # 5 sites, SELECTING
+                'W3_max': WALL_GAP_MAX_IN,
+                'geom_min': 3.0,                # _geometry_wall_segs, private
+                'geom_max': 11.04,
+                'min_flank': _tw,               # gap_openings, SELECTING
+                'face_tol': _tw / 2.0,
+                'wall_median': _tw,             # SIZING - not a cliff
+                'door_cut_depth': _tw,          # SIZING
+            }, sizing={'wall_median', 'door_cut_depth'}),
+        }
+        _th_margins['latent_cliffs'] = [r['threshold']
+                                        for r in _th_margins['thresholds']
+                                        if r['latent_cliff']]
+    except Exception:
+        _th_margins = None
+
     _doors_sound = None
     try:
         _lf = []
@@ -4860,7 +5728,42 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         # openings above are already shifted — so shift it to match.
         _fpoly = [[p[0] - sx, p[1] - sy] for p in (footprint_poly or [])]
         _pos = door_position_checks(openings, _fpoly, _tol)
+        # JAMBS (31 Aug 2026). The width rule scores a cut against its drawn
+        # leaf and the leafless rule scores it against a drawn gap - NEITHER
+        # asks whether the opening has wall on BOTH SIDES. Measured: FLOOR
+        # PLAN 1 of 16 doors missing a jamb, BRICK WORK 2 of 17, GHATIKIA 5
+        # of 18, neelachala FIRST FLOOR 23 of 54 - while that sheet's
+        # `sound` reads 42 of 54. A door needs wall EITHER SIDE, not wall
+        # underneath: a gap opening sits in the gap by construction, which
+        # is why the obvious test (wall under the cut) is the wrong one.
+        # REPORTED, not folded into `sound` - changing that score needs a
+        # ruling, and 1 of 16 on the only sheet that can judge placement is
+        # too thin to validate a fix against.
+        try:
+            from shapely.geometry import box as _jb, Polygon as _jp
+            from shapely.ops import unary_union as _ju
+            _JW = _ju([_jp(w['outer'], w.get('holes') or [])
+                       for w in walls_poly]).buffer(0.35)
+            _jn = 0
+            for _o in openings:
+                if _o.get('type') != 'door' or not _o.get('footprint'):
+                    continue
+                _f = _o['footprint']
+                _ax, _ay = min(_f[0], _f[2]), min(_f[1], _f[3])
+                _bx, _by = max(_f[0], _f[2]), max(_f[1], _f[3])
+                if (_bx - _ax) >= (_by - _ay):
+                    _s1, _s2 = (_jb(_ax - 1.2, _ay, _ax, _by),
+                                _jb(_bx, _ay, _bx + 1.2, _by))
+                else:
+                    _s1, _s2 = (_jb(_ax, _ay - 1.2, _bx, _ay),
+                                _jb(_ax, _by, _bx, _by + 1.2))
+                if _JW.intersects(_s1) and _JW.intersects(_s2):
+                    _jn += 1
+            _doors_sound_jambs = _jn
+        except Exception:
+            _doors_sound_jambs = None
         _doors_sound = {"doors": _n, "sound": _ok, "tol_ft": _tol,
+                        "both_jambs": _doors_sound_jambs,
                         "position": _pos,
                         "drawn_leaves": len(_drawn), "leafless": _leafless,
                         "rule": "a cut with a DRAWN LEAF is sound when its width "
@@ -4884,7 +5787,209 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                                        for q in _e["wall_face"]]
         _dim_anchors["frame"] = "scene_ft"
 
+    # DRAWN TREAD LADDERS -> scene feet (Q1/S-6, 1 Sep 2026). Same transform
+    # the dimension anchors use just above. Ladders outside the built wing are
+    # dropped here, at the CONSUMER, exactly as the balcony trace is - the
+    # detector must stay whole because it also feeds the wall filter.
+    # RUNG 1 OF THE ORIENTATION ANCHOR CHAIN (1 Sep 2026): the drawn north
+    # arrow. Candidate symbol outlines come from the drawing paths, converted
+    # to scene feet by the same transform the dimension anchors use, with the
+    # building's own boxes passed in so a spike inside the plan is never one.
+    _na_shapes, _na_label = [], None
+    for _d in drawings:
+        _ch = []                            # a CLOSED chain, not loose points
+        for _it in _d["items"]:
+            _e = ([(_it[1].x, _it[1].y), (_it[2].x, _it[2].y)] if _it[0] == "l"
+                  else [(_p.x, _p.y) for _p in _it[1]] if _it[0] == "qu" else None)
+            if _e is None:
+                _ch = None
+                break
+            if not _ch:
+                _ch = list(_e)
+            elif math.dist(_ch[-1], _e[0]) < 0.05:
+                _ch += _e[1:]
+            elif math.dist(_ch[-1], _e[-1]) < 0.05:
+                _ch += _e[-2::-1]
+            else:
+                _ch = None
+                break
+        if _ch and 4 <= len(_ch) <= 8 and math.dist(_ch[0], _ch[-1]) < 0.05:
+            _na_shapes.append([((_x - x0) / ppf - sx, d_ft - (_y - y0) / ppf - sy)
+                               for _x, _y in _ch])
+    for _w in page.get_text("words"):
+        if str(_w[4]).strip().upper() in ("N", "N."):
+            _r = (fitz.Rect(_w[:4]) * page.rotation_matrix).normalize()
+            _na_label = ((_r.x0 + _r.x1) / 2.0, (_r.y0 + _r.y1) / 2.0)
+            _na_label = ((_na_label[0] - x0) / ppf - sx,
+                         d_ft - (_na_label[1] - y0) / ppf - sy)
+            break
+    _na_words = len(page.get_text("words"))
+    _na_circles = []
+    for _d in drawings:
+        if not any(_it[0] == "c" for _it in _d["items"]):
+            continue
+        _r = _d["rect"]
+        if _r.height <= 0 or not (0.8 < _r.width / _r.height < 1.25):
+            continue
+        _na_circles.append((( _r.x0 + _r.x1) / 2.0 / ppf - x0 / ppf - sx,
+                            d_ft - ((_r.y0 + _r.y1) / 2.0 - y0) / ppf - sy,
+                            max(_r.width, _r.height) / 2.0 / ppf))
+    _na_circles = [(((_c[0] * ppf + x0) - x0) / ppf - 0.0, _c[1], _c[2])
+                   for _c in _na_circles]
+    _na_deg, _na_why = north_arrow_deg(
+        _na_shapes, _na_label,
+        plan_boxes=[(0.0, 0.0, w_ft, d_ft)], circles=_na_circles)
+
+    _stair_ladders_ft, _stair_rejected = [], []
+    for _L in _STAIR_LADDERS:
+        _al = [(v - (y0 if _L["horiz"] else x0)) / ppf for v in _L["along"]]
+        _ac = [(v - (x0 if _L["horiz"] else y0)) / ppf for v in _L["across"]]
+        if _L["horiz"]:
+            _ys = sorted(d_ft - v - sy for v in _al)
+            _xs = sorted(v - sx for v in _ac)
+        else:
+            _xs = sorted(v - sx for v in _al)
+            _ys = sorted(d_ft - v - sy for v in _ac)
+        if not _in_wing((_xs[0] + _xs[1]) / 2.0 + sx, (_ys[0] + _ys[1]) / 2.0 + sy):
+            continue                       # a ladder in a region we did not build
+        _box = [round(_xs[0], 2), round(_ys[0], 2), round(_xs[1], 2), round(_ys[1], 2)]
+        _rec = {"box_ft": _box, "treads": int(_L["treads"]),
+                "pitch_ft": round(_L["pitch_pt"] / ppf, 3),
+                "climbs": "y" if _L["horiz"] else "x"}
+        # IS THE DRAWN PITCH A TREAD? A ladder of closely-spaced parallel lines
+        # is a staircase OR a tiled floor, and the RISER cannot tell them
+        # apart - GHATIKIA's tile hatch reads 18-21 "treads" at 4.4 in and
+        # implies a 5.6-6.6 in riser, comfortably inside the human band, which
+        # built three fake staircases out of a floor. The riser is INFERRED
+        # (storey / treads drawn) and inherits every miscount; the tread is
+        # MEASURED. Real flights on this corpus draw 9.2-10.1 in against a
+        # band of 7-15 in, and the hatch draws 4.4 in - separated by 2.6 in
+        # with no number tuned, because the band is the same 2R+T=25 in
+        # relation the riser band already comes from. Rejects are KEPT and
+        # reported: a filter that deletes silently is how the 16-room cap hid.
+        if not _stairs.tread_ok(_rec["pitch_ft"]):
+            _rec["why"] = (f"{_rec['pitch_ft'] * 12:.1f} in pitch is not a stair "
+                           f"tread ({_stairs.TREAD_MIN_IN:.0f}-"
+                           f"{_stairs.TREAD_MAX_IN:.0f} in) - hatch, not a flight")
+            if _rec not in _stair_rejected:
+                _stair_rejected.append(_rec)
+            continue
+        if _rec not in _stair_ladders_ft:   # both parse passes append
+            _stair_ladders_ft.append(_rec)
+
+    # FLAT MEMBERSHIP IS PRINTED ON THE SHEET (item 5, 3 Sep 2026, Rahul).
+    # Patrapada prints `FLAT NO.-101/201/301/401` inside one flat and
+    # `-102/202/302/402` inside the other, at glyph height 10.88 against 9.1
+    # for the room labels - one size larger, which is how a drafter marks a
+    # heading. That is a PRINTED STATEMENT of which rooms belong to which
+    # flat, and it closes the flat-boundary problem open since 20 Aug, where
+    # we split flats on an x-coordinate we chose ourselves.
+    # The numbering also states which floors the plan repeats on: 101/201/
+    # 301/401 is the 1-series flat on floors 1 to 4.
+    # Assignment is nearest-label, which is what "inside this flat" means when
+    # the flats are not separately enclosed; a room already inside a labelled
+    # component would be stronger, and is not available here.
+    _flat_labels = []
+    try:
+        for _w in page.get_text("words"):
+            _t = (_w[4] or "").strip()
+            import re as _re
+            if not _re.search(r"FLAT\s*NO|^-?\d{3}(/\d{3}){2,}$", _t, _re.I):
+                continue
+            _r = (fitz.Rect(_w[:4]) * page.rotation_matrix).normalize()
+            _flat_labels.append({
+                "text": _t.lstrip("-"),
+                "x": round(((_r.x0 + _r.x1) / 2.0 - x0) / ppf - sx, 2),
+                "y": round(d_ft - ((_r.y0 + _r.y1) / 2.0 - y0) / ppf - sy, 2),
+                "glyph_ft": round((_r.y1 - _r.y0) / ppf, 3)})
+    except Exception:
+        _flat_labels = []
+    if len(_flat_labels) >= 2:
+        for _rm in rooms:
+            if _rm.get("type") == "duct" or _rm.get("x") is None:
+                continue
+            _best = min(_flat_labels,
+                        key=lambda L: (L["x"] - _rm["x"]) ** 2
+                        + (L["y"] - _rm["y"]) ** 2)
+            _rm["flat"] = _best["text"]
+
+    # FROM THE RAW DRAWINGS, NEVER FROM `struct`. `struct` is our own filtered,
+    # wing-cropped selection, so an extent taken from it equals the plan extent
+    # by construction - measured 7 Sep, it read 100% on eight sheets of nine
+    # and separated nothing. That is rule 4 again: a quantity derived from the
+    # selection cannot judge the selection. The raw ink INCLUDES the title
+    # block and sheet frame, which is exactly why it discriminates.
+    _ix, _iy = [], []
+    for _d in drawings:
+        for _it in _d["items"]:
+            if _it[0] == "l":
+                _ix += [_it[1].x, _it[2].x]
+                _iy += [_it[1].y, _it[2].y]
+    _ink_extent_ft = [
+        round((min(_ix) - x0) / ppf - sx, 2),
+        round(d_ft - (max(_iy) - y0) / ppf - sy, 2),
+        round((max(_ix) - x0) / ppf - sx, 2),
+        round(d_ft - (min(_iy) - y0) / ppf - sy, 2)] if _ix else None
+
+    # PROJECTION DEPTH AGAINST THE PRINTED DIMENSION (§0.2, 7 Sep 2026, Rahul).
+    # A balcony or utility depth is a PROJECT DESIGN VALUE, not a fact about
+    # buildings, so no band can be derived for it - the only authority is the
+    # sheet's own printed width, and where the sheet prints none the honest
+    # output is a QUESTION, exactly as for the open side and the plot area.
+    #
+    # REPORTED, NEVER SNAPPED. Moving a built depth onto its printed value
+    # would change the room's area and therefore carpet - a parse number - and
+    # the ruling forbids that. So the gap is measured and stated; the geometry
+    # stays what the drawing draws. Measured 7 Sep: FLOOR PLAN balcony 3.91 vs
+    # a printed 4'-0" and utility 4.91 vs 4'-6"; GHATIKIA 3.10 vs 2.99;
+    # FIRST FLOOR 4.40 vs 4.50 and 6.29 vs 4.92; Patrapada 5.17 vs 4.92.
+    _proj = []
+    _pw_kinds = printed_open_widths()
+    for _r in rooms:
+        if _r.get("type") not in ("balcony", "utility"):
+            continue
+        _p = _r.get("polygon_ft") or []
+        if len(_p) < 3:
+            continue
+        _xs = [q[0] for q in _p]
+        _ys = [q[1] for q in _p]
+        _dep = round(min(max(_xs) - min(_xs), max(_ys) - min(_ys)), 2)
+        _same = [w for k, w in _pw_kinds if k == _r["type"]] \
+            or [w for _k, w in _pw_kinds]
+        _near = min(_same, key=lambda w: abs(w - _dep)) if _same else None
+        _proj.append({
+            "type": _r["type"], "at_ft": [round(min(_xs), 2), round(min(_ys), 2)],
+            "measured_depth_ft": _dep,
+            "printed_depth_ft": round(_near, 2) if _near is not None else None,
+            "gap_ft": round(_dep - _near, 2) if _near is not None else None,
+            "question": None if _near is not None else
+            (f"This {_r['type']} is built {_dep} ft deep from the drawn railing, "
+             f"and the sheet prints no {_r['type']} width to confirm it. "
+             f"A projection depth is a design value, not something we can "
+             f"derive - what is the intended depth?")})
+
+    # CHHAJJA (7 Sep 2026, Rahul). 403 drawn items on neelachala FIRST FLOOR
+    # produced NO geometry at all - not built wrong, not built. The layer is
+    # spelled `chhaja`, one J, and it is in GEOM_SKIP so it is correctly kept
+    # out of the wall reader; nothing else ever consumed it.
+    _chh = []
+    try:
+        _cs = [(((it[1].x - x0) / ppf - sx, d_ft - (it[1].y - y0) / ppf - sy),
+                ((it[2].x - x0) / ppf - sx, d_ft - (it[2].y - y0) / ppf - sy))
+               for _d in drawings if "chhaja" in (_d["lname"] or "")
+               for it in _d["items"] if it[0] == "l"]
+        for _b in chhajja_bands(_cs):
+            if not _in_wing((_b[0] + _b[2]) / 2.0 + sx, (_b[1] + _b[3]) / 2.0 + sy):
+                continue                   # a band in a region we did not build
+            _chh.append({"box_ft": list(_b),
+                         "depth_ft": round(min(_b[2] - _b[0], _b[3] - _b[1]), 2)})
+    except Exception:
+        _chh = []
+
     scene = {
+        # READ THESE FIRST - before any number (standing protocol, 2 Sep 2026).
+        "scale_verified": None,
+        "refusals": [],
         "meta": {
             "source": f"vector_pdf_{mode}",
             "units": "ft",
@@ -4892,7 +5997,10 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "plan_width_ft": round(out_w, 3),
             "plan_depth_ft": round(out_d, 3),
             "scale": {"source": scale_src, "pt_per_ft": round(ppf, 3),
-                      "envelope": env_src},
+                      "envelope": env_src,
+                      # VERIFIED BY EVIDENCE, never by route name; filled by
+                      # `_apply_scale_guard` once the refit evidence exists
+                      "verified": None, "verified_by": None},
             # PHYSICS CHECK (§0.1): a building cannot be bigger than its land.
             # plot_sqft is the sheet's own printed plot area, else the verified
             # overall-dimension envelope; None when the sheet states neither,
@@ -4901,6 +6009,14 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # canvas instrument: the wall extent, the railing-derived bound
             # that grew it, and the resulting raster (px). Reporting only.
             "doors_placed_sound": _doors_sound,
+            # NO THRESHOLD MAY SIT ON A CLUSTER (12, 29 Aug 2026) - ONE
+            # DEFINITION, computed here. The scorecard consumes this rather
+            # than re-deriving it: two derivations of one number is the
+            # wing_at / wing_pick trap, where index and identity disagreed.
+            # `kind` splits SELECTING thresholds (a band edge - on a peak
+            # means a latent cliff) from SIZING ones (a median lands on its
+            # own dominant peak by definition; that is not a cliff).
+            "threshold_margins": _th_margins,
             # WHICH CODE PATH RAN (22 Aug 2026). Three absolute FLOORS switch
             # branches with no trace in any output, so two similar drawings can
             # be parsed by different code and a run diff can only say "these
@@ -4909,8 +6025,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "wall_face_quality": _wall_quality,
             "dimension_anchors": _dim_anchors,
             "open_side_regions": _open_sides,
+            # §0.2: projection depths against the sheet's own printed width,
+            # and a QUESTION wherever the sheet prints none
+            "projection_depth": _proj,
             "blocked_openings": _blocked,
             "canvas": {"wall_extent_ft": [0.0, 0.0, round(w_ft, 2), round(d_ft, 2)],
+                       # THE DRAWING'S OWN STATEMENT OF HOW BIG IT IS, in the
+                       # scene frame. Needs nothing printed, and it is what the
+                       # `envelope_fragment` refusal compares the plan against.
+                       "ink_extent_ft": _ink_extent_ft,
                        "railing_bound_ft": list(_canvas_ext) if _canvas_ext else None,
                        "raster_px": [W, H],
                        "pads_px": [pad_x, pad_y, pad_r, pad_b]},
@@ -4935,12 +6058,92 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # W-2 MEASUREMENT (not used by the parser): the real distribution
             # of parallel-line gaps on this sheet, so wall classification can
             # be designed against measured clusters, not the 10"/5" assumption
+            # THE DRAWN TREAD LADDERS, in scene feet (1 Sep 2026, Q1/S-6).
+            # A staircase is where the TREADS are drawn, not where a room is
+            # typed `stairs` - GHATIKIA proves the difference: the room typed
+            # `stairs` there is the LIFT (its one printed label reads
+            # "LIFT 1.63x1.57") merged with the space south of it, while the
+            # real flights are 8 ft to the west. Building steps from the room
+            # put a staircase inside the lift shaft.
+            # RUNG 1 OF THE ORIENTATION CHAIN: the bearing the sheet DRAWS,
+            # clockwise from sheet-up, or None when it draws none. NEVER
+            # guessed - a wrong north propagates silently into every corner
+            # room and balcony argument below it in the chain.
+            "north_arrow_deg": _na_deg,
+            "north_arrow": {"deg": _na_deg, "why": _na_why,
+                            # UNITS AND FRAME IN THE FIELD (7 Sep 2026): FLOOR
+                            # PLAN parses at page rotation 270, so page-up and
+                            # plan-up are different directions. Every bearing
+                            # here is measured in the ROTATED page frame, which
+                            # is the same frame every scene coordinate uses -
+                            # so it is directly comparable with `plan_width_ft`
+                            # and with `vastu`'s north_deg, and it is NOT the
+                            # raw page.
+                            "units": "degrees clockwise, 0 = plan +y (up)",
+                            "frame": "rotated page = scene/plan frame; "
+                                     "page rotation already applied",
+                            # BRICK WORK has ZERO live words, so "no `N`" there
+                            # is a text-extraction limit, not a statement about
+                            # the drawing. Say which it is.
+                            "live_words": _na_words,
+                            "rung": 1, "of": "north arrow -> staircase/lobby "
+                                             "-> corner rooms/balconies -> n/a"},
+            "stair_ladders": _stair_ladders_ft,
+            # PRINTED flat membership (item 5): the sheet says which
+            # rooms belong to which flat; we no longer guess from x.
+            "flat_labels": _flat_labels,
+            "stair_ladders_rejected": _stair_rejected,
             "wall_line_thicknesses": _gap_dist,
             "rejected_summary": _rej_summary,
+            # A SHEET MAY CARRY SEVERAL PLAN REGIONS (31 Aug 2026, Rahul).
+            # It is not one sheet, one building: a user may upload five
+            # plans on one sheet or five separate sheets, and both must
+            # work. So the splitter ENUMERATES; it does not pick and
+            # discard. `built` says which region this scene describes -
+            # today still exactly one, which is why nothing moves here yet.
+            #
+            # NO SIGNAL DECIDES WHAT A REGION IS, and the two we have
+            # DISAGREE in the real case: the JOIN test (ink crossing the
+            # band) and the TITLE test (one title per plan). Rahul's
+            # counter-case settles it - a master plan with three towers has
+            # ONE title and GAPS between the towers, so one test says one
+            # plan and the other says three. Both are reported; neither
+            # decides. That is the §0.2 ASK.
+            # WHICH PASS THIS SCENE IS (31 Aug 2026, Rahul). `parse`
+            # re-enters itself once for the scale refit, and the two passes
+            # are each internally consistent while disagreeing about nearly
+            # everything: measured on GHATIKIA, pass 1 (ppf 8.80) vs pass 2
+            # (7.189) differ on rooms 7/13, doors 20/8, windows 19/14,
+            # footprint 1099.0/1738.4, M-1 1.15/1.07, R-2 60.7/83.6 at n
+            # 7/12, carpet 659.3/1167.4, anchors 56%/69%, measured wall
+            # 6.22/4.01 in, the latent-cliff list, the region BASIS - and,
+            # worst, WHICH HALF OF THE SHEET IS BUILT (origin x 43.5 vs
+            # -0.2). A value without its pass is ambiguous, and a diff that
+            # mixes passes compares two different parses.
+            # Same class as index not being identity.
+            "parse_pass": {"index": _pass, "ppf": round(float(ppf), 3),
+                           "from_scale_refit": bool(_pass > 1)},
+            # SAME SHAPE on a single-pass sheet, so a diff never has to
+            # tell 'one pass' from 'the field is missing'. Overwritten
+            # by the refit branch above when a second pass runs.
+            "parse_passes": {"count": 1, "built_pass": _pass,
+                             "by_pass": [{"pass": _pass,
+                                          "ppf": round(float(ppf), 3),
+                                          "route": dict(_ROUTE),
+                                          "regions": [
+                                              {k: r[k] for k in
+                                               ("key", "extent_ft",
+                                                "size_ft", "built")}
+                                              for r in _regions],
+                                          "discarded": False}],
+                             "pass_ppf": [round(float(ppf), 3)]},
+            "regions": _regions,
             "wing": {"count": wing_count, "index": w_idx,
                      "bbox_ft": [round(v, 3) for v in wbox_ft] if wbox_ft else None},
             "warnings": warnings,
         },
+        # ABOVE THE CUT PLANE (T-1): extent only, built at lintel level
+        "chhajja": _chh,
         "wall_types": {},
         "rooms": rooms,             # walk-inside beacons: most-interior point per room
         "walls": [],                # axis-aligned walls unused on this path
@@ -4968,11 +6171,60 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         _ROUTE["scale_refit"] = _rinfo
         # `meta["route"]` was snapshotted from _ROUTE above, so write through
         scene["meta"]["route"]["scale_refit"] = _rinfo
+        _apply_scale_guard(scene, _rinfo)      # in case this pass is the one built
         if _ratio:
+            # ROUTE FACTS FOR *THIS* PASS, kept before we hand over to the
+            # next one (31 Aug 2026, the scorecard's spec). A change to a
+            # DISCARDED pass can change which pass is discarded, so the
+            # fingerprint has to cover every pass, not just the survivor.
+            # `pass_ppf` is ROW DATA and must never be hashed: it is a
+            # continuous measurement, so hashing it makes every scale
+            # change look like a route change.
+            _this_pass = {
+                "pass": _pass, "ppf": round(float(ppf), 3),
+                "route": dict(_ROUTE),
+                "regions": [{k: r[k] for k in ("key", "extent_ft",
+                                              "size_ft", "built")}
+                            for r in _regions],
+                "wing_origin_ft": (_ROUTE.get("wing_pick") or {}).get(
+                    "origin_ft") if isinstance(_ROUTE.get("wing_pick"),
+                                               dict) else None,
+                "discarded": True,
+            }
             _re = parse(raw, width_ft, wing, ppf_hint=ppf * _ratio,
-                        force_geometry=force_geometry, _refit=False)
+                        force_geometry=force_geometry, _refit=False,
+                        _pass=_pass + 1)
+            _rm = _re["meta"]
+            _rm["parse_passes"] = {
+                "count": _pass + 1,
+                "built_pass": _pass + 1,
+                # a TUPLE over ALL passes, oldest first
+                "by_pass": [_this_pass, {
+                    "pass": _pass + 1,
+                    "ppf": _rm["parse_pass"]["ppf"],
+                    "route": _rm.get("route"),
+                    "regions": [{k: r[k] for k in ("key", "extent_ft",
+                                                  "size_ft", "built")}
+                                for r in (_rm.get("regions") or [])],
+                    "wing_origin_ft": (_rm["route"].get("wing_pick") or {}
+                                       ).get("origin_ft")
+                    if isinstance(_rm["route"].get("wing_pick"), dict)
+                    else None,
+                    "discarded": False,
+                }],
+                # ROW DATA, never hashed
+                "pass_ppf": [round(float(ppf), 3),
+                             _rm["parse_pass"]["ppf"]],
+            }
             _re["meta"]["route"]["scale_refit"] = dict(
                 _rinfo, applied_ppf=round(ppf * _ratio, 3), was_ppf=round(ppf, 3))
+            # THE COLD-SHEET GUARD'S EVIDENCE LIVES IN THE DISCARDED PASS.
+            # The refit runs HERE and the scene comes from the NEXT pass, where
+            # it is deliberately not re-run - so from inside that pass the
+            # scale looks unbacked. GHATIKIA is exactly that case: `cad_units`
+            # reads as a guess there and was in fact CORRECTED by 14 printed
+            # side samples measured on this pass. Re-apply with the evidence.
+            _apply_scale_guard(_re, _rinfo)
             return _re
 
     if footprint_poly:
@@ -4985,4 +6237,7 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
                                      for p in footprint_ext_poly]
     # G3: cross-check a GUESSED scale against snapped-door widths; flag (default)
     # or auto-correct (DRISHTI_AUTOSCALE=1). No-op on verified scales.
-    return _apply_scale_correction(scene)
+    # The cold-sheet guard runs LAST and on every path, so no return can leave
+    # `scale_verified` unset; the refit branch above calls it again with the
+    # evidence only that pass can see.
+    return _apply_scale_guard(_apply_scale_correction(scene))

@@ -25,8 +25,16 @@ LAYER_STYLE = {
     "walls":          {"colour": "#22d3ee", "kind": "polygon", "width": 1.5},
     "railing":        {"colour": "#a3e635", "kind": "line", "width": 1.5},
     "columns":        {"colour": "#f97316", "kind": "rect", "width": 1.5},
+    # 4 D-5: a duct is a VOID, never solid structure - drawn so the
+    # overlay can show it was found. It had no layer at all until 31 Aug,
+    # so a duct we detected and a duct we missed looked identical here.
+    "ducts":          {"colour": "#c084fc", "kind": "rect", "width": 1.5},
     "doors":          {"colour": "#22c55e", "kind": "rect", "width": 2.0},
     "windows":        {"colour": "#3b82f6", "kind": "rect", "width": 2.0},
+    # a door tag we read but could NOT place against a wall gap. Drawn in
+    # its own colour so it is never mistaken for a placed door - or, worse,
+    # silently drawn as a window, which is what a type fallthrough did.
+    "doors_unverified": {"colour": "#f43f5e", "kind": "rect", "width": 2.0},
     "rooms":          {"colour": "#e879f9", "kind": "polygon", "width": 1.2},
     "footprint":      {"colour": "#facc15", "kind": "polygon", "width": 2.5},
     # the EXTENDED ring (closed across rejected open faces). Balcony = the area
@@ -122,13 +130,30 @@ def build_layers(scene, dpi=110.0):
         fp = o.get("footprint")
         if not fp:
             continue
-        key = "doors" if o.get("type") == "door" else "windows"
+        _t = o.get("type")
+        key = ("doors" if _t == "door"
+               else "doors_unverified" if _t == "door_unverified"
+               else "windows")
         out[key].append(_rect(f, fp))
 
     for r in scene.get("rooms") or []:
         poly = r.get("polygon_ft")
         if poly:
             out["rooms"].append([f(p[0], p[1]) for p in poly])
+
+    # RAILINGS and DUCTS are DETECTED by the parser and were never drawn here
+    # (31 Aug 2026). The module's own rule says an empty layer must mean
+    # "found nothing", so a layer that is empty because nobody filled it is
+    # exactly the lie this instrument exists to prevent.
+    for run in ((scene.get("railings") or {}).get("runs") or []):
+        poly = run.get("polyline_ft") or []
+        for a, b in zip(poly, poly[1:]):
+            out["railing"].append([f(a[0], a[1]), f(b[0], b[1])])
+
+    for d in scene.get("ducts") or []:
+        if d.get("w") is not None:
+            out["ducts"].append(_rect(f, [d["x"], d["y"],
+                                          d["x"] + d["w"], d["y"] + d["d"]]))
 
     if scene.get("footprint_ft"):
         out["footprint"].append([f(p[0], p[1]) for p in scene["footprint_ft"]])

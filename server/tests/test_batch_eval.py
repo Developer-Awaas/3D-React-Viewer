@@ -106,3 +106,30 @@ def test_r2_is_emitted_as_a_quartet_never_a_median_alone():
     m = be.parse_metrics({"meta": {}, "openings": [], "rooms": []})
     for k in ("r2_median", "r2_checked", "r2_off", "r2_worst"):
         assert k in m, k
+
+
+def test_the_eval_applies_a_user_plot_but_the_parser_never_reads_ground_truth():
+    """`footprint <= plot` is our only physics check and it is BLIND wherever a
+    sheet prints no plot area — including neelachala FIRST FLOOR, the sheet
+    with the largest footprint. Rahul's 11,500 sqft reaches it through the
+    SAME user-entry path a real user would use (`corrections.plot_area_sqft`
+    on /recompute), applied by the EVAL.
+
+    The parser must never read ground_truth.json itself: reading its own truth
+    file is how this check became self-referential in the first place, when
+    `_plot_sqft` fell back to the building's own envelope (21 Aug 2026)."""
+    import corrections
+    scene = {"meta": {"footprint_sqft": 4472.1, "plot_sqft": None,
+                      "plot_source": "unknown"},
+             "rooms": [], "openings": []}
+    out, _ = corrections.apply_corrections(scene, {"plot_area_sqft": 11500})
+    row = be.parse_metrics(out)
+    assert row["plot_sqft"] == 11500.0
+    assert row["plot_source"] == "user"
+    assert row["footprint_pct_of_plot"] == 38.9
+    # a sheet that states nothing stays BLIND and says so, never a quiet pass
+    blind = be.parse_metrics({"meta": {"footprint_sqft": 1247.1,
+                                       "plot_source": "unknown"},
+                              "rooms": [], "openings": []})
+    assert blind["plot_sqft"] is None
+    assert blind["footprint_pct_of_plot"] is None

@@ -475,3 +475,35 @@ def test_schedule_door_widths_exclude_windows_and_ventilators():
              "V": {"w_ft": 2.0}, "W": {"w_ft": 5.0}, "W1": {"w_ft": 6.0}}
     assert door_widths_ft(sched) == [2.5, 3.0, 3.25, 3.75, 7.0]
     assert door_widths_ft(None) == []
+
+
+class TestNoThresholdOnACluster:
+    """NO THRESHOLD MAY SIT ON A CLUSTER (29 Aug 2026, Rahul) — the whole ppf
+    cliff reduces to one sentence, and this turns it into an instrument.
+
+    `_geometry_wall_segs`'s private 11.04 in ceiling sat ON TOP of GHATIKIA's
+    11 in external-wall peak (30 pairs at 11 in, 86 at 9 in), so 26 pairs sat
+    within 1% above it and a 0.28% scale change moved them across en masse —
+    footprint +28.4%."""
+
+    def test_it_reproduces_the_known_cliff(self):
+        from pdf_vector import threshold_margins
+        gaps = [11.0] * 30 + [9.0] * 86 + [4.0] * 171 + [5.0] * 41
+        rows = {r["threshold"]: r for r in threshold_margins(
+            gaps, {"ceiling": 11.04, "w3_max": 18.0})}
+        assert rows["ceiling"]["latent_cliff"] is True
+        assert rows["ceiling"]["nearest_peak_in"] == 11
+        assert rows["ceiling"]["pairs_within_5pct"] == 30
+        assert rows["w3_max"]["latent_cliff"] is False   # 18 in is near nothing
+
+    def test_a_sizing_threshold_on_its_own_peak_is_not_a_cliff(self):
+        """A MEDIAN necessarily lands on its own dominant peak — that is what a
+        median does. Without this split the instrument cries wolf on every
+        sheet: it flagged `median wall W` on all four."""
+        from pdf_vector import threshold_margins
+        gaps = [4.0] * 171 + [9.0] * 86
+        (r,) = threshold_margins(gaps, {"median_wall": 4.0},
+                                 sizing={"median_wall"})
+        assert r["on_a_cluster"] is True        # it IS on the peak
+        assert r["latent_cliff"] is False       # and that is correct there
+        assert r["kind"] == "sizing"

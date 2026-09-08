@@ -117,8 +117,15 @@ def test_parse_window_footprint_and_z():
 
 
 def test_parse_door_cluster():
+    """RE-DERIVED 2026-08-31 (Rahul): this fixture draws CONTINUOUS walls with
+    no gap (see test_door_without_gap_falls_back_with_warning), so its door can
+    never be placed against a wall opening. An unsnapped door is now typed
+    `door_unverified` and leaves the door count - a door we cannot place is a
+    wrong number presented as fact. The GEOMETRY assertions below are unchanged
+    and still hold: the opening is read, we just do not claim it is placed."""
     s = parse(_make_pdf(with_door=True))
-    doors = [o for o in s["openings"] if o["type"] == "door"]
+    assert [o for o in s["openings"] if o["type"] == "door"] == []
+    doors = [o for o in s["openings"] if o["type"] == "door_unverified"]
     assert len(doors) == 1
     o = doors[0]
     x0, y0, x1, y1 = o["footprint"]
@@ -339,11 +346,18 @@ def test_door_snaps_onto_doorway_gap():
 
 def test_door_without_gap_falls_back_with_warning():
     s = parse(_make_pdf(with_door=True))       # continuous walls, no gap
-    doors = [o for o in s["openings"] if o["type"] == "door"]
+    # RE-DERIVED 2026-08-31 (Rahul). The fallback still fires and still warns -
+    # what changed is that we no longer CALL it a door. It is kept, flagged and
+    # countable, but out of the door count and out of the 3D: neither a leaf nor
+    # a wall cut may assert a position we could not verify.
+    assert [o for o in s["openings"] if o["type"] == "door"] == []
+    doors = [o for o in s["openings"] if o["type"] == "door_unverified"]
     assert len(doors) == 1
     assert "swing_area" in doors[0]
     assert doors[0]["snapped"] is False
+    assert doors[0]["unverified"] is True
     assert any("gap not found" in w for w in s["meta"]["warnings"])
+    assert any("UNVERIFIED" in w for w in s["meta"]["warnings"])
 
 
 # --- Stage 1-3 (2026-07-10 late): text scale, geometry walls, wing split ---
@@ -732,3 +746,97 @@ def test_m1_wall_material_ratio_holds_on_every_sheet():
             q = parse(fh.read())["meta"]["wall_face_quality"]
         assert q["material_ratio"] is not None, f
         assert q["material_ratio"] <= 1.35, (os.path.basename(f), q)
+
+
+# --- rung 1 of the orientation chain: the drawn north arrow -----------------
+
+def _spike(cx, cy, deg, length=3.0, width=1.0):
+    """A closed narrow triangle whose apex points `deg` clockwise from up."""
+    import math as _m
+    r = _m.radians(deg)
+    ux, uy = _m.sin(r), _m.cos(r)          # apex direction
+    px, py = uy, -ux                       # across
+    apex = (cx + ux * length / 2, cy + uy * length / 2)
+    b = (cx - ux * length / 2, cy - uy * length / 2)
+    b1 = (b[0] + px * width / 2, b[1] + py * width / 2)
+    b2 = (b[0] - px * width / 2, b[1] - py * width / 2)
+    return [apex, b1, b2, apex]
+
+
+def test_north_arrow_reads_the_bearing_it_is_drawn_at():
+    from pdf_vector import north_arrow_deg
+    for want in (0.0, 90.0, 180.0, 270.0, 37.0):
+        deg, why = north_arrow_deg([_spike(50.0, -8.0, want)], n_label=(50.0, -5.0))
+        assert deg is not None and abs(deg - want) < 0.5, (want, deg, why)
+
+
+def test_a_spike_without_an_N_is_not_a_north_arrow():
+    """Measured on FLOOR PLAN: without the letter, the only surviving spike is
+    a 5.0 ft sliver of the ARCHITRAVE logo and it reported a confident 81.8."""
+    from pdf_vector import north_arrow_deg
+    deg, why = north_arrow_deg([_spike(74.3, -10.7, 81.8)], n_label=None)
+    assert deg is None and "no `N` label" in why
+
+
+def test_a_spike_inside_the_building_is_never_the_north_arrow():
+    from pdf_vector import north_arrow_deg
+    deg, why = north_arrow_deg([_spike(20.0, 15.0, 12.0)], n_label=(20.0, 16.0),
+                               plan_boxes=[(0.0, 0.0, 95.0, 30.0)])
+    assert deg is None and "no north-arrow candidate" in why
+
+
+def test_a_fat_shape_is_not_a_spike():
+    from pdf_vector import north_arrow_deg
+    deg, _ = north_arrow_deg([_spike(50.0, -8.0, 0.0, length=3.0, width=3.0)],
+                             n_label=(50.0, -8.0))
+    assert deg is None
+
+
+def test_enclosed_boxes_still_finds_a_real_shaft():
+    """BOUNDARY PROVENANCE is filtered at the CONSUMER, not inside
+    `enclosed_boxes`, so the box finder itself must be unchanged: a duct drawn
+    as its own rectangle in the wall linework is still found."""
+    from pdf_vector import enclosed_boxes
+    # a 1.0 x 5.0 ft shaft whose four sides stop at the box (no overhang)
+    b = [(10.0, 10.0, 11.0, 10.0), (10.0, 15.0, 11.0, 15.0),
+         (10.0, 10.0, 10.0, 15.0), (11.0, 10.0, 11.0, 15.0)]
+    got = enclosed_boxes(b, wall_ft=0.83)
+    assert got == [(10.0, 10.0, 11.0, 15.0)]
+    # ...and a box as narrow as the wall is still rejected as wall body
+    assert enclosed_boxes(b, wall_ft=1.0) == []
+
+
+def test_north_arrow_reads_a_COMPASS_ROSE_and_needs_the_N_at_the_rim():
+    """A rose is a circle with an `N` beside its needle, and `shapes` carries
+    only closed polylines - so a rose was invisible to the spike test and the
+    one sheet that prints one read None (7 Sep 2026).
+
+    The `N` must sit near the RIM: measured, four sheets place one at 0.16-0.26
+    radii - essentially at the centre, where the bearing is meaningless and the
+    letter is a TITLE. Two of them are the SAME drawing at two scales and
+    disagreed by 1.7 deg on a quantity that must be identical."""
+    from pdf_vector import north_arrow_deg
+    rose = [(30.0, -3.0, 1.0)]
+    deg, why = north_arrow_deg([], n_label=(30.75, -3.0), circles=rose)
+    assert deg == 90.0 and "compass rose" in why          # N to the east
+    deg, _ = north_arrow_deg([], n_label=(30.0, -2.25), circles=rose)
+    assert deg == 0.0                                     # N up
+    # an `N` at the centre is a title, not a needle
+    assert north_arrow_deg([], n_label=(30.1, -3.0), circles=rose)[0] is None
+    # ...and one far outside the rose is not its label either
+    assert north_arrow_deg([], n_label=(35.0, -3.0), circles=rose)[0] is None
+
+
+def test_chhajja_bands_group_the_hatch_into_sunshades():
+    """A chhajja is drawn as a HATCHED BAND on the outer wall, not an outline:
+    neelachala FIRST FLOOR carries 403 strokes of 0.40 ft median that group
+    into 42 bands. The band is the connected group's bbox."""
+    from pdf_vector import chhajja_bands
+    # two bands of four parallel hatch strokes, 3 ft apart
+    a = [((0.0, y), (0.6, y)) for y in (0.0, 0.2, 0.4, 0.6)]
+    b = [((0.0, y), (0.6, y)) for y in (3.0, 3.2, 3.4, 3.6)]
+    got = chhajja_bands(a + b)
+    assert got == [(0.0, 0.0, 0.6, 0.6), (0.0, 3.0, 0.6, 3.6)]
+    assert chhajja_bands([]) == []
+    # a degenerate band (zero depth) is dropped, as GHATIKIA draws one
+    assert chhajja_bands([((0.0, 0.0), (2.14, 0.0))]) == []

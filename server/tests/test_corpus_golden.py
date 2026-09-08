@@ -87,7 +87,12 @@ def test_combined_sheet_golden():
     # snapped lowered 15 -> 10: door-strip VALIDATION (23 Jul 2026) demotes
     # oversize/fat strips (>5.5 ft wide or >1.6 ft thick = merged walls, not
     # doors) to unsnapped, so the count now reflects only PLAUSIBLE door cuts.
-    assert c["doors"] >= 15            # golden: 18 (was 22 at the wrong scale)
+    # RE-DERIVED 2026-08-31 (Rahul): 18 -> 8. TEN of this sheet's eighteen doors
+    # were UNSNAPPED - tags we read but could not place against a wall gap - and
+    # an unsnapped door is no longer counted as a door. They are still emitted,
+    # flagged `door_unverified`, so nothing is lost from the report; they are
+    # just no longer asserted to be somewhere.
+    assert c["doors"] >= 8             # golden: 8 placed + 10 unverified
     assert c["snapped"] >= 3           # golden: 5/18
     assert c["windows"] >= 12          # golden: 14
 
@@ -203,7 +208,8 @@ def test_route_fingerprint_has_a_constant_shape():
     from pdf_vector import parse
     m = parse(_load("FLOOR PLAN.pdf"), None)["meta"]
     assert set(m["route"]) == {"stair_ladder_dedupe", "door_median",
-                               "door_symbol_paths", "seal", "scale_refit"}
+                               "door_symbol_paths", "seal", "scale_refit",
+                               "wing_pick"}
 
 
 def test_route_fingerprint_separates_the_corpus():
@@ -257,3 +263,104 @@ def test_sheets_without_arcs_report_not_scorable_never_pass():
         assert m["route"]["door_symbol_paths"]["arc"] == 0
         pos = m["doors_placed_sound"]["position"]
         assert pos["scored"] == 0 and pos["not_scorable"] > 0
+
+
+def test_a_near_tied_wing_pick_is_announced_as_an_ask():
+    """A 0.3% ppf change was measured swapping which of GHATIKIA's two views
+    gets built — every number on the sheet then describes a DIFFERENT DRAWING
+    and nothing in any output said so (28 Aug 2026). A magnitude error can be
+    measured; an identity swap cannot, so the pick is now announced with its
+    runner-up, and a one-unit margin is raised as a §0.2 ASK rather than
+    resolved by an invented tie-break."""
+    from pdf_vector import parse
+    scene = parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None)
+    w = scene["meta"]["route"]["wing_pick"]
+    assert w["of"] == 2 and w["runner_up"] is not None
+    assert w["margin"] == {"rooms": 1, "doors": 1}
+    assert w["near_tie"] is True            # one room or one door would flip it
+    # INDEX IS NOT IDENTITY. At ppf 7.1485 and 7.150 this sheet builds its
+    # RIGHT view (origin x 53.6) while `chosen` stays 0 and `of` stays 2, and
+    # it FLICKERS — left either side. Footprint moves under 1% across a swap
+    # that built the opposite half, so no numeric instrument can see it; the
+    # bbox ORIGIN is what says which half was built.
+    assert w["origin_ft"][0] < 25.0                      # the LEFT view
+    assert w["runner_up"]["origin_ft"][0] > 25.0         # the RIGHT one
+    import json
+    json.dumps(w)                                        # must serialise
+    assert any("§0.2 ASK: wing" in x for x in scene["meta"]["warnings"])
+
+
+def test_a_single_wing_sheet_says_the_pick_was_not_reached():
+    from pdf_vector import parse
+    for name in ("FLOOR PLAN.pdf", "neelachala FIRST FLOOR.pdf"):
+        m = parse(_load(name), None)["meta"]
+        assert m["route"]["wing_pick"] == "not reached (single wing)"
+
+
+def test_threshold_margins_are_emitted_for_the_scorecard():
+    """ONE DEFINITION, computed in the parser (31 Aug 2026). The scorecard
+    consumes `meta.threshold_margins` rather than re-deriving it — two
+    derivations of one number is the wing_at / wing_pick trap, where index and
+    identity disagreed about which half of a sheet had been built.
+
+    It must reproduce the known cliff: GHATIKIA's `geom_max` at 11.04 in sits
+    on that sheet's 11 in external-wall peak."""
+    import json
+    from pdf_vector import parse
+    m = parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None)["meta"]
+    t = m["threshold_margins"]
+    json.dumps(t)                                  # must serialise
+    assert 11 in t["gap_peaks_in"]
+    assert "geom_max" in t["latent_cliffs"]
+    rows = {r["threshold"]: r for r in t["thresholds"]}
+    assert rows["geom_max"]["nearest_peak_in"] == 11
+    # SIZING thresholds sit on their own peak by definition and are NOT cliffs
+    assert rows["wall_median"]["kind"] == "sizing"
+    assert rows["wall_median"]["on_a_cluster"] is True
+    assert rows["wall_median"]["latent_cliff"] is False
+    assert "wall_median" not in t["latent_cliffs"]
+
+
+def test_brick_work_w3_floor_is_reported_as_a_latent_cliff():
+    """BRICK WORK's median wall IS 3.0 in and W-3's floor is exactly 3.0 in,
+    so its dominant wall class sits on the admission floor — 38 pairs within
+    5%, on the one sheet no instrument can judge. Live at FIVE sites."""
+    from pdf_vector import parse
+    t = parse(_load("BRICK WORK LAYOUT.pdf"), None)["meta"]["threshold_margins"]
+    assert t["wall_in"] == 3.0 and 3 in t["gap_peaks_in"]
+    assert "W3_min" in t["latent_cliffs"]
+
+
+# --- §13 PLAN REGIONS (31 Aug 2026) -----------------------------------------
+def test_regions_are_enumerated_and_keyed_by_origin():
+    """The splitter ENUMERATES regions; it never picks one and discards the
+    rest. And a region is keyed by its ORIGIN, never its index: an index
+    reorders the moment enumeration changes, and every pinned number then
+    silently refers to a different building — the same lesson as
+    `wing_pick.origin_ft`."""
+    from pdf_vector import parse
+    m = parse(_load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), None)["meta"]
+    rs = m["regions"]
+    assert len(rs) == 2                       # both, not just the built one
+    assert [r["key"] for r in rs] == ["r@0,0", "r@53,0"]
+    assert [r["built"] for r in rs] == [True, False]
+    # the TITLE signal is reported, never acted on
+    assert "TYPICAL" in " ".join(rs[1]["title_text_near"])
+    assert any("PLAN REGIONS" in w for w in m["warnings"])
+
+
+def test_every_scene_says_which_parse_pass_it_is():
+    """`parse` re-enters itself for the scale refit and the two passes DISAGREE
+    about nearly everything on GHATIKIA — including which half of the sheet is
+    built (origin x 43.5 on pass 1, -0.2 on pass 2). A value without its pass is
+    ambiguous, so every scene stamps one."""
+    from pdf_vector import parse
+    raw = _load("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")
+    shipped = parse(raw, None)["meta"]["parse_pass"]
+    assert shipped == {"index": 2, "ppf": 7.189, "from_scale_refit": True}
+    first = parse(raw, None, _refit=False)["meta"]["parse_pass"]
+    assert first["index"] == 1 and first["from_scale_refit"] is False
+    assert first["ppf"] != shipped["ppf"]
+    # single-pass sheets say so too, rather than leaving it to be inferred
+    fp = parse(_load("FLOOR PLAN.pdf"), None)["meta"]["parse_pass"]
+    assert fp["index"] == 1 and fp["from_scale_refit"] is False

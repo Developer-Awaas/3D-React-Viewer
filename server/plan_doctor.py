@@ -142,16 +142,52 @@ def diagnose(scene):
 
     # --- scale trust (every ft/sqft/₹ number scales with this) ---
     ssrc = scale_meta.get("source", "")
-    if ssrc == "column_box_12in":
-        _issue(issues, "warn", "scale_column_guess",
-               "Scale was inferred by assuming the columns are 12 inches wide. "
-               "If this plan uses 9-inch columns, every dimension is ~33% off — "
-               "cross-check one known room size.")
-    elif ssrc in ("assumed_width", "env_ppf", ""):
-        _issue(issues, "warn", "scale_assumed",
-               "No dimension text was found, so the drawing was scaled to an "
-               "assumed overall width. All ft / sqft / cost numbers move with "
-               "that guess — confirm the real plot width.")
+    # COLD-SHEET GUARD (2 Sep 2026, Rahul): REFUSE, do not warn. A scale wrong
+    # by less than ~2x is the one failure that is confidently wrong AND
+    # self-consistent - the envelope stays plausible, rooms and doors still
+    # form, and on a sheet that prints no dimensions nothing can contradict it.
+    # A warning next to twenty confident numbers is not a refusal.
+    # A MISSING `verified` IS NOT A PASS. Scenes from an older parser carry no
+    # verdict, so fall back to the guess list rather than letting silence read
+    # as evidence - the whole point of this guard is that absence of a
+    # contradiction is not confirmation.
+    _sv = scale_meta.get("verified")
+    if _sv is None:
+        _sv = ssrc not in ("column_box_12in", "assumed_width", "env_ppf", "")
+        scale_meta = dict(scale_meta, verified=_sv, verified_by=(
+            "printed dimension text set the scale" if _sv else
+            f"NOTHING PRINTED - `{ssrc or 'unknown'}` is a guess"))
+    if _sv is False:
+        _issue(issues, "fail", "scale_unverified",
+               f"SCALE IS UNVERIFIED — {scale_meta.get('verified_by')}. Every "
+               f"ft, sqft and ₹ figure on this plan scales with it, so none of "
+               f"them can be trusted yet. Enter the real plan width, or upload "
+               f"a sheet that prints a room dimension, and everything below "
+               f"re-derives.")
+        if ssrc == "column_box_12in":
+            _issue(issues, "warn", "scale_column_guess",
+                   "The guess assumed the columns are 12 inches wide. If this "
+                   "plan uses 9-inch columns, every dimension is ~33% off.")
+        elif ssrc in ("assumed_width", "env_ppf", ""):
+            _issue(issues, "warn", "scale_assumed",
+                   "No dimension text was found, so the drawing was scaled to "
+                   "an assumed overall width.")
+    elif _sv:
+        _issue(issues, "ok", "scale_verified",
+               f"Scale is backed by the drawing: {scale_meta.get('verified_by')}.")
+    # §0.2 ASK: a projection depth is a DESIGN VALUE, not derivable. Where the
+    # sheet prints a width we report the gap; where it prints none we ask
+    # (7 Sep 2026, Rahul) - the same path as the open side and the plot area.
+    for _pj in (meta.get("projection_depth") or []):
+        if _pj.get("question"):
+            _issue(issues, "ask", "projection_depth_unstated", _pj["question"])
+        elif _pj.get("gap_ft") is not None and abs(_pj["gap_ft"]) > 0.25:
+            _issue(issues, "warn", "projection_depth_off_printed",
+                   f"The {_pj['type']} is built {_pj['measured_depth_ft']} ft "
+                   f"deep against a printed {_pj['printed_depth_ft']} ft — "
+                   f"{abs(_pj['gap_ft'])} ft out. The drawn railing and the "
+                   f"printed width disagree; the drawn one is built.")
+
     if scale_meta.get("needs_review"):
         sc = scale_meta
         _ov = sc.get("implied_oversize")

@@ -37,6 +37,10 @@ def health_flags(m):
         flags.append("no_rooms")                 # open envelope / unsealed
     if m.get("doors", 0) == 0:
         flags.append("no_doors")
+    # COLD-SHEET GUARD: a guessed scale is a REFUSAL, not a warning - every
+    # ft/sqft/rupee in the row above scales with it (2 Sep 2026, Rahul).
+    if m.get("scale_verified") is False:
+        flags.append("scale_unverified")
     return flags
 
 
@@ -109,12 +113,22 @@ def parse_metrics(scene):
         "doors": sum(1 for o in ops if o.get("type") == "door"),
         "windows": sum(1 for o in ops if o.get("type") == "window"),
         "rooms": len(scene.get("rooms", [])),
+        # READ BEFORE ANY NUMBER IN THIS ROW (standing protocol, 2 Sep 2026)
+        "scale_verified": scene.get("scale_verified"),
         "typed_rooms": sum(1 for r in scene.get("rooms", []) if r.get("type")),
         # columns + footprint are REPORTED because they moved unseen: a scale
         # change on 11 Aug silently took FLOOR PLAN from 26 columns to 0 and
         # nothing here would have shown it (12 Aug)
         "columns": len(scene.get("columns", [])),
         "footprint_sqft": m.get("footprint_sqft"),
+        # THE PHYSICS CHECK, SAID OUT LOUD. `plot_source` names where the plot
+        # came from — printed statement, user entry, or "unknown", in which
+        # case the check is BLIND and reports so rather than passing.
+        "plot_sqft": m.get("plot_sqft"),
+        "plot_source": m.get("plot_source"),
+        "footprint_pct_of_plot": (round(100.0 * m["footprint_sqft"] / m["plot_sqft"], 1)
+                                  if m.get("footprint_sqft") and m.get("plot_sqft")
+                                  else None),
         # M-1 (19 Aug): the model's own wall material / the measured pair
         # rectangles. Printed because the 3D can be incoherent while every
         # other number holds — that is exactly how the stacked-sheet build
@@ -175,6 +189,26 @@ def evaluate(plans_dir, ground_truth=None):
         row = {"plan": name}
         try:
             scene = pdf_vector.parse(open(path, "rb").read())
+            # USER-ENTRY PLOT (28 Aug 2026, Rahul). `footprint <= plot` is our
+            # only physics check and it is BLIND wherever a sheet prints no
+            # plot area — including neelachala FIRST FLOOR, the sheet with the
+            # largest footprint. Rahul supplied 11,500 sqft for that site on
+            # 21 Aug and it lives in ground_truth.json.
+            #
+            # IT IS APPLIED HERE, IN THE EVAL, AND NOT IN THE PARSER, ON
+            # PURPOSE. The parser must never read its own ground-truth file:
+            # that is how `footprint <= plot` became self-referential in the
+            # first place (it fell back to the building's own envelope, 21
+            # Aug). The eval may legitimately read its own truth file; a real
+            # user supplies the same figure through
+            # `corrections.plot_area_sqft` on /recompute, which is the path
+            # this reuses unchanged.
+            _plot = ((ground_truth or {}).get("plans", {})
+                     .get(name, {}).get("plot_sqft"))
+            if _plot and not (scene.get("meta") or {}).get("plot_sqft"):
+                import corrections
+                scene, _ = corrections.apply_corrections(scene,
+                                                         {"plot_area_sqft": _plot})
             row.update(parse_metrics(scene))
             row["flags"] = health_flags(row)
             row["ok"] = True

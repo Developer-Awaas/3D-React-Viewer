@@ -295,6 +295,112 @@ def _add_furniture(meshes, f, i):
         B((x0, x1, y0, y1, 0.0, f.get("h", 2.0)), _hexrgba("#d85a30"), "body")
 
 
+
+# S-6: A STAIRCASE IS ACTUAL STEPS, NOT A BLOCK (1 Sep 2026, Rahul).
+#
+# THE STAIRCASE IS WHERE THE TREADS ARE DRAWN. My first version built the steps
+# from the bbox of a room typed `stairs`, and GHATIKIA showed what that costs:
+# the room typed `stairs` there is the LIFT - its one printed label reads
+# "LIFT 1.63x1.57" (5.35 x 5.15 ft) - merged along its length with the space
+# south of it, so the steps were built INSIDE THE LIFT SHAFT while the real
+# flight sat 8 ft to the west. Room TYPE is a guess; the tread ladder is drawn.
+#
+# `meta.stair_ladders` carries each drawn ladder: its box in scene feet, the
+# number of treads, the drawn pitch, and which axis it climbs. Everything below
+# comes from those except the riser, and the riser is DERIVED: a staircase
+# climbs exactly one storey, so riser = H / (all treads in this staircase).
+
+
+from stairs import riser_ok        # ONE definition, shared with the parser
+
+
+def _overlaps(room, box):
+    """Does a room polygon's bbox overlap a ladder box? Pure."""
+    p = room.get("polygon_ft") or []
+    if not p:
+        return False
+    xs, ys = [q[0] for q in p], [q[1] for q in p]
+    return (min(max(xs), box[2]) > max(min(xs), box[0])
+            and min(max(ys), box[3]) > max(min(ys), box[1]))
+
+
+def _stair_cores(ladders):
+    """Group drawn ladders into staircases: a dog-leg's two flights meet at a
+    landing, so their boxes touch. Connected components under "boxes within one
+    tread pitch of each other". Pure."""
+    out = []
+    for L in ladders:
+        b, p = L["box_ft"], max(L.get("pitch_ft") or 0.0, 0.1)
+        hit = [c for c in out
+               if any(min(b[2], o["box_ft"][2]) - max(b[0], o["box_ft"][0]) >= -p
+                      and min(b[3], o["box_ft"][3]) - max(b[1], o["box_ft"][1]) >= -p
+                      for o in c)]
+        if hit:
+            hit[0].append(L)
+            for extra in hit[1:]:           # this ladder joins two components
+                hit[0].extend(extra)
+                out.remove(extra)
+        else:
+            out.append([L])
+    return out
+
+
+def _stair_steps(core, H):
+    """One staircase (list of drawn ladders) -> (steps, why). Steps are
+    (x0, x1, y0, y1, z0, z1).
+
+    The riser is the only assumed number and it is derived, not chosen: the
+    flights of one staircase climb one storey between them, so
+    riser = H / total treads drawn. Tread depth, width, position and count are
+    all the drawing's own.
+
+    ponytail: flight ORDER and climb DIRECTION are read from the shared landing
+    (a flight climbs toward the next flight's box), which is right for a
+    dog-leg; a single detected flight defaults to climbing +along, since the UP
+    arrow is not read yet. Read the arrow if a plan ever climbs the wrong way.
+    """
+    n_tot = sum(int(L["treads"]) for L in core)
+    if n_tot < 2:
+        return [], "fewer than 2 treads drawn"
+    riser = H / n_tot
+    # THE DERIVED RISER IS ALSO THE CHECK. A staircase climbs one storey, so
+    # H / (treads drawn) must come out a riser a person can walk. When it does
+    # not, we have not found all the flights, and building what we did find
+    # would put a visibly wrong staircase in the model. The band is the human
+    # one (NBC/IS residential riser 150-190 mm = 5.9-7.5 in), widened to
+    # 5.0-9.0 in so a real stair is never refused; it REFUSES, it never selects.
+    if not riser_ok(riser):
+        return [], (f"{n_tot} treads drawn over {len(core)} flight(s) implies a "
+                    f"{riser * 12:.1f} in riser - not a riser, so flights are "
+                    f"missing; refusing to build a staircase we cannot place")
+    order = sorted(core, key=lambda L: (L["box_ft"][1], L["box_ft"][0]))
+    steps, done = [], 0
+    for f, L in enumerate(order):
+        x0, y0, x1, y1 = L["box_ft"]
+        n = int(L["treads"])
+        along_x = L.get("climbs") == "x"
+        lo, hi = (x0, x1) if along_x else (y0, y1)
+        nxt = order[f + 1] if f + 1 < len(order) else (order[f - 1] if f else None)
+        up = True
+        if nxt is not None:
+            c = (nxt["box_ft"][0] + nxt["box_ft"][2]) / 2.0 if along_x else \
+                (nxt["box_ft"][1] + nxt["box_ft"][3]) / 2.0
+            up = (c > (lo + hi) / 2.0) if f + 1 < len(order) else \
+                 (c < (lo + hi) / 2.0)
+        t = (hi - lo) / n
+        for i in range(n):
+            k = i if up else n - 1 - i
+            a, b = lo + k * t, lo + (k + 1) * t
+            box = (a, b, y0, y1, 0.0, (done + i + 1) * riser) if along_x else \
+                  (x0, x1, a, b, 0.0, (done + i + 1) * riser)
+            steps.append(box)
+        done += n
+    return steps, (f"{n_tot} risers of {riser * 12:.1f} in over "
+                   f"{len(core)} drawn flight(s), treads "
+                   + " + ".join(f"{int(L['treads'])} at "
+                                f"{L['pitch_ft'] * 12:.1f} in" for L in order))
+
+
 def _build_scene(scene):
     """Scene dict -> (trimesh.Scene, meshes) shared by build_glb / build_glb_bytes."""
     import trimesh
@@ -306,12 +412,40 @@ def _build_scene(scene):
         + [p[0] for w in walls_poly for p in w["outer"]]
     ys = [w["y0"] for w in walls] + [w["y1"] for w in walls] \
         + [p[1] for w in walls_poly for p in w["outer"]]
-    if xs:
-        # floor slab under THIS wing's walls (scenes are one wing each, so the
-        # wall extent IS the wing footprint)
+    # THE SLAB IS THE FOOTPRINT, NOT THE BOUNDING BOX (1 Sep 2026, Rahul).
+    # It used to be `min(xs)..max(xs) x min(ys)..max(ys)` - the wall EXTENT -
+    # on the reasoning that one wing's wall extent is its footprint. It is not:
+    # a building is not a rectangle. Measured on the defect sheet, the slab ran
+    # +66% over the footprint on neelachala FIRST FLOOR (7396 against 4463
+    # sqft), +58% on FLOOR PLAN, +47% on GHATIKIA and +21% on BRICK WORK - it
+    # floored every L-shaped notch and the whole gap between FIRST FLOOR's two
+    # blocks. `footprint_ft` is the outer wall ring and is already in this
+    # frame, so the slab is simply that polygon.
+    _fp_poly = scene.get("footprint_ft") or []
+    _slab = None
+    if len(_fp_poly) >= 3:
+        try:
+            from shapely.geometry import Polygon as _SPoly
+            _slab = _SPoly(_fp_poly)
+            if not _slab.is_valid:
+                _slab = _slab.buffer(0)
+        except Exception:
+            _slab = None
+    if _slab is not None and not _slab.is_empty:
+        _add_poly_prism(meshes, _slab, -0.25, 0.0,
+                        _hexrgba("#e8e4da"), name="floor")
+    elif xs:
+        # no footprint polygon (a scene with walls but no ring): fall back to
+        # the old extent box rather than leaving the model with no ground
         _add_box(meshes, (min(xs), max(xs), min(ys), max(ys), -0.25, 0),
                  _hexrgba("#e8e4da"), name="floor")
-    openings = scene.get("openings", [])
+    # UNVERIFIED openings build NOTHING and cut NOTHING (31 Aug 2026,
+    # Rahul). Dropped here rather than at each use, because `poly_bands`
+    # cuts for ANY opening carrying a footprint regardless of type - a wall
+    # cut at an unverified position asserts placement just as loudly as a
+    # door leaf does.
+    openings = [o for o in scene.get("openings", [])
+                if not o.get("unverified")]
     # --- RAILINGS AND THE SPACES BEHIND THEM (20 Aug 2026, B-4) -------------
     # `scene.railings` was read by NOTHING, so no balcony or utility reached
     # the 3D. Flat-2's balcony looked built only because its railing is a thin
@@ -391,9 +525,81 @@ def _build_scene(scene):
             _add_box(meshes, (x0 + pad, x1 - pad, y0 + pad, y1 - pad,
                               zb + pad, zt - pad),
                      [176, 212, 232, 110], name=f"glass_{i}")
-    for i, c in enumerate(scene.get("columns", []) + scene.get("ducts", [])):
+    for i, c in enumerate(scene.get("columns", [])):
         _add_box(meshes, (c["x"], c["x"] + c["w"], c["y"], c["y"] + c["d"], 0, H),
                  _hexrgba("#9aa0a6"), name=f"column_{i}")
+    # A DUCT IS A VOID, AND IT IS NOT A COLUMN (1 Sep 2026, Rahul). Ducts used
+    # to be concatenated onto the column list and built as SOLID full-height
+    # boxes named `column_i` - so a shaft became structure, and the name hid it
+    # from anything reading mesh names. 4 D-5 says a duct is never solid.
+    # It is built as a thin SHAFT WALL ring instead: the drawn rectangle's
+    # edges, leaving the void open, and named `duct_i` so the viewer and the
+    # g-buffer can class it. Currently latent - `scene["ducts"]` is empty on all
+    # four corpus sheets, though FLOOR PLAN detects two ducts as void ROOMS.
+    for i, c in enumerate(scene.get("ducts", [])):
+        x0, y0 = c["x"], c["y"]
+        x1, y1 = x0 + c["w"], y0 + c["d"]
+        t = min(0.25, c["w"] / 3.0, c["d"] / 3.0)
+        for k, b in enumerate(((x0, x1, y0, y0 + t), (x0, x1, y1 - t, y1),
+                               (x0, x0 + t, y0, y1), (x1 - t, x1, y0, y1))):
+            _add_box(meshes, (b[0], b[1], b[2], b[3], 0, H),
+                     _hexrgba("#9aa0a6"), name=f"duct_{i}_{k}")
+    # TERRACE over a joined band (Q3, 1 Sep 2026, Rahul). Where two blocks
+    # of one building were merged because ink crosses the band between
+    # them, that band is a TERRACE on this floor and carries a slab - on
+    # neelachala FIRST FLOOR it is the first-floor terrace the design uses
+    # to reach its parking count under the FAR limit, so it is structural.
+    # The slab is only ever the band we actually merged across; a sheet
+    # with no join builds none, which is why nothing else gains one.
+    _rg = (scene.get("meta", {}).get("regions") or [{}])[0]
+    for i, bf in enumerate((_rg.get("join_evidence") or {})
+                           .get("joined_bands_ft") or []):
+        if bf and bf[2] > bf[0] and bf[3] > bf[1]:
+            _add_box(meshes, (bf[0], bf[2], bf[1], bf[3], -0.25, 0),
+                     _hexrgba("#ded9cc"), name=f"terrace_{i}")
+
+    # CHHAJJA — ABOVE THE CUT PLANE (T-1, 7 Sep 2026, Rahul). A sunshade is not
+    # cut by the 4 ft section plane, so the plan states only its EXTENT and it
+    # must never be built as storey-height material. It is placed at LINTEL
+    # LEVEL, matching the door head, as a thin projecting slab of its own drawn
+    # depth. neelachala FIRST FLOOR draws 403 items over 158 ft of hatch and
+    # built NOTHING until now - not built wrong, not built at all.
+    CHHAJJA_T = 0.4                       # slab thickness, ft
+    # lintel level: the scene's own door head, so the sunshade sits with the
+    # openings it shades rather than at a number chosen here
+    _lintel = max((o.get("z") or [0, 0])[1] for o in (scene.get("openings") or [])
+                  if o.get("type") == "door") if any(
+        o.get("type") == "door" for o in (scene.get("openings") or [])) else 7.0
+    for i, c in enumerate(scene.get("chhajja") or []):
+        b = c.get("box_ft") or []
+        if len(b) < 4 or b[2] <= b[0] or b[3] <= b[1]:
+            continue
+        _add_box(meshes, (b[0], b[2], b[1], b[3],
+                          _lintel, _lintel + CHHAJJA_T),
+                 _hexrgba("#cfc9ba"), name=f"chhajja_{i}")
+
+    # STAIRS: actual steps at the DRAWN treads (S-6). A sheet that draws no
+    # tread ladder builds NO staircase and says so - a staircase in the wrong
+    # place is worse than an absent one, and a room typed `stairs` is not
+    # evidence of one (GHATIKIA's is the lift).
+    _stair_report = []
+    for i, core in enumerate(_stair_cores(
+            (scene.get("meta") or {}).get("stair_ladders") or [])):
+        steps, why = _stair_steps(core, H)
+        _stair_report.append({"flights": len(core), "at_ft": core[0]["box_ft"],
+                              "built": bool(steps), "why": why})
+        for k, b in enumerate(steps):
+            _add_box(meshes, b, _hexrgba("#b8bcc4"), name=f"stair_{i}_{k}")
+    for rm in scene.get("rooms", []):
+        if rm.get("type") == "stairs" and not any(
+                r.get("at_ft") and _overlaps(rm, r["at_ft"]) for r in _stair_report):
+            _stair_report.append({"room_sqft": rm.get("area_sqft"), "built": False,
+                                  "why": "room typed `stairs`, no drawn tread "
+                                         "ladder inside it"})
+    try:
+        scene.setdefault("meta", {})["stairs_built"] = _stair_report
+    except Exception:
+        pass
     for i, f in enumerate(scene.get("furniture", [])):
         # never stage furniture into a balcony/utility pocket — a bed was
         # standing in flat-1's utility (20 Aug 2026)
@@ -410,6 +616,15 @@ def _build_scene(scene):
                  _hexrgba("#e8e4da"), name="floor")
     for name, m in meshes:
         sc.add_geometry(m, node_name=name, geom_name=name)
+    # M-2 ON `meta.glb` (5 Sep 2026, Rahul). Computed HERE because this is the
+    # only place the meshes and the scene exist together - one computation, one
+    # owner, consumed by the scorecard rather than re-derived there (the
+    # `wing_at` / `wing_pick` trap). Carries its own units and axis convention.
+    try:
+        from model_check import model_check
+        scene.setdefault("meta", {})["glb"] = model_check(scene, meshes, H)
+    except Exception as _e:
+        scene.setdefault("meta", {})["glb"] = {"error": str(_e)[:120]}
     return sc, meshes
 
 

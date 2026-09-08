@@ -21,3 +21,24 @@ describe('segClass', () => {
     expect(new Set(vals).size).toBe(vals.length)
   })
 })
+
+describe('segClass covers everything the scene builds', () => {
+  it('classes door leaves and railings, which used to fall through to other', () => {
+    expect(segClass('door_3')).toBe('door')
+    expect(segClass('railing_0')).toBe('railing')
+    expect(segClass('rail_w3_0')).toBe('railing')
+  })
+  it('classes the geometry added on 1 Sep 2026', () => {
+    expect(segClass('stair_0_5')).toBe('stair')
+    expect(segClass('terrace_0')).toBe('terrace')
+    expect(segClass('duct_0_2')).toBe('column')
+  })
+  it('still classes the originals, and floor_open stays floor', () => {
+    expect(segClass('floor_0')).toBe('floor')
+    expect(segClass('floor_open_1')).toBe('floor')
+    expect(segClass('wall_2_0')).toBe('wall')
+    expect(segClass('column_7')).toBe('column')
+    expect(segClass('glass_1')).toBe('window')
+    expect(segClass('mystery')).toBe('other')
+  })
+})

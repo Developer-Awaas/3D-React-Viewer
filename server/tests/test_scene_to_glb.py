@@ -105,3 +105,46 @@ def test_furniture_is_not_staged_into_a_balcony_or_utility_pocket():
     _sc, meshes = _build_scene(scene)
     beds = {n.split("_")[2] for n, _m in meshes if n.startswith("furn_bed_")}
     assert beds == {"1"}, beds
+
+
+# --- S-6: steps come from the DRAWN treads, and the riser is the check -------
+
+def _ladder(x0, y0, x1, y1, treads, pitch, climbs):
+    return {"box_ft": [x0, y0, x1, y1], "treads": treads,
+            "pitch_ft": pitch, "climbs": climbs}
+
+
+def test_stair_cores_group_a_dog_leg_and_separate_two_staircases():
+    from scene_to_glb import _stair_cores
+    a = _ladder(2.8, 130.8, 6.2, 134.2, 5, 0.83, "y")      # flight + landing
+    b = _ladder(6.2, 127.4, 11.2, 130.8, 7, 0.83, "x")     # touches `a`
+    far = _ladder(2.8, 34.8, 6.2, 38.1, 5, 0.83, "y")      # the other staircase
+    cores = _stair_cores([a, b, far])
+    assert sorted(len(c) for c in cores) == [1, 2]
+
+
+def test_a_staircase_that_cannot_climb_a_storey_is_refused_not_built():
+    """The riser is derived, so it is also the check: 8 drawn treads over a
+    9.84 ft storey is a 14.8 in step, which means flights are missing."""
+    from scene_to_glb import _stair_steps
+    steps, why = _stair_steps([_ladder(12.0, 42.4, 15.2, 47.8, 8, 0.77, "y")], 9.84)
+    assert steps == []
+    assert "14.8 in riser" in why
+
+
+def test_a_complete_staircase_builds_its_drawn_treads_and_climbs_one_storey():
+    from scene_to_glb import _stair_steps
+    core = [_ladder(0.0, 0.0, 3.5, 6.0, 8, 0.75, "y"),
+            _ladder(3.5, 0.0, 7.0, 6.0, 8, 0.75, "y")]
+    steps, why = _stair_steps(core, 9.84)
+    assert len(steps) == 16                       # every drawn tread is a step
+    assert abs(max(s[5] for s in steps) - 9.84) < 1e-6   # climbs exactly one storey
+    assert "16 risers" in why
+
+
+def test_a_room_typed_stairs_is_not_evidence_of_a_staircase():
+    """GHATIKIA's `stairs` room is the LIFT; the flight is 8 ft west of it."""
+    from scene_to_glb import _overlaps
+    lift = {"polygon_ft": [[20.0, 39.2], [24.8, 39.2], [24.8, 50.9], [20.0, 50.9]]}
+    assert not _overlaps(lift, [12.0, 42.4, 15.2, 47.8])
+    assert _overlaps(lift, [19.0, 42.0, 21.0, 44.0])

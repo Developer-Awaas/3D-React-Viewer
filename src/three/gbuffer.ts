@@ -27,6 +27,15 @@ export const SEG_COLORS = {
   window: '#50c8c8',
   column: '#9650c8',
   furniture: '#50c850',
+  // door leaves and railings used to fall through to `other`, which painted a
+  // door the same colour as anything unrecognised and corrupted the render
+  // conditioning maps (1 Sep 2026, Rahul). They are the two things a viewer
+  // most needs separated from the wall behind them.
+  door: '#c8a050',
+  railing: '#c850a0',
+  stair: '#8fa0b4',
+  terrace: '#6478a0',
+  chhajja: '#b4a882',
   other: '#202020',
 } as const
 
@@ -36,7 +45,20 @@ export type SegClass = keyof typeof SEG_COLORS
 export function segClass(name: string): SegClass {
   const n = (name || '').toLowerCase()
   if (n.includes('glass') || n.includes('window')) return 'window'
+  // `door`, `rail`, `stair` and `terrace` are tested BEFORE the broader
+  // classes: a mesh named `terrace_0` also contains no 'floor', but a future
+  // `floor_open_*` must still read as floor, and `railing` must not be caught
+  // by a substring of something else.
+  if (n.includes('door')) return 'door'
+  if (n.includes('rail')) return 'railing'
+  if (n.includes('stair')) return 'stair'
+  if (n.includes('terrace')) return 'terrace'
+  // a sunshade is its own surface: thin, at lintel level, projecting
+  // beyond the wall. Added 8 Sep with the chhajja builder - without it
+  // 25 new meshes on FIRST FLOOR would paint as `other`.
+  if (n.includes('chhajja')) return 'chhajja'
   if (n.includes('floor')) return 'floor'
+  if (n.includes('duct')) return 'column'
   if (n.includes('column')) return 'column'
   if (n.includes('furn')) return 'furniture'
   if (n.includes('wall')) return 'wall'

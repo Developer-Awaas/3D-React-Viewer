@@ -57,12 +57,41 @@ def test_wall_interior_fallback_is_warn_not_fail():
     assert "no_rooms_fallback" in d["learn_tags"]
 
 
-def test_column_scale_guess_warns():
+def test_a_guessed_scale_now_REFUSES_rather_than_warning():
+    """Re-derived 2 Sep 2026 on Rahul's ruling. A scale wrong by under ~2x is
+    confidently wrong AND self-consistent, and on a sheet that prints no
+    dimensions nothing can contradict it - so it is a `fail`, not a `warn`."""
     s = _healthy_scene()
     s["meta"]["scale"] = {"source": "column_box_12in"}
     d = PD.diagnose(s)
-    assert "scale_column_guess" in d["learn_tags"]
+    assert "scale_unverified" in d["learn_tags"]
+    assert any(i["level"] == "fail" and i["tag"] == "scale_unverified"
+               for i in d["issues"])
+    assert "scale_column_guess" in d["learn_tags"]     # the detail survives
     assert d["grade"] != "A"
+
+
+def test_a_missing_verdict_is_not_a_pass():
+    """An older scene carries no `verified` key; silence must not read as
+    evidence, which is the whole point of the guard."""
+    s = _healthy_scene()
+    s["meta"]["scale"] = {"source": "assumed_width"}
+    assert "scale_unverified" in PD.diagnose(s)["learn_tags"]
+    s["meta"]["scale"] = {"source": "room_dim_text"}
+    assert "scale_unverified" not in PD.diagnose(s)["learn_tags"]
+
+
+def test_a_guess_corroborated_by_printed_dims_is_verified():
+    """GHATIKIA: `cad_units` looks unbacked and was CORRECTED by 14 printed
+    side samples measured on the discarded pass."""
+    s = _healthy_scene()
+    s["meta"]["scale"] = {"source": "cad_units", "verified": True,
+                          "verified_by": "printed room dims corroborated it (14 sides)"}
+    d = PD.diagnose(s)
+    assert "scale_unverified" not in d["learn_tags"]
+    # `learn_tags` carries only non-ok issues, so the confirmation is an issue
+    assert any(i["level"] == "ok" and i["tag"] == "scale_verified"
+               for i in d["issues"])
 
 
 def test_implausible_envelope_fails():

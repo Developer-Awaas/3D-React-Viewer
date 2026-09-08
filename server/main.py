@@ -626,7 +626,7 @@ def _check_width_ft(width_ft):
 async def scene(image: UploadFile = File(...),
                 width_ft: float = Query(scene_builder.DEFAULT_WIDTH_FT, gt=0, le=2000),
                 loading_factor: float = Query(1.30, gt=1.0, le=2.0),
-                north_deg: float = Query(0.0, ge=0.0, lt=360.0),
+                north_deg: float = Query(None, ge=0.0, lt=360.0),
                 wing: str = "largest"):
     """Detect walls and return them as canonical scene.json (feet, z-up), plus a
     RERA-style area statement (carpet / built-up / super built-up) and a Vastu
@@ -673,7 +673,16 @@ async def scene(image: UploadFile = File(...),
         log.warning("area comparison skipped: %s: %s", type(e).__name__, e)
     # Vastu report (pure geometry; guidance only) — never breaks the scene
     try:
-        s["vastu"] = vastu.analyze(s, north_deg)
+        # NORTH FROM THE DRAWN COMPASS (7 Sep 2026, Rahul). This defaulted to
+        # 0.0, so EVERY Vastu analysis assumed north is up unless the caller
+        # said otherwise - and a sheet that prints a compass saying otherwise
+        # was silently overruled. The drawn bearing is the default now; an
+        # explicit query parameter still wins, and 0.0 is used only when the
+        # sheet draws no compass AND the caller states nothing.
+        _nd = north_deg
+        if _nd is None:
+            _nd = (s.get("meta", {}) or {}).get("north_arrow_deg")
+        s["vastu"] = vastu.analyze(s, float(_nd or 0.0))
     except Exception as e:
         log.warning("vastu skipped: %s: %s", type(e).__name__, e)
     # rough BOQ + cost estimate (pure geometry) — never breaks the scene

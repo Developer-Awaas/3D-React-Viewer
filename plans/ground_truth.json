@@ -7,7 +7,6 @@
    "units": "unknown (no live text)",
    "flats": "2BHK x2 + lobby/lift",
    "doors_expected": 12,
-   "windows_expected": "in wall layer (not extractable yet)",
    "overall_ft": "95.2 x 29.8 (CORRECTED 2026-08-11 from the sheet's own printed room dimensions)",
    "column_in": "12 assumed - SUPERSEDED as the scale source by printed room dimensions (see envelope_rebaseline); C-6 short/long-side fix still pending",
    "overall_ft_superseded": "113.9 x 35.6 (parser self-reported 2026-07-14; DISPROVEN - see envelope_rebaseline)",
@@ -29,7 +28,7 @@
    "r8_pin_rederived_2026_08_21": {
     "pin": 96.5,
     "previous_pin": 96.6,
-    "cause": "NOT a parse regression (§0.1). FOUR correctly-sealed doorways. FLOOR PLAN draws the KITCHEN, BALCONY, LOBBY and FLAT-2 balcony openings with NO leaf at all, so the symbol path is blind at each; the geometric gap finder saw them and its whole output was discarded by a PER-SHEET gate (`not has_door_layer`) - one door layer anywhere switched it off everywhere. Per-location gating admits them and each was verified against the drawn faces either side.",
+    "cause": "NOT a parse regression (\u00a70.1). FOUR correctly-sealed doorways. FLOOR PLAN draws the KITCHEN, BALCONY, LOBBY and FLAT-2 balcony openings with NO leaf at all, so the symbol path is blind at each; the geometric gap finder saw them and its whole output was discarded by a PER-SHEET gate (`not has_door_layer`) - one door layer anywhere switched it off everywhere. Per-location gating admits them and each was verified against the drawn faces either side.",
     "what_moved": "built-up 1883.7 -> 1883.6 sqft (-0.1), R-8 96.55% displayed as 96.5. Doors 12 -> 16, all 16 SOUND (12 leafed, 4 leafless).",
     "the_lesson": "A RATCHET WRITTEN TO ONE DECIMAL BLOCKED A CHANGE WHOSE REAL EFFECT IS A FOUR-INCH SQUARE. 0.1 sqft is 0.005% of built-up, an order of magnitude below the instrument's own displayed precision. Ratchets need a stated tolerance or a stated precision - otherwise the pin measures rounding, not the parse.",
     "two_doors_we_did_not_know_about": "Rahul expected 14 (12 + the balcony and kitchen he knew). The linework had FOUR: the LOBBY doorway at 28.41-31.41, y 7.50 (between drawn faces 7.06 / 7.89) and FLAT-2's BALCONY opening at 66.60-71.65, y 13.72 (faces 13.68 / 14.09) were not known to be there. The drawing held more than either of us had counted.",
@@ -41,7 +40,7 @@
     "actual": 96.6,
     "previous_actual": 96.7,
     "pin_unchanged": "the pinned floor was ALREADY 96.6 (raised 17 Aug); what changed is that the achieved value now sits exactly on it, with no margin",
-    "cause": "NOT a tuning change (§0.1). `wall_rects`'s overlap floor `min_ovl_ft = 2.0` was serving two purposes - 'long enough to be a wall' and silently 'solid or two fins': a run under 2.0 ft could never pair, so BOTH of its faces fell to the unpaired fallback and were buffered SEPARATELY at the sheet's median wall. Seven FLOOR PLAN wall ends were therefore built as two 0.83 ft plates where the wall measures 0.41-0.42 ft, overlapping 0.47-1.90 ft and protruding up to 1.75 ft (the fins and stacked blocks Rahul saw at C.TOILET/A.TOILET and flat-1's entry). The floor is now DERIVED from the drawing: a wall run is at least as long as the wall is THICK, the thickness being the pair's own measured gap.",
+    "cause": "NOT a tuning change (\u00a70.1). `wall_rects`'s overlap floor `min_ovl_ft = 2.0` was serving two purposes - 'long enough to be a wall' and silently 'solid or two fins': a run under 2.0 ft could never pair, so BOTH of its faces fell to the unpaired fallback and were buffered SEPARATELY at the sheet's median wall. Seven FLOOR PLAN wall ends were therefore built as two 0.83 ft plates where the wall measures 0.41-0.42 ft, overlapping 0.47-1.90 ft and protruding up to 1.75 ft (the fins and stacked blocks Rahul saw at C.TOILET/A.TOILET and flat-1's entry). The floor is now DERIVED from the drawing: a wall run is at least as long as the wall is THICK, the thickness being the pair's own measured gap.",
     "what_moved": "footprint 1799.4 -> 1796.8 sqft (-2.6), built-up 1886.3 -> 1883.7, R-8 96.7 -> 96.6. The 2.6 sqft is exactly the material those seven ends stop claiming at TWICE their drawn thickness.",
     "why_it_is_artefact_not_coverage": "the drawing measures those walls at 0.41-0.42 ft and we were painting 0.83. Losing material we never had is not losing coverage - same shape as the R-8 basis correction of 16 Aug, at a smaller scale.",
     "independent_confirmation": "the lobby's open-side region moved 94.6 -> 96.9 sqft against a PRINTED 15'8\" x 6'2\" = 96.6 - from 2.0 sqft short to 0.3 sqft. The drawing's own number moved TOWARD us.",
@@ -53,7 +52,7 @@
     "raised_to": 99.4,
     "actual": 99.8,
     "previous": 98.8,
-    "cause": "NOT a tuning change (§0.1). Two spaces that were in NO bucket at all were admitted: the UTILITY under §10.1 CE-5 (36.1 sqft, measured from its drawn edge, depth 4.92 vs printed 4'6\") and the two DUCT voids under §4 D-5 (5.0 and 2.3 sqft, read from the drawn rectangle). Built-up 1658.8 -> 1694.9 -> 1702.2 against a printed 1705.",
+    "cause": "NOT a tuning change (\u00a70.1). Two spaces that were in NO bucket at all were admitted: the UTILITY under \u00a710.1 CE-5 (36.1 sqft, measured from its drawn edge, depth 4.92 vs printed 4'6\") and the two DUCT voids under \u00a74 D-5 (5.0 and 2.3 sqft, read from the drawn rectangle). Built-up 1658.8 -> 1694.9 -> 1702.2 against a printed 1705.",
     "unchanged_by_it": "carpet 1203.5, R-2 97.0, footprint 1705.3, plot 3371",
     "pin_vs_actual": "pinned at the authorised 99.4, not the achieved 99.8 - raising to 99.8 is Rahul's call"
    },
@@ -74,6 +73,12 @@
     "why_it_matters": "door_swing, the measured HINGE and `opens_ccw` are all read from the drawn ARC. They are therefore structurally available on FLOOR PLAN and STRUCTURALLY UNAVAILABLE on the other three - not failing there, absent. Every door result of 19-20 Aug (hinge on a jamb 6/12 -> 12/12, wrong-side 3/12 -> 0/12, doors_placed_sound 16/16) rests on a branch only this sheet reaches.",
     "how_it_was_found": "meta.route, added 22 Aug. Until then this was only inferable from a door count, and the 20 Aug note 'GHATIKIA reads no arcs' was an observation with no mechanism attached.",
     "consequence_for_generalisation": "a door fix validated here has NOT been validated as a general rule - it has been validated on the one sheet that takes that route. Any door change must state which branch it acts on."
+   },
+   "windows_expected_CORRECTED_2026_09_01": {
+    "correction": "NO WINDOWS ARE DRAWN ON THIS SHEET AT ALL (Rahul, 1 Sep 2026). The parse is not missing windows; there are none to find.",
+    "superseded_text": "in wall layer (not extractable yet)",
+    "why_it_was_wrong": "written in July and never verified against the sheet. It was then quoted as if it described this build, and I repeated it in the defect sheet as '~11 unbuilt windows'.",
+    "pattern": "THIRD GROUND-TRUTH ENTRY FOUND WRONG - plot area twice (2454.4 from the building's own envelope, and 38'-3\" x 64'-2\" read as a plot), now this. An unverified entry in the truth file is worse than an absent one: it is quoted with the authority of a measurement. Same family as a measurement taken across a since-fixed defect being carried forward."
    }
   },
   "attachment-1 FIRST FLOOR PLAN (photo, awaiting file)": {
@@ -199,7 +204,7 @@
     "rooms_checked": 14,
     "rooms_off_by_over_20pct": 12,
     "diagnosis": "UNDER-SEGMENTATION, not a scale error. 13 of 14 rooms measure ~57% of their printed size while r0 measures 3.2x (530.5 vs 163.7 printed) - a constant ratio would mean scale, this scatter means rooms are merging and leaking into each other.",
-    "units": "sheet is in METRES (prints 3.43x4.04 etc); 44 metric pairs read. Feeding them to the scale voter derived 33.7 pt/ft against the column-box 8.8 - a 3.8x disagreement - which would have shipped a 2.75 ft building. The §0.1 consistency cross-check rejected OUR derivation and kept the column-box scale; sheet stays flagged NEEDS REVIEW.",
+    "units": "sheet is in METRES (prints 3.43x4.04 etc); 44 metric pairs read. Feeding them to the scale voter derived 33.7 pt/ft against the column-box 8.8 - a 3.8x disagreement - which would have shipped a 2.75 ft building. The \u00a70.1 consistency cross-check rejected OUR derivation and kept the column-box scale; sheet stays flagged NEEDS REVIEW.",
     "do_not": "do not accept a room-count or area improvement on this sheet without R-2 rising above 80%"
    },
    "balcony_artefact_removed_2026_08_15": {
@@ -221,7 +226,7 @@
    },
    "open_side_flag_2026_08_16": {
     "status": "UNVERIFIED - do not trust",
-    "what": "the §0.2 open-side instrument flags one 214.0 sqft region open to the NORTH (bbox x -0.2..20.1, y 31.6..48.0, backed S 100%, E 100%, W 69.8%)",
+    "what": "the \u00a70.2 open-side instrument flags one 214.0 sqft region open to the NORTH (bbox x -0.2..20.1, y 31.6..48.0, backed S 100%, E 100%, W 69.8%)",
     "why_unverified": "this sheet is TWO VIEWS parsed as ONE building (see two_views_finding_2026_08_15), so the region may straddle both plans and its area may be meaningless. It is emitted as a flag only and nothing is counted.",
     "do_not": "do not confirm this flag or use its area until the two views are separated"
    },
@@ -267,9 +272,9 @@
    },
    "two_views_SPLIT_2026_08_25": {
     "status": "SHIPPED. The sheet's two views (FIRST FLOOR left, TYPICAL FLOOR 2nd/3rd/4th right) are no longer parsed as one building.",
-    "mechanism": "`_empty_bands` — the band rule's OPPOSITE operation. A group is DIVIDED when its interior holds a band with ZERO INK across the group's full perpendicular extent, measured on `cover` (every drawn primitive at any angle). That is a stronger signature than 'nothing bridges it': a real interior corridor has partitions crossing it somewhere along its length, while the gutter between two drawings is empty end to end.",
-    "WHY_IT_MUST_RUN_ON_COVER_NOT_THE_WALL_MASK": "measured 25 Aug. On the WALL MASK the interior zero-ink bands are: BRICK WORK none, FLOOR PLAN none, GHATIKIA 2.55 / 7.01 / 2.57 ft, and neelachala FIRST FLOOR a 14.01 ft HORIZONTAL band — which would have SPLIT IT BACK into the two blocks Rahul ruled are one building, undoing 22 Aug. On `cover` that band carries the terrace hatch's 19 diagonal strokes and is not empty at all. `_segs` keeps only horizontal and vertical lines, so the wall reader is blind to a 45-degree stroke by construction.",
-    "on_cover_only_GHATIKIA_qualifies": "FLOOR PLAN none · BRICK WORK none · FIRST FLOOR none · GHATIKIA one vertical band, 6.48 ft. The rule is INERT on every single-view sheet in the corpus - the failure mode Rahul named as mattering most.",
+    "mechanism": "`_empty_bands` \u2014 the band rule's OPPOSITE operation. A group is DIVIDED when its interior holds a band with ZERO INK across the group's full perpendicular extent, measured on `cover` (every drawn primitive at any angle). That is a stronger signature than 'nothing bridges it': a real interior corridor has partitions crossing it somewhere along its length, while the gutter between two drawings is empty end to end.",
+    "WHY_IT_MUST_RUN_ON_COVER_NOT_THE_WALL_MASK": "measured 25 Aug. On the WALL MASK the interior zero-ink bands are: BRICK WORK none, FLOOR PLAN none, GHATIKIA 2.55 / 7.01 / 2.57 ft, and neelachala FIRST FLOOR a 14.01 ft HORIZONTAL band \u2014 which would have SPLIT IT BACK into the two blocks Rahul ruled are one building, undoing 22 Aug. On `cover` that band carries the terrace hatch's 19 diagonal strokes and is not empty at all. `_segs` keeps only horizontal and vertical lines, so the wall reader is blind to a 45-degree stroke by construction.",
+    "on_cover_only_GHATIKIA_qualifies": "FLOOR PLAN none \u00b7 BRICK WORK none \u00b7 FIRST FLOOR none \u00b7 GHATIKIA one vertical band, 6.48 ft. The rule is INERT on every single-view sheet in the corpus - the failure mode Rahul named as mattering most.",
     "PREDICTION_vs_RESULT": {
      "stated_before_building": "counts roughly halve (rooms ~7, doors ~22, windows ~19, columns ~20, footprint ~1300) and R-2 must RISE from 60.1",
      "counts": "rooms 14 -> 8, doors 45 -> 22, windows 38 -> 19, columns 40 -> 20, footprint 2647.7 -> 1161.8, extent 80.0 x 47.8 -> 36.6 x 48.2 ft, wings 1 -> 2. HELD, every one.",
@@ -293,24 +298,24 @@
      "worst": 57.2
     },
     "the_split_changed_NOTHING_about_the_scale_which_confirms_independence": "side ratios measured/printed: median 0.817 (17 Aug on the unsplit sheet: 0.812), stdev 0.105 (0.106), range 0.745-1.090 (0.73-1.08). Implied ppf median 7.19 (7.14), range 6.56-9.59 (6.45-9.52). The two-views artefact and the scale error were genuinely independent, as ruled.",
-    "WHAT_THE_SCALE_PATH_ACTUALLY_DOES_HERE": "`_room_dim_scale` derives 33.69 pt/ft from TWO agreeing votes; the §0.1 consistency cross-check rejects it against the column box's 8.8 as a 3.8x disagreement and says NEEDS REVIEW. The cross-check is RIGHT to reject it - 33.69 would ship a 2.75 ft building. The fault is the DERIVATION (2 votes from room-extent voting), not the guard.",
+    "WHAT_THE_SCALE_PATH_ACTUALLY_DOES_HERE": "`_room_dim_scale` derives 33.69 pt/ft from TWO agreeing votes; the \u00a70.1 consistency cross-check rejects it against the column box's 8.8 as a 3.8x disagreement and says NEEDS REVIEW. The cross-check is RIGHT to reject it - 33.69 would ship a 2.75 ft building. The fault is the DERIVATION (2 votes from room-extent voting), not the guard.",
     "A_SCALE_ERROR_IS_ISOTROPIC_AND_THIS_IS_ONLY_MOSTLY_SO": "within a single room the two sides should be off by the SAME factor. Five of seven rooms behave: at ppf 7.19 their side ratios are 0.95-1.02 on BOTH sides. Two do not - dining 1.334/1.246 and one bedroom 0.912/1.214 (spread 0.246). So the 17 Aug 'two diseases' reading SURVIVES, but the boundary disease is now confined to 2 of 7 rooms instead of being general.",
     "SIMULATED_CORRECTION": {
      "method": "rescale every measured room area by (8.80/ppf)^2 and re-run room_dims.match_pct. CAVEAT: computed from the room's BBOX, not its polygon, so absolute values differ from the live R-2 (this method reads 68.6 where the parser reads 60.7). Directional, not exact.",
-     "ppf 8.80 (today)": "median 68.6 · worst 57.7 · off 6 of 7",
-     "ppf 7.19 (printed dims)": "median 89.3 · worst 33.7 · off 1 of 7",
-     "ppf 7.14 (17 Aug figure)": "median 87.7 · worst 31.4 · off 1 of 7",
+     "ppf 8.80 (today)": "median 68.6 \u00b7 worst 57.7 \u00b7 off 6 of 7",
+     "ppf 7.19 (printed dims)": "median 89.3 \u00b7 worst 33.7 \u00b7 off 1 of 7",
+     "ppf 7.14 (17 Aug figure)": "median 87.7 \u00b7 worst 31.4 \u00b7 off 1 of 7",
      "note": "WORST gets WORSE (57.7 -> 33.7) because `dining` goes from slightly over to 33% over. A large net win that costs the worst room - report both, per the quartet rule."
     },
-    "PROPOSAL": "derive ppf from the R-2 matched pairs themselves - the median measured/printed SIDE ratio over all matched rooms (14 side samples on 7 rooms) - instead of `_room_dim_scale`'s 2-vote room-extent voting. Per §0.1 the printed dimensions outrank the column-box guess, and this uses 7x more of them.",
+    "PROPOSAL": "derive ppf from the R-2 matched pairs themselves - the median measured/printed SIDE ratio over all matched rooms (14 side samples on 7 rooms) - instead of `_room_dim_scale`'s 2-vote room-extent voting. Per \u00a70.1 the printed dimensions outrank the column-box guess, and this uses 7x more of them.",
     "THE_OBJECTION_I_MUST_RAISE_AGAINST_MY_OWN_PROPOSAL": "IT IS CIRCULAR IN EXACTLY THE WAY THE p90 WAS. If ppf is fitted so the median measured/printed ratio is 1.0, then R-2's MEDIAN becomes ~100 BY CONSTRUCTION and can no longer judge the scale. What survives as a real measurement is R-2's SCATTER - `rooms_off` and `worst_match_pct` - which is not fitted. Any such change must be judged by an INDEPENDENT instrument.",
-    "THE_INDEPENDENT_JUDGE": "the §10.2 DIMENSION-ANCHOR instrument: it compares printed dimension VALUES against distances between detected wall faces, using the `dim` text route, and does NOT read room labels. GHATIKIA reads 29/52 endpoints = 56% today. If 7.19 is the right scale, that number must RISE; if it does not, the scale change is not supported by anything independent and must not ship. THAT is the acceptance test, not R-2's median."
+    "THE_INDEPENDENT_JUDGE": "the \u00a710.2 DIMENSION-ANCHOR instrument: it compares printed dimension VALUES against distances between detected wall faces, using the `dim` text route, and does NOT read room labels. GHATIKIA reads 29/52 endpoints = 56% today. If 7.19 is the right scale, that number must RISE; if it does not, the scale change is not supported by anything independent and must not ship. THAT is the acceptance test, not R-2's median."
    },
    "scale_refit_SHIPPED_2026_08_25": {
-    "what": "ppf 8.80 (column_box_12in, a §C-6 weak anchor) -> 7.189, derived from the sheet's OWN printed room dimensions: the median measured/printed SIDE ratio over every room R-2 matched, 14 samples on 7 rooms. §0.1 - printed data outranks a guess.",
+    "what": "ppf 8.80 (column_box_12in, a \u00a7C-6 weak anchor) -> 7.189, derived from the sheet's OWN printed room dimensions: the median measured/printed SIDE ratio over every room R-2 matched, 14 samples on 7 rooms. \u00a70.1 - printed data outranks a guess.",
     "mechanism": "a SECOND PASS. Matching rooms to printed dims needs a parse, so `parse` re-enters itself once with `ppf_hint = ppf x ratio` (`_refit=False` guards it). Reported on meta.route.scale_refit.",
     "WHEN_IT_FIRES_IS_DERIVED_NOT_CHOSEN": "a scale error is SYSTEMATIC, so the deviation from 1.0 must exceed the sample's own SCATTER. Measured: GHATIKIA |median-1|/stdev = 0.183/0.105 = 1.74; FLOOR PLAN 0.005/0.164 = 0.03; neelachala FIRST FLOOR 0.095/0.771 = 0.12. The one sheet with a real scale error stands 14x clear of the nearest other, and BRICK WORK prints no room dims so it has 0 samples.",
-    "ACCEPTED_ON_THE_INDEPENDENT_TEST_NOT_ON_R_2": "DIMENSION ANCHORS (§10.2) 29/52 = 56% -> 36/52 = 69%. That instrument reads printed dimension VALUES against detected wall faces and never touches a room label, so it is not fitted by this change. R-2 CANNOT judge it: fitting ppf to the printed dims makes R-2's median ~100 by construction - the circular-p90 trap, named in advance.",
+    "ACCEPTED_ON_THE_INDEPENDENT_TEST_NOT_ON_R_2": "DIMENSION ANCHORS (\u00a710.2) 29/52 = 56% -> 36/52 = 69%. That instrument reads printed dimension VALUES against detected wall faces and never touches a room label, so it is not fitted by this change. R-2 CANNOT judge it: fitting ppf to the printed dims makes R-2's median ~100 by construction - the circular-p90 trap, named in advance.",
     "R_2_QUARTET_before_after": {
      "median": "60.7 -> 83.5",
      "rooms_checked": "7 -> 12",
@@ -346,7 +351,29 @@
     "what_moved_on_this_sheet": "extent 36.6 x 48.2 -> 43.9 x 58.9 ft, footprint 1161.8 -> 1997.0, rooms 8 -> 14, doors 22 -> 18, windows 19 -> 14, columns 20 (unchanged), M-1 1.15 -> 1.07, carpet 707.4 -> 1428.0.",
     "other_sheets": "IDENTICAL to every decimal. FLOOR PLAN 95.2x29.8, fp 1796.8, R-8 96.5, R-2 98.0/8/0/90.4, doors 16, sound 16/16, M-1 1.06, anchors 79%. FIRST FLOOR 38.2x177.3, fp 4472.1, R-2 96.9/16/7/0.0, M-1 1.09, anchors 60%. BRICK WORK fp 1247.1, M-1 1.13, anchors 70%.",
     "goldens_re_derived": "test_combined_sheet_golden w 36.6 -> 43.9, d 48.2 -> 58.9, doors >= 15, snapped >= 3, windows >= 12; test_ghatikia_r2_sample_is_ratcheted rooms_checked >= 12, median >= 83.5, rooms_off <= 3."
-   }
+   },
+   "residual_MEASURED_all_three_are_merges_2026_08_28": {
+    "status": "MEASURED, NO FIX. And it CORRECTS the discriminator recorded on 25 Aug.",
+    "question_Rahul_put": "the two dinings are isotropic-oversize (both sides ~1.5x), which by my own rule is NOT a merge signature but a residual scale error on those rooms. Are they merged with a neighbour, or one room read too large?",
+    "ANSWER_BOTH_ARE_MERGES": "the label-containment test settles it. `dining` 292.9 sqft contains FOUR printed dimension labels - DINING 4.47x3.96, DRG.RM. 3.38x4.14, C.TOILET 2.34x1.37, A.TOILET 2.34x1.50 (plus BASIN and FLAT NO.-102) - and was matched against DINING alone. `dining` 271.7 contains THREE - DRG.RM. 4.19x3.63, DINING 3.15x3.35, TOILET 2.31x1.37 - matched against DRG.RM. alone.",
+    "so_MY_DISCRIMINATOR_WAS_WRONG_ON_2_OF_3": "'both sides wrong together = scale' fails when the absorbed neighbours are distributed on BOTH axes. DINING + DRG.RM. side by side plus two toilets grows the polygon in x AND y, so a merge can be perfectly isotropic. Rahul predicted a third case before the measurement was run; the measurement found it.",
+    "THE_CORRECTED_DISCRIMINATOR": "COUNT THE PRINTED DIMENSION LABELS INSIDE THE POLYGON FIRST. More than one = a MERGE, whatever the side ratios do. Exactly one = the ratios are then meaningful: both sides off together = SCALE, one side right = MERGED ALONG THAT AXIS. Isotropy is a SECONDARY test and only valid at a label count of 1. Scored on this sheet: label-count 12 of 12 correct, isotropy 10 of 12.",
+    "the_stairs_case_is_confirmed_but_re_read": "`stairs` 57.1 contains exactly ONE label and it is LIFT 1.63x1.57 - it was matched against the LIFT, not a staircase. Sides 0.942 / 2.189, so it is the lift shaft merged along its LENGTH with the staircase beside it, which prints no dimension inside the polygon. Anisotropic, one label: merged on one axis, exactly as the corrected rule says.",
+    "A_NEW_FINDING_THE_CLEAN_ROOMS_STILL_CARRY_9_PERCENT": "excluding the three merges, the NINE single-label isotropic rooms give median 0.9131, stdev 0.0362, range 0.907-1.036, SIGNAL/NOISE 2.4 - tighter and stronger than the 1.74 that justified the shipped refit. Implied ppf 7.189 x 0.913 = 6.564. THE SHIPPED REFIT UNDER-CORRECTED BY ~9% BECAUSE THE THREE MERGES DRAGGED ITS MEDIAN DOWN.",
+    "why_the_second_pass_did_not_catch_it": "`scale_refit_ratio` uses ALL matched rooms, so on the corrected sheet it reads median 0.913 with stdev 0.326 and S/N 0.27 - below the guard. The merges inflate the scatter and mask a real systematic residual. CANDIDATE FIX, NOT BUILT: filter the ratio sample to single-label rooms before taking the median. That would need the label-containment test inside the parser and is a separate one-variable change, judged the same way - on DIMENSION ANCHORS, currently 69%."
+   },
+   "filtered_refit_BUILT_AND_REJECTED_2026_08_28": {
+    "status": "BUILT, REJECTED BY ITS OWN ACCEPTANCE TEST, REVERTED. Nothing applied; ppf stays 7.189.",
+    "what_was_built": "`scale_refit_ratio` filtered to SINGLE-LABEL rooms, using a new `printed_labels_in_room` count recorded by `attach_printed_dims`.",
+    "it_did_exactly_what_was_predicted_to_the_sample": "GHATIKIA's sample went 7 rooms / median 0.817 / stdev 0.105 / S/N 1.74 -> 5 rooms / median 0.806 / stdev 0.045 / S/N 4.35. The scatter fell by more than half and the signal more than doubled. ppf 8.80 x 0.806 = 7.092.",
+    "and_R_2_agreed": "median 83.5 -> 86.0, rooms_checked 12 -> 10, rooms_off 3 -> 3.",
+    "THE_DECISIVE_TEST_SAID_NO": "DIMENSION ANCHORS 36/52 = 69% -> 34/52 = 65%. THEY FELL. Rahul's binding condition was that anchors must RISE or the change does not ship regardless of what R-2 does, and R-2 cannot arbitrate a scale fitted to the very printed dimensions it scores with. REVERTED.",
+    "the_lesson_and_it_is_the_point_of_the_condition": "a tighter sample is not the same as a truer one. Every internal signal improved - fewer outliers, half the scatter, 2.5x the signal-to-noise, a higher R-2 - and the one measurement that could not be gamed by the change went the other way. WITHOUT AN INDEPENDENT JUDGE THIS WOULD HAVE SHIPPED ON FOUR CONFIRMING NUMBERS.",
+    "also_noted": "footprint moved 1997.0 -> 1584.4 on a 1.4% ppf change, which is non-linear and unexplained. That alone would have warranted a stop under the working agreement; the anchors got there first. NOT investigated - the change is reverted.",
+    "what_was_KEPT": "`printed_labels_in_room`, counted by `attach_printed_dims` and REPORTED on meta.route.scale_refit as `merged_rooms_in_sample` (GHATIKIA 2, FIRST FLOOR 4, the others 0). The merge count is the corrected discriminator and is worth seeing; it simply does not select the sample. Pinned by test_printed_labels_in_room_counts_merges.",
+    "ROUTE": "the sample comes from rooms already carrying a printed dimension, i.e. whatever route fed R-2 - LIVE TEXT where the sheet has it (GHATIKIA: 231 tokens, 42 dimension labels), OCR where it does not, and NOTHING on a sheet that prints no room dimensions (BRICK WORK: 0 samples, no refit, reported not defaulted). This is not a general capability on a dead-text sheet without OCR."
+   },
+   "unverified_doors_2026_08_31": "10 of 18 doors were UNSNAPPED - tags read but never placed against a wall gap - and were being emitted as doors and built in 3D. Now `door_unverified`: kept and countable, out of the door count and out of the 3D. Doors 18 -> 8."
   },
   "neelachala FIRST FLOOR.pdf": {
    "source": "single-floor CAD export, same project",
@@ -436,12 +463,12 @@
    "plot_sqft_source": "Rahul, 21 Aug 2026 - the owner's figure for this site",
    "plot_sqft_superseded": {
     "value": 2454.4,
-    "why_wrong": "it was the BOTTOM BLOCK's own printed 64'-2\" x 38'-3\" (= 2454.4 sqft) read as the plot. Kept visible per the §0.1 re-baselining rule.",
-    "consequence_while_wrong": "both blocks together measure ~4464 sqft of footprint, which against 2454.4 reads 182% of plot - a §0.1 PHYSICS FAILURE that would have rejected a CORRECT build. Against the real 11,500 it is 39%.",
+    "why_wrong": "it was the BOTTOM BLOCK's own printed 64'-2\" x 38'-3\" (= 2454.4 sqft) read as the plot. Kept visible per the \u00a70.1 re-baselining rule.",
+    "consequence_while_wrong": "both blocks together measure ~4464 sqft of footprint, which against 2454.4 reads 182% of plot - a \u00a70.1 PHYSICS FAILURE that would have rejected a CORRECT build. Against the real 11,500 it is 39%.",
     "pattern": "A PLOT FIGURE INFERRED FROM A BLOCK DIMENSION HAS NOW BEEN WRONG ON BOTH NEELACHALA SHEETS - here, and on GHATIKIA where the same 38'-3\" x 64'-2\" was duplicated across entries (see plot_envelope_superseded). A block dimension is never the plot: only the site figure is."
    },
    "envelope_rebaseline_2026_08_22": {
-    "ruling": "Rahul, 22 Aug 2026 - RE-DERIVE, per §0.1. The superseded goldens recorded a MISUNDERSTANDING, not a verified observation.",
+    "ruling": "Rahul, 22 Aug 2026 - RE-DERIVE, per \u00a70.1. The superseded goldens recorded a MISUNDERSTANDING, not a verified observation.",
     "superseded": {
      "plan_depth_ft": 64.167,
      "described_as": "the user-confirmed plot, 38'-3\" x 64'-2\"",
@@ -522,7 +549,39 @@
     "BUT_SEAL_5_IS_REJECTED": "measured on the whole corpus, one variable: FLOOR PLAN rooms 16 -> 13 and rooms_checked 8 -> 6 (its ratchet FAILS), carpet 1191.1 -> 1019.0; BRICK WORK rooms 13 -> 11, carpet 581.3 -> 535.6; GHATIKIA n 14 -> 13; FIRST FLOOR footprint 4472.1 -> 5095.6 (+623). A global seal that fixes the top block costs the sheet that judges us.",
     "so_the_cause_is_not_yet_named": "every structural explanation is ruled out and the only lever is a global kernel that cannot be moved. Same finding as 17 Aug in a new place: ONE KERNEL DOING TWO JOBS - closing doorways on a clean sheet and welding fragments on a fragmented one. The top block wants 5 ft where FLOOR PLAN needs 4. Until the seal is split into two operations this is not a threshold problem.",
     "CLOSED_AS_UNKNOWN_2026_08_25": "Rahul: the seal was the LAST candidate and it is now ruled out (the seal and the ring are one operation, see seal_split_NOT_SEPARABLE_AT_THIS_LAYER_2026_08_24). Eliminated by measurement, each on its own: missing partitions (a probe artefact - the sample line ran through the doorway), wall detection (the top block reads BETTER, 79%/73% of dimension-anchor endpoints on a detected face against the resolving control's 42%), unpainted wall (both blocks 100% covered by pair rectangles, zero partial), gap width (the block that RESOLVES has the WIDER gaps - median 5.47 ft against 4.36), doorway necks (that erosion test is WITHDRAWN, it ran on the approxPolyDP-simplified polygon), and the seal. THE HONEST POSITION: WE DO NOT KNOW why one block resolves and its neighbour does not when its walls read better. Open with the cause UNKNOWN, not a pending fix. Naming what has been eliminated is worth more than another guess."
-   }
+   },
+   "envelope_coverage_REMEASURED_2026_08_28": {
+    "status": "MEASURED. The 71% figure is STALE.",
+    "what_was_claimed": "the scorecard measured this sheet's 9-11.4 in wall-pair cluster as 71% UNCOVERED inside the built box, against 8% on FLOOR PLAN - measured while the wing splitter was dropping one of the two blocks.",
+    "re_measured_with_both_blocks_built": {
+     "neelachala FIRST FLOOR 9-11.4 in": "117 faces, 499 ft drawn, 19.0% uncovered (was 71%)",
+     "FLOOR PLAN 9-11.4 in": "18 faces, 148 ft drawn, 3.2% uncovered (the scorecard said 8%)",
+     "GHATIKIA 9-11.4 in": "59 faces, 202 ft drawn, 22.1% uncovered"
+    },
+    "reading": "the 71% was an artefact of the dropped block: its envelope lines sat inside the built box while none of its wall was built, so they scored as uncovered. With both blocks built the figure is 19.0%. STILL 6x FLOOR PLAN's 3.2%, so not clean - but it is a 19% question, not a 71% defect.",
+    "context_all_pairs_3_18_in": "FIRST FLOOR 27.8% uncovered over 1386 ft, FLOOR PLAN 21.8% over 348 ft, GHATIKIA 31.6% over 633 ft. The ENVELOPE is better covered than the interior on FLOOR PLAN (3.2 vs 21.8) and about the same on FIRST FLOOR (19.0 vs 27.8).",
+    "open": "the 19.0% is unexplained and is NOT a pending fix."
+   },
+   "blobs_top_vs_bottom_MEASURED_2026_08_28": {
+    "status": "MEASURED with the corrected discriminator. Cause still not named.",
+    "the_corrected_discriminator_confirms_they_are_merges": "printed dimension labels per room: the 603.9 sqft blob holds FIVE, the 585.4 holds FOUR, the 424.0 dining holds FIVE. By the 28 Aug rule, more than one label = a MERGE, whatever the side ratios do.",
+    "THE_DIFFERENCE_BETWEEN_THE_BLOCKS_QUANTIFIED": {
+     "TOP block": "10 rooms, 19 printed labels, THREE multi-label rooms holding 5 + 5 + 4 = 14 of the 19 labels. Seven rooms isolate exactly one label.",
+     "BOTTOM block": "9 rooms, 9 printed labels, ONE multi-label room (dining 283.9, 2 labels). Eight rooms isolate exactly one label.",
+     "the_sharp_statement": "THE BOTTOM BLOCK ISOLATES 8 OF 9 PRINTED SPACES (89%). THE TOP BLOCK ISOLATES 7 OF 19 (37%)."
+    },
+    "so_it_is_not_a_wall_problem_and_the_earlier_eliminations_stand": "missing partitions (probe artefact), wall detection (the top block reads BETTER - 79%/73% of anchor endpoints on a face against the bottom control's 42%), unpainted wall (both blocks 100% covered by pair rectangles), gap width (the resolving block's gaps are WIDER), doorway necks (test withdrawn), the seal (one operation with the ring, not separable).",
+    "what_is_actually_different": "the top block draws roughly TWICE the labelled spaces per room that the bottom does - 1.9 labels/room against 1.0 - and it is the SMALL spaces (toilets, balconies, puja, utility) that fail to separate. The bottom block is 2 flats in ~64 ft; the top is 3 flats in ~97 ft. The failure scales with how finely a flat is subdivided, not with how its walls are drawn.",
+    "still_unnamed": "WHY a more finely subdivided flat fails to separate when its walls read better. Open, cause unknown, not a pending fix."
+   },
+   "plot_check_LIVE_2026_08_28": {
+    "status": "WIRED. The physics check is live on this sheet for the first time.",
+    "result": "footprint 4472.1 sqft / plot 11500 = 38.9%. `plot_source` reads `user`.",
+    "how": "the EVAL reads `plot_sqft` from this file and applies it through `corrections.apply_corrections(scene, {'plot_area_sqft': ...})` - the same user-entry path built on 22 Aug that a real user drives from /recompute. `batch_eval.parse_metrics` now emits `plot_sqft`, `plot_source` and `footprint_pct_of_plot`.",
+    "WHY_NOT_IN_THE_PARSER": "the parser must never read its own ground-truth file. Reading its own truth is precisely how this check became self-referential on 21 Aug, when `_plot_sqft` fell back to the BUILDING'S OWN ENVELOPE and compared the building to itself. The eval may read the eval's truth file; the parser may not.",
+    "corpus_state_of_the_physics_check": "FLOOR PLAN 1796.8 / 3371 = 53.3% (printed_area_statement) \u00b7 FIRST FLOOR 4472.1 / 11500 = 38.9% (user) \u00b7 GHATIKIA and BRICK WORK still UNKNOWN and BLIND, and they say so rather than passing."
+   },
+   "unverified_doors_2026_08_31": "26 of 54 doors were UNSNAPPED - HALF THIS SHEET'S DOORS WERE BUILT AT UNVERIFIED POSITIONS. Now `door_unverified`: doors 54 -> 28. Together with GHATIKIA's 10 of 18, ROUGHLY HALF THE DOORS ON BOTH GEOMETRY-ROUTE SHEETS were positions we could not confirm and presented as fact. Neither layers-route sheet had a single one (FLOOR PLAN 0 of 16, BRICK WORK 0 of 17)."
   },
   "BRICK WORK LAYOUT.pdf": {
    "source": "THE ZENITH, Architrave Design & Infraprojects (SAME FIRM as FLOOR PLAN.pdf, DIFFERENT building - geometry compared 2026-07-19: ZENITH = tall block, stretcher lift 9'6\"x6'0\"; FLOOR PLAN = long strip, lift 5'x5'). Drawing no. 9, Ar. Rehan Ahamed / Er. P.K. Tripathy",
@@ -608,14 +667,14 @@
     "status": "REPORTED, NOT ACCEPTED - uninstrumented sheet",
     "what_moved": "built-up 803.4 -> 800.8 sqft (-2.6, 0.3%)",
     "cause": "12 degenerate/duplicate wall segments dropped upstream of keep_structural_lines. This sheet's wall layers carry 4,335 ZERO-LENGTH segments and 858 exact duplicates out of 4,960 pre-crop (production sees 442 post-crop).",
-    "why_unverifiable": "BRICK WORK prints no area statement, no room dimensions and no balcony width: R-8, R-2 and B-5 are all silent here. Only the §10.2 dimension-anchor instrument reaches it (66.4% of endpoints on a detected wall face).",
+    "why_unverifiable": "BRICK WORK prints no area statement, no room dimensions and no balcony width: R-8, R-2 and B-5 are all silent here. Only the \u00a710.2 dimension-anchor instrument reaches it (66.4% of endpoints on a detected wall face).",
     "do_not": "do not treat this movement as evidence either way"
    },
    "door_count_untrustworthy_2026_08_21": {
     "status": "REPORTED, NOT ACCEPTED - and this sheet is now the least trustworthy in the corpus",
     "what_moved": "doors 11 -> 12 -> 20 -> 17 across four changes on 20-21 Aug: the split of DOOR_MIN_FT, the derived wall-pairing floor, the gap-grouping fix, and per-location gap gating",
     "why_unjudgeable": "BRICK WORK prints no area statement, no room dimensions and no balcony width, so R-8, R-2 and B-5 are ALL silent here. It also has no door layer, so every door it has comes from the geometric gap finder: 15 of its 17 are LEAFLESS, scored against drawn gaps rather than against drawn doors. Nothing on this sheet can tell a real doorway from a wall break.",
-    "only_instruments_that_reach_it": "the §10.2 dimension-anchor instrument (66.4% of endpoints on a detected wall face) and M-1 (1.13, inside its 1.35 ceiling)",
+    "only_instruments_that_reach_it": "the \u00a710.2 dimension-anchor instrument (66.4% of endpoints on a detected wall face) and M-1 (1.13, inside its 1.35 ceiling)",
     "do_not": "do not treat any door movement on this sheet as evidence in either direction"
    },
    "built_up_rebasis_2026_08_17": {
@@ -636,6 +695,14 @@
     "doors_only": "Rahul's reading of the printed schedule is D 3'9\" (3.75), D1 3'3\" (3.25), D2 3'0\" (3.0), D3 2'6\" (2.5), SD 7'0\" (7.0). The remaining 2.0 / 5.0 / 6.0 are ventilator and windows. DOORS-ONLY p90 = 3.75 ft.",
     "what_it_fixes": "derived seal 6.0 -> 3.75, and weld_headroom_ft -2.00 -> +0.25. The one sheet whose headroom was NEGATIVE now sits with the other three, and its derived doorway lands in the same 2.2-3.8 ft band as every other sheet's drawn leaves. The anomaly was the window rows, not the sheet.",
     "not_applied": "the derivation is still REPORTED, NOT APPLIED, and the tag filter is not built - it needs the schedule's tags, which `parse_opening_schedule` returns but the seal derivation does not currently ask for."
+   },
+   "LATENT_CLIFF_W3_floor_2026_08_31": {
+    "status": "LATENT CLIFF, LIVE, NOT FIXED. Recorded on Rahul's instruction.",
+    "what": "this sheet's MEDIAN WALL IS 3.0 in and W-3's admission FLOOR is exactly 3.0 in. Its dominant wall class sits ON the threshold: gap peaks at 1, 2, 3, 6, 7, 8 in, with 3 in the largest, and 38 pairs sit within 5% of the floor.",
+    "why_it_matters": "that floor is LIVE AT FIVE SITES - paired_extent, _paired_indices, wall_rects, keep_structural_lines, gap_openings - plus the private copy in _geometry_wall_segs. A small scale change admits or drops 38 pairs AT ONCE, exactly the mechanism that moved GHATIKIA's footprint 28.4% on a 0.28% input.",
+    "and_this_is_the_sheet_nothing_can_judge": "no area statement, no room dimensions, no balcony width, no door layer, 15 of 17 doors leafless. Its door count has moved 11 -> 12 -> 20 -> 17 across four changes in two days with no instrument able to say which was right. A latent cliff here would be invisible.",
+    "found_by": "`meta.threshold_margins`, the instrument built 29 Aug. It was not looked for; the instrument reported it on its first corpus run.",
+    "not_fixed": "recorded only. Moving the W-3 floor touches five sites and every sheet."
    }
   },
   "plan1.dwg": {
@@ -697,7 +764,7 @@
    "notes": "CAD DWG (AutoCAD 2013-2017). Units INCHES (confirmed: 29ft dim = 348 units). v1.1 CAD path: DWG->DXF->layered-PDF->pdf_vector.parse(ppf_hint). Test DXFs here came via Aspose EVAL (watermark X + partial entities) - libredwg in prod converts fully."
   },
   "plan_roomdim_342.pdf (tests/fixtures)": {
-   "source": "internet CAD PDF, no column layer, no on-line dims — scale from room-dimension text (9'0\"X12'0\")",
+   "source": "internet CAD PDF, no column layer, no on-line dims \u2014 scale from room-dimension text (9'0\"X12'0\")",
    "type": "vector-cad-flattened",
    "expected": {
     "envelope_ft": "20.3 x 65.3 (self-scaled)",
@@ -714,7 +781,7 @@
    "fixed": "2026-07-21"
   },
   "plan_unnamed_layers_343.pdf (tests/fixtures)": {
-   "source": "internet CAD PDF — real walls on unnamed layer '6'; named wall layers are decoys",
+   "source": "internet CAD PDF \u2014 real walls on unnamed layer '6'; named wall layers are decoys",
    "type": "vector-cad-unnamed-layers",
    "expected": {
     "envelope_ft": "38.0 x 37.9 (sheet says 38')",
@@ -836,8 +903,8 @@
   "no_other_top_N_found": "grep over every [:n] slice, sorted()[:n], nlargest, islice and loop-break in the parser and its helpers found no other truncation of a parsed quantity. The remaining slices are fitz.Rect(w[:4]), ndarray.shape[:2], polygon coords[:-1] and string truncation in log/HTML output."
  },
  "footprint_decimation_removed_2026_08_22": {
-  "what_it_was": "`p = p[:: max(1, len(p)//400)]` in `_footprint_from_walls`, commented 'subsampled: only the nearest PAIR matters'. But those points ARE what decides the nearest pair, and the resulting bridge LENGTH is what `max_bridge` accepts or rejects — so decimating them can move a bridge to whichever sampled point survived, or reject a gap that was really shorter.",
-  "every_sheet_was_over_it": "max points in one component: FLOOR PLAN 1491, GHATIKIA 2101, BRICK WORK 4159, FIRST FLOOR 6719 — 3.7x to 16.8x the cap.",
+  "what_it_was": "`p = p[:: max(1, len(p)//400)]` in `_footprint_from_walls`, commented 'subsampled: only the nearest PAIR matters'. But those points ARE what decides the nearest pair, and the resulting bridge LENGTH is what `max_bridge` accepts or rejects \u2014 so decimating them can move a bridge to whichever sampled point survived, or reject a gap that was really shorter.",
+  "every_sheet_was_over_it": "max points in one component: FLOOR PLAN 1491, GHATIKIA 2101, BRICK WORK 4159, FIRST FLOOR 6719 \u2014 3.7x to 16.8x the cap.",
   "why_the_cap_existed": "the old MST built the WHOLE distance matrix between two components; two 6,700-point components need a 6700x6700 float64 array. Replaced by `_closest_pair`, which chunks the rows (512 at a time) and is exact at any size, plus a per-pair cache so Prim's loop computes each component pair once. No new dependency.",
   "RESULT_NOTHING_MOVED": "footprint sqft, footprint outline points, M-1, polygons and short-step vertices are IDENTICAL on all four sheets: 1247.1/42, 1796.8/59, 2647.7/209, 4472.1/521. R-8 96.5, R-2 98.0 (n=8) and 96.9 (n=16), doors 16, sound 16/16, carpet and built-up all unchanged.",
   "so_was_it_harmless": "ON THIS CORPUS, yes - the true closest pair happened to survive the subsample every time. That is luck, not design: the cap was still an absolute limit on a parsed quantity, hit on every sheet, and nothing downstream could have reported it if it HAD moved a bridge. Removing it costs nothing and closes the class.",
@@ -848,7 +915,7 @@
   "the_problem": "one global `DRISHTI_SEAL_FT=4` morphological close serves two jobs (17 Aug finding) and now demonstrably two different sheets: with the room cap gone, FIRST FLOOR's top block wants 5 ft (rooms 19 -> 22, n 16 -> 19, median 96.9 -> 98.4) while FLOOR PLAN needs 4 (at 5 ft it drops rooms 16 -> 13 and rooms_checked 8 -> 6, failing its own ratchet).",
   "FIRST_re_measured_the_existing_two_pass_seal": "`DRISHTI_SEAL_MODE=passes` (weld_bridges + collinear_bridges, built and tested 17 Aug) was re-run on TODAY's parser, on the theory that pair-built walls and 100% face painting might have rescued it. THEY DID NOT. FLOOR PLAN R-8 96.5 -> 74.0, footprint 1796.8 -> 1327.7, rooms 16 -> 15, n 8 -> 7; FIRST FLOOR rooms 19 -> 7, R-2 96.9 -> 0.0; GHATIKIA rooms 14 -> 4; BRICK WORK 13 -> 10. The 17 Aug verdict stands and the separated passes are NOT the answer. Measured, not assumed.",
   "why_they_underperform": "weld and collinear bridge between SEGMENT ENDS. The blanket close closes any gap in the RASTER, including between wall BODIES that no segment end faces. They are not the same operation and one cannot be swapped for the other.",
-  "PROPOSAL_A_recommended": "DERIVE THE SEAL PER SHEET FROM THE DRAWING'S OWN OPENINGS, still one kernel per sheet but no longer a constant. The p90 drawn opening width separates the corpus exactly the way the seal needs: FLOOR PLAN 3.11 ft, BRICK WORK 4.70, GHATIKIA 4.77, FIRST FLOOR 5.12 - against today's flat 4.0. That IS the 4-versus-5 tension, and it is already measurable. One variable, no new geometry, §0.1-compliant (derived from the drawing, not chosen).",
+  "PROPOSAL_A_recommended": "DERIVE THE SEAL PER SHEET FROM THE DRAWING'S OWN OPENINGS, still one kernel per sheet but no longer a constant. The p90 drawn opening width separates the corpus exactly the way the seal needs: FLOOR PLAN 3.11 ft, BRICK WORK 4.70, GHATIKIA 4.77, FIRST FLOOR 5.12 - against today's flat 4.0. That IS the 4-versus-5 tension, and it is already measurable. One variable, no new geometry, \u00a70.1-compliant (derived from the drawing, not chosen).",
   "PROPOSAL_A_caveat": "it must be derived from DRAWN LEAVES (the symbol path), not from our own cut widths, or it is circular - the cuts come from the mask the seal produced. BRICK WORK draws only 2 leaves (15 of its 17 doors are leafless), so it has no usable p90 and needs a stated fallback. That fallback is the part to rule on.",
   "PROPOSAL_B_if_A_fails": "per-WALL-RUN close: for each detected run, close gaps along it up to that run's own largest measured opening. This is `collinear_bridges` with a derived per-run distance instead of a global one, and it reuses code that exists - but it is the pass that already underperforms, so it is second.",
   "PROPOSAL_C_rejected": "per-WING or per-COMPONENT seal. FIRST FLOOR is now ONE wing holding both blocks, so per-wing yields a single value and changes nothing; and a doorway sits BETWEEN components by definition, so per-component has no well-defined owner."
@@ -934,7 +1001,7 @@
   "mirror_case_RULED_2026_08_25": {
    "ruling": "UNVERIFIED - neither improvement nor regression (Rahul).",
    "why_it_cannot_be_scored": "carpet falling while R-2 rises is genuinely BOTH readings: rooms shrinking inside their printed dimensions, AND an honest correction that stops counting space we never had. The second is not hypothetical - it is the 20 Aug footprint fix, where the 2.6 sqft lost was wall material being claimed at TWICE its drawn thickness ('losing material we never had is not losing coverage').",
-   "so_it_is_an_ASK": "flagged for a human, exactly as a blind instrument is - said out loud, never silently scored either way. Same shape as §0.2 open-side regions and plot_area_unknown.",
+   "so_it_is_an_ASK": "flagged for a human, exactly as a blind instrument is - said out loud, never silently scored either way. Same shape as \u00a70.2 open-side regions and plot_area_unknown.",
    "implemented": "carpet_r2_verdict returns verdicts prefixed `REGRESSION:` or `UNVERIFIED:` so a caller routes on the prefix without re-parsing the sentence. 6 unit tests.",
    "named_pattern": "A SIGNATURE THAT TWO OPPOSITE CAUSES BOTH PRODUCE IS AN ASK, NOT A SCORE."
   }
@@ -942,9 +1009,435 @@
  "door_position_pinned_2026_08_25": {
   "what": "`doors_placed_sound` extended from WIDTH to POSITION. A cut can match its drawn leaf's width perfectly and still sit on the wrong wall.",
   "hinge_on_cut": "RATCHETED at 12/12 on FLOOR PLAN. A real check: 6 of 12 before the 20 Aug fix put the hinge on the drawn symbol's own wall line, 12 of 12 after, and nothing pinned it until now.",
-  "leaf_inside_plan": "REPORTED, NOT RATCHETED — 11/12, and the one miss is CORRECT. It is `o6`, the door onto flat-1's UTILITY at hinge (24.88, 19.28); a utility projects beyond the wall ring by design (§10.1 / CE-5), so its leaf lying outside the footprint is right. Pinning 12/12 would demand a wrong answer.",
+  "leaf_inside_plan": "REPORTED, NOT RATCHETED \u2014 11/12, and the one miss is CORRECT. It is `o6`, the door onto flat-1's UTILITY at hinge (24.88, 19.28); a utility projects beyond the wall ring by design (\u00a710.1 / CE-5), so its leaf lying outside the footprint is right. Pinning 12/12 would demand a wrong answer.",
   "A_THIRD_CHECK_WAS_WRITTEN_AND_DROPPED": "'does the leaf lie in the quadrant the drawn arc sweeps'. `swing_area` is COMPUTED FROM the arc and `hinge`/`tip` ARE the arc's two ends, so it asks whether the arc's endpoints lie in the arc's own bounding box. It read 12/12 and could not read anything else. A CHECK THAT CANNOT FAIL IS NOT A CHECK. Testing the BUILT leaf against the drawn quadrant needs the leaf `scene_to_glb` makes, which does not exist at this layer.",
   "ROUTE_stated_per_the_24_Aug_rule": "every position check needs the drawn ARC, which only the door-symbol path produces. FLOOR PLAN is the ONLY sheet that reaches it (12 arc paths vs 0). The other three report their doors as `not_scorable` - BRICK WORK 17, GHATIKIA 45, FIRST FLOOR 54 - never as passes. AN ABSENT BRANCH IS NOT A GREEN RESULT. This metric is pinned on ONE ROUTE and the test says so.",
   "no_number_moved": "all four sheets identical on footprint, M-1, R-8, both R-2s, doors, width-soundness, carpet and built-up."
+ },
+ "ppf_sensitivity_sweep_2026_08_28": {
+  "status": "MEASURED, NO FIX. Chased because a reverted build showed footprint moving 1997.0 -> 1584.4 on a 1.4% ppf change - a property of the code, not of that change.",
+  "method": "GHATIKIA parsed at ppf_hint 6.6 to 8.8 (ppf_hint suppresses the refit, so the response is raw).",
+  "ANSWER_IT_STEPS_IT_IS_NOT_SMOOTH": "the plan EXTENT tracks ppf smoothly and monotonically (46.8x63.2 ft at 6.60 down to 36.6x48.2 at 8.80). The FOOTPRINT does not. Within a regime it moves about -0.6% per 0.02 ppf; at the step it moves 28.4%.",
+  "the_step_located": "between ppf 7.17 (footprint 1555.5) and 7.19 (1996.8): +28.4% footprint for a +0.28% ppf change - an amplification of about 100x. Fine sweep: 7.09 -> 1586.5, 7.11 -> 1577.0, 7.13 -> 1568.1, 7.15 -> 1573.6, 7.17 -> 1555.5, 7.19 -> 1996.8.",
+  "WHAT_CROSSES": "the OUTER RING BRIDGING. Accepted bridges go 135 -> 141 across the step: SIX new ring openings appear at once and enclose ~441 sqft. The rejected-span count does not change (2 either side), so these are gaps that were not FOUND before, not gaps that were found and refused.",
+  "candidate_mechanism_named_not_proven": "`_free_ring_endpoints` is called with `min_gap = 1.2 * norm_ppx`, a FIXED px floor, while the geometry it scans is positioned in px that scale with ppf. A gap measuring just under 1.2 ft at one scale measures just over it at another and springs into existence. Consistent with six appearing together, but NOT proven - proving it needs the per-gap widths at both scales.",
+  "other_steps_in_the_sweep": "6.80 -> 7.00 is -19.0% and 8.40 -> 8.80 is -22.9%, both with bridge-count changes (139 -> 134 and 90 -> 109). So the step at 7.18 is not special; the response is piecewise smooth with several discontinuities.",
+  "why_it_matters": "every ppf-changing mechanism - the scale refit, ppf_hint, a future column-box correction - lands somewhere on this curve, and near a step a small input change produces a large footprint change with no warning. `footprint <= plot` is our only physics check and it reads a quantity that can jump 28% on a 0.3% input.",
+  "NOT_PROPOSED": "no fix. Recorded so the next ppf change is judged against this curve rather than against a single point."
+ },
+ "route_floors_STATE_2026_08_28": {
+  "emitted_in_meta_route_3_of_9": [
+   "len(widths) >= 5 -> route.door_median",
+   "len(walls) < 5 -> route.stair_ladder_dedupe",
+   "len(ss) > 5 and longest < 0.6 -> route.door_symbol_paths"
+  ],
+  "inferable_from_what_IS_emitted_1": "len(struct) < 30 - `stair_ladder_dedupe` reads 'not reached' on the LAYERS route and 'ran (N walls)' on the GEOMETRY route, because its only caller is `_geometry_wall_segs`. FLOOR PLAN and BRICK WORK are layers; GHATIKIA and FIRST FLOOR are geometry. The MARGIN is still invisible - we see which side of 30 a sheet is on, never how close.",
+  "still_NOT_emitted_5": [
+   "len(gsegs) >= 8 (accepts the geometry route)",
+   "len(votes) < 8 (text scale)",
+   "len(close) < 8 and len(close) < 0.15 * len(votes) (text scale)",
+   "len(_live_toks) < 50 (dead-text switch)",
+   "len(_live_all) < 50 (schedule OCR switch)"
+  ],
+  "PROXIMITY_measured": {
+   "live text vs the 50 floor": "BRICK WORK 0 words, FLOOR PLAN 24, GHATIKIA 231, FIRST FLOOR 359. BRICK WORK and FLOOR PLAN are already PAST the floor (both take the OCR branch); GHATIKIA and FIRST FLOOR are 4.6x and 7.2x clear. Nothing is marginal.",
+   "door_median vs the 5 floor": "BRICK WORK 17, FLOOR PLAN 16, FIRST FLOOR 28, GHATIKIA 8. GHATIKIA AT 8 IS THE CLOSEST ANY SHEET SITS TO ANY MEASURED FLOOR - 1.6x - and its door count has moved 45 -> 22 -> 18 across the last three changes. Four fewer snapped doors and its median door width goes None and every caller falls back to NOMINAL_DOOR_FT.",
+   "ladder walls vs the 5 floor": "GHATIKIA 78, FIRST FLOOR 127. Far.",
+   "arcs": "a PER-PATH floor, so it does not aggregate. FLOOR PLAN 12 paths qualify, the other three 0."
+  },
+  "the_one_to_watch": "GHATIKIA's door_median sample at 8 against a floor of 5, on the sheet whose door count is least stable."
+ },
+ "min_gap_derived_BUILT_AND_REVERTED_2026_08_28": {
+  "status": "BUILT, FAILED ITS OWN PURPOSE AND THE JUDGED SET, REVERTED. Nothing applied.",
+  "the_hypothesis": "`_free_ring_endpoints` takes `min_gap = 1.2 * norm_ppx`. A gap's size in FEET is gap_points/ppf and scales with ppf; a flat 1.2 ft does not, so the ratio moves with ppf and gaps cross the threshold in batches. Deriving min_gap from the sheet's own measured wall thickness makes both sides scale together and the ratio ppf-INVARIANT.",
+  "the_constant_was_indeed_meaningless_across_sheets": "1.2 ft is 1.44 wall thicknesses on FLOOR PLAN (wall 0.834 ft), 2.85 on FIRST FLOOR (0.421), 3.59 on GHATIKIA (0.334) and 4.80 on BRICK WORK (0.250). One number, four meanings - and the function's own docstring already claimed it was 'one wall thickness'.",
+  "BUT_IT_DID_NOT_SMOOTH_THE_CURVE": "GHATIKIA re-swept with min_gap = 1.0 x measured wall: 7.13 -> 1166.2, 7.15 -> 1366.2 (+17.1%), 7.17 -> 1360.2, 7.19 -> 1531.3 (+12.6%), 7.30 -> 1739.3 (+13.6%), 8.80 -> 1000.0 (-36.6%). STILL STEPS, in places worse. Rahul's condition was that the response must be smooth or the cause is elsewhere and we stop.",
+  "and_it_failed_the_judged_set_on_every_sheet": "FLOOR PLAN footprint 1796.8 -> 1791.7 (must not move); FIRST FLOOR 4472.1 -> 4060.3 (-9.2%) with R-2 96.9 -> 95.7 and rooms_checked 16 -> 14 (must not move); GHATIKIA -41.0% with ANCHORS 69% -> 65% (anchors must not fall on any sheet); BRICK WORK -0.7% (no movement authorised there).",
+  "SO_THE_CAUSE_IS_ELSEWHERE": "with min_gap derived, the gap/wall ratio IS ppf-invariant and the footprint still steps - which RULES OUT the min_gap comparison as the mechanism. That is a real narrowing, not a failed guess.",
+  "next_candidate_named_NOT_chased": "`_free_ring_endpoints` bins wall runs by `key = (horiz, round(perp / join_tol))` and each end's accept/reject bound is the summed length of its BIN. Binning is discrete: as ppf changes, a segment's perpendicular position crosses a bin edge, the bin's total length changes, and the bound changes for EVERY end in that bin at once - which is exactly the observed signature of six bridges flipping together. `seg_px` are also integer pixel coordinates, so feature positions round differently at each ppf. Neither is measured.",
+  "standing_note": "judge any future ppf-changing mechanism against the SWEEP CURVE, not against a single point. The curve is recorded in ppf_sensitivity_sweep_2026_08_28."
+ },
+ "ppf_step_MECHANISM_MEASURED_2026_08_28": {
+  "status": "MEASURED, NOTHING BUILT. The binning was the wrong suspect and the real driver is upstream of it.",
+  "Q3_is_join_tol_derived": "NO. `join_tol = 0.35 * NORM_PPX` = 17.815 px = 0.35 FEET, fixed via the normalized raster and never derived from the drawing. Same family as `min_gap`'s 1.2 ft: a constant in feet compared against geometry whose feet depend on ppf.",
+  "Q1_Q2_THE_BINS_ARE_NOT_THE_DRIVER": "across the step the bin count barely moves (109 -> 110) but THE INPUT SET GROWS: `seg_px` reaching `_free_ring_endpoints` goes 309 -> 320 segments at exactly ppf 7.17 -> 7.19, and accepted end-pairs 137 -> 143. Eleven more segments arrive, six more bridges fire, footprint +28.4%. Bin-edge proximity actually FALLS across the step (36 of 309 within 5% of an edge at 7.17, 15 of 320 at 7.19), which is the opposite of what a bin-crossing explanation predicts.",
+  "NOT_THE_W_3_BAND_EITHER": "`wall_gap_pairs` in the 3-18 in band is FLAT at 360 across the step (7.13 / 7.15 / 7.17 / 7.19 all read 360, with 6 pairs sitting just under 3 in throughout). The wall-admission band is ruled out.",
+  "THE_ACTUAL_DRIVER_IS_THE_WING_BBOX": "the built wing's bbox grows from x 42.9 ft at ppf 7.17 to 43.7 ft at 7.19 - 0.8 ft wider - and `_in_wing` is a HARD BBOX TEST with pad 1.0 ft applied at nine call sites. Segments sitting near that boundary flip INTO the wing as a BATCH, which is why eleven arrive together and six bridges fire together. The wing bbox comes from mask components that change discretely with ppf, so a continuous input produces a stepped crop.",
+  "A_SECOND_AND_ARGUABLY_WORSE_INSTABILITY": "THE WING AUTO-PICK FLIPS. GHATIKIA's two views are near-identical, so the (rooms, doors, area) score that chooses between them is nearly tied: at ppf 7.09/7.11/7.13/7.17/7.19/7.21/7.30/7.50 the LEFT view is built (x0 -0.2), and at 7.15 the RIGHT one is (x0 53.6). A 0.3% ppf change swaps which of two drawings every number on this sheet describes. Not a footprint magnitude problem - an IDENTITY problem.",
+  "Q4_how_close_are_the_other_sheets_to_a_bin_edge": "FLOOR PLAN 14 of 142 segments (10%) sit within 5% of a bin edge; FIRST FLOOR 68 of 420 (16%); GHATIKIA 36 of 309 (12%) at ppf 7.17. No sheet is unusually exposed, and since bin crossing is not the driver this is a low-value number - recorded because it was asked for and because it RULES the binding hypothesis OUT rather than in.",
+  "PROPOSAL_not_built": [
+   "(1) The wing bbox should not be a hard rectangle that geometry falls in and out of. `_in_wing` already carries a 1.0 ft pad; the pad is what turns a continuous distance into a binary test. Either grow the pad to one wall thickness DERIVED per sheet, or - better - assign a segment to the wing whose component it TOUCHES rather than to a bbox it falls inside. That removes the batch-flip entirely and is measurable on GHATIKIA alone.",
+   "(2) The wing AUTO-PICK needs a stated tie-break, and on a two-views sheet the honest answer may be that there is no basis to prefer one view: report the tie rather than resolve it silently. Today a 0.3% input change silently swaps the subject of every number.",
+   "(3) NEITHER is urgent for correctness TODAY - GHATIKIA's shipped ppf is 7.189 and sits on the LEFT view in a flat region of the curve - but both are latent, and (2) can change a whole sheet's identity with no warning in any output."
+  ],
+  "judge_any_fix_on": "the ppf SWEEP CURVE (smoothness), the wing bbox x0 across the same sweep (stability), FLOOR PLAN and FIRST FLOOR unchanged, and dimension anchors not falling on any sheet.",
+  "CORRECTION_2026_08_28_the_wing_bbox_is_ALSO_ruled_out": "I reported the wing bbox as the driver because it widened 42.9 -> 43.7 ft across the step while `seg_px` grew 309 -> 320. THAT WAS A CORRELATION, NOT A CAUSE. `_seg_px` is built at pdf_vector:3827 from ALL of `struct`, unfiltered by wing - `_in_wing` never touches it. Traced further: `keep_structural_lines` RECEIVES 309 at ppf 7.17 and 320 at 7.19, and `dedupe_segments` passes both through unchanged, so struct is already 309/320 BEFORE either. The growth is upstream in `_geometry_wall_segs` (GHATIKIA is on the geometry route), which runs its own W-3 signature pairing at a ppf-dependent scale - even though `wall_gap_pairs` in the 3-18 in band is FLAT at 360 across the step. SO THE BUILD OF PROPOSAL (2) - component-touch membership instead of the bbox - WAS NOT STARTED: its premise is false and it could not have smoothed the curve. Ruled out so far: min_gap, the run binning, the W-3 band, and the wing bbox. NEXT AND NOT CHASED: why `_geometry_wall_segs` returns 11 more segments for a 0.28% ppf change."
+ },
+ "wing_pick_ANNOUNCED_2026_08_28": {
+  "status": "SHIPPED. No number moved on any sheet.",
+  "why": "a 0.3% ppf change was measured swapping which of GHATIKIA's two near-identical views gets built - LEFT at ppf 7.13/7.17/7.19, RIGHT at 7.15. Every number on the sheet then describes a DIFFERENT DRAWING and nothing in any output said so. A magnitude error can be measured; an IDENTITY swap cannot.",
+  "what_is_emitted": "meta.route.wing_pick = {chosen, of, score {rooms, doors, area_px}, runner_up {...}, margin {rooms, doors}, near_tie, rule}. Single-wing sheets read 'not reached (single wing)'.",
+  "GHATIKIA_today": "chosen 0 of 2, score 9 rooms / 14 doors, runner-up wing 1 at 8 / 13, MARGIN 1 room and 1 door, near_tie TRUE.",
+  "the_thinness_test_is_not_an_invented_tolerance": "near_tie fires when ONE ROOM OR ONE DOOR would flip the pick. The unit IS a room and a door - the two signals the score is built from - and the measured failure is exactly a one-unit swing. No tie-break was invented: the tie is REPORTED (\u00a70.2 ASK), never resolved.",
+  "the_ask_verbatim": "wing 0 beat wing 1 by only 1 room(s) and 1 door(s) (9/14 vs 8/13). ONE ROOM OR ONE DOOR WOULD SWAP WHICH DRAWING EVERY NUMBER ON THIS SHEET DESCRIBES, and a 0.3% change in scale was measured doing exactly that. If this sheet holds two views of the same plan there is no basis in the drawing to prefer one. Which view do you want measured?",
+  "INDEX_IS_NOT_IDENTITY_2026_08_28": {
+   "finding": "the scorecard session found, and this session reproduced, that `wing.index` stays 0 and `wing.count` stays 2 while the sheet builds the OPPOSITE HALF. Measured origins: ppf 7.1485 origin x 53.6 (RIGHT view), 7.150 origin x 53.6 (RIGHT), 7.17 origin x -0.2 (LEFT), 7.19 origin x -0.2 (LEFT), shipped 7.189 origin x -0.2 (LEFT).",
+   "it_FLICKERS_it_is_not_a_boundary": "right view at 7.1485 AND 7.1500 with LEFT on both sides - an instability, not a threshold crossing.",
+   "no_numeric_instrument_can_see_it": "footprint moves under 1% across a swap that built the opposite half of the sheet.",
+   "fix_emission_only": "meta.route.wing_pick now carries `origin_ft` and `bbox_ft` for the CHOSEN wing and `origin_ft` for the runner-up. The origin is what identifies which half was built; the index is not. The scorecard has fixed its own fingerprint the same way so the two sessions cannot disagree about which half was measured.",
+   "HONEST_LIMIT": "the \u00a70.2 near-tie ASK does NOT fire at the flicker point - at ppf 7.1485 and 7.150 the margin is wider than one room/door and `near_tie` reads False. The ASK catches the shipped state; only the ORIGIN catches the flicker. Both are needed and neither is sufficient alone."
+  }
+ },
+ "ppf_step_CONSTANT_NAMED_2026_08_28": {
+  "status": "MEASURED. THE CONSTANT IS NAMED. NOT FIXED, per Rahul.",
+  "THE_CONSTANT": "`th_max = 0.92 * ppf` in `_geometry_wall_segs` (pdf_vector.py:850) - the 11-inch CEILING of a wall-gap band that is LOCAL TO THAT FUNCTION.",
+  "units": "POINTS. `0.92 * ppf` is 11.04 inches expressed in page points, so the threshold scales with ppf while the drawn geometry it is compared against is FIXED in points. A pair's gap in INCHES is gap_pt/ppf*12, so raising ppf makes every gap read FEWER inches and pairs slide UNDER the ceiling.",
+  "MEASURED_CROSSING_between_ppf_7_17_and_7_19": {
+   "lines entering the pairing": "685 at BOTH ppf - identical",
+   "segments dropped by the L < 6 pt floor": "1010 at BOTH - identical, so that constant does NOT cross here",
+   "th_max in points": "6.5964 -> 6.6148",
+   "pairs admitted": "188 -> 197 (+9)",
+   "pairs sitting within 1% ABOVE the ceiling": "26 at ppf 7.17 -> 0 at ppf 7.19 - the cluster crosses en masse",
+   "resulting struct": "309 -> 320 segments, and accepted ring bridges 137 -> 143, footprint +28.4%"
+  },
+  "WHY_wall_gap_pairs_STAYED_FLAT_AT_360": "it uses the W-3 band, 3-18 in. `_geometry_wall_segs` uses its OWN band, 3-11.04 in. GHATIKIA has a cluster of pairs sitting right at 11 in, nowhere near 18, so the same sheet crosses one ceiling and not the other.",
+  "THIS_IS_A_SITE_THE_21_AUG_W_3_UNIFICATION_MISSED": "that change introduced WALL_GAP_MIN_IN / WALL_GAP_MAX_IN + `wall_gap_band()` and replaced the hardcoded band in FIVE places - `paired_extent`, `_paired_indices`, `wall_rects`, `keep_structural_lines`, `gap_openings`. `_geometry_wall_segs` is a SIXTH site and still carries `0.25 * ppf, 0.92 * ppf` inline, with a different ceiling. TENTH multi-purpose or duplicated constant this month.",
+  "also_present_in_the_same_function_not_crossing_here": [
+   "`L < 6` - a minimum segment length in POINTS, i.e. 0.84 ft on GHATIKIA and 0.21 ft on FLOOR PLAN. Page-unit constant, same class as BORDER_MAXLEN_PT.",
+   "`BORDER_MAXLEN_PT` (900 pt) - still live here, one of the three remaining call sites.",
+   "`min_ovl = 2.0 * ppf` - a 2 ft overlap floor, scales with ppf the same way th_max does.",
+   "the horizontal/vertical test `abs(dy) < 0.5` in POINTS - which is also why the terrace hatch's 45-degree strokes are invisible to the wall reader."
+  ],
+  "not_fixed": "Rahul: name the constant, do not fix it."
+ },
+ "W3_sixth_site_BUILT_AND_REVERTED_2026_08_29": {
+  "status": "BUILT, SMOOTHED THE CURVE EXACTLY AS PREDICTED, AND REVERTED under standing rule 6. Nothing applied.",
+  "what_was_built": "`_geometry_wall_segs` switched from its private `0.25 * ppf, 0.92 * ppf` (3-11.04 in) to `wall_gap_band(ppf)` (3-18 in), the same call the other five W-3 sites use.",
+  "IT_DID_SMOOTH_THE_CURVE": "GHATIKIA ppf sweep after the change: 7.13 -> 2178.5, 7.15 -> 2174.4 (-0.2%), 7.1485 -> 2167.1 (-0.3%), 7.17 -> 2162.7 (-0.2%), 7.18 -> 2156.4 (-0.3%), 7.19 -> 2150.6 (-0.3%), 7.21 -> 2136.8 (-0.6%), 7.30 -> 2089.5 (-2.2%). NO STEP. The +28.4% cliff is gone and the diagnosis is confirmed.",
+  "AND_THE_WING_FLICKER_WENT_WITH_IT": "the wing origin holds at x -0.2 across 7.13-7.30, including 7.1485 and 7.150 where it previously flipped to the RIGHT view. The flicker was downstream of the same crossing.",
+  "BUT_IT_FAILED_THE_JUDGED_SET_ON_TWO_COUNTS": {
+   "FIRST FLOOR moved": "footprint 4472.1 -> 4720.8 (+5.6%), M-1 1.09 -> 1.13. It was required not to move. (R-2 rose 96.9 -> 98.4 at n=16 and anchors rose 60 -> 62, so the movement is not obviously bad - but it is movement on a sheet that was fenced.)",
+   "GHATIKIA anchors FELL": "69% -> 62%, because the change knocked out the SCALE REFIT: different wall segments -> different rooms -> a ratio sample that no longer meets the guard, so ppf reverted 7.189 -> 8.8 and R-2 collapsed 83.5 -> 61.3. The wing pick also swapped to the RIGHT view (origin 43.5).",
+   "FLOOR PLAN and BRICK WORK": "IDENTICAL - both are on the LAYERS route and never call `_geometry_wall_segs` at all."
+  },
+  "ARE_THE_NEWLY_ADMITTED_PAIRS_REAL_WALL": "PROBABLY NOT, and this is the substantive objection to the unification rather than to the fix. Newly admitted 11-18 in pairs: GHATIKIA 78 (against 179 in the old 3-11 band, +44%), FIRST FLOOR 48 (against 273), FLOOR PLAN 28 (against 39, +72% - but harmless there, it never runs). Median overlap 3.7-5.0 ft, so they are long enough to look like walls.",
+  "THE_REAL_PROBLEM_IS_THAT_W_3_ITSELF_IS_A_CONSTANT_IN_INCHES": "18 in is 1.8x FLOOR PLAN's own measured wall (10.0 in) but 3.6x FIRST FLOOR's (5.1 in) and 4.5x GHATIKIA's (4.0 in). The old private ceiling of 11 in was 1.1x / 2.2x / 2.7x. SO UNIFYING TO 3-18 IN REPLACES A BAND THAT WAS TOO NARROW ON ONE SHEET WITH ONE THAT IS TOO WIDE ON THREE. Both are absolute inch constants; neither is derived from the sheet's own measured wall thickness, which `_wall_thickness_ft` already provides.",
+  "what_this_means_for_the_fix": "the diagnosis is CONFIRMED and the mechanism is closed: the step was the private ceiling, and unifying removes it. But the unified band is not the right target, because W-3's own numbers are not derived either. A band expressed as a MULTIPLE OF THE SHEET'S MEASURED WALL would remove the step AND keep the admission tight - that is a different, larger change touching all six sites, and it is not this one.",
+  "not_applied": "reverted; all four sheets back to baseline (1247.1 / 1796.8 / 1997.0 / 4472.1, ppf 51.8 / 28.473 / 7.189 / 5.7)."
+ },
+ "other_three_constants_PROXIMITY_2026_08_29": {
+  "L_lt_6_pt": {
+   "what": "minimum segment length in `_geometry_wall_segs`, in POINTS",
+   "in_feet_per_sheet": "BRICK WORK 0.12 ft \u00b7 FLOOR PLAN 0.21 \u00b7 GHATIKIA 0.83 \u00b7 FIRST FLOOR 1.05",
+   "segments_it_drops": "81343 / 56268 / 1010 / 597",
+   "within_10pct_of_the_floor": "158 / 343 / 16 / 8 segments sit between 6.0 and 6.6 pt",
+   "verdict": "NOT within reach of crossing on a small ppf change - it is a POINT constant and points do not move with ppf. BUT it means something wildly different per sheet: on FIRST FLOOR it discards anything under 1.05 ft, which is longer than many real jamb stubs, while on BRICK WORK it discards only 0.12 ft. Reported, not chased."
+  },
+  "BORDER_MAXLEN_PT_900": {
+   "in_feet_per_sheet": "BRICK WORK 17 ft \u00b7 FLOOR PLAN 32 \u00b7 GHATIKIA 125 \u00b7 FIRST FLOOR 158",
+   "longest_line_actually_kept": "14.9 / 25.6 / 45.6 / 76.1 ft",
+   "verdict": "NO sheet is near it today - the longest kept line is 47-88% of the cap on the two short-scale sheets and 36% on FIRST FLOOR. BRICK WORK is the closest (14.9 of 17 ft = 88%). It bites hardest on the sheets drawn at the largest scale, which is the same arbitrariness recorded on 12 Aug. Still live at three call sites."
+  },
+  "abs_d_lt_0_5_pt_the_H_V_test": {
+   "what": "a line is horizontal or vertical only if its other axis varies by under 0.5 POINTS; anything else is DISCARDED before any wall test",
+   "diagonals_dropped": "BRICK WORK 2186 of 85218 (3%) \u00b7 FLOOR PLAN 8687 of 63501 (14%) \u00b7 GHATIKIA 165 of 1799 (9%) \u00b7 FIRST FLOOR 360 of 1673 (22%)",
+   "verdict": "not a THRESHOLD that can be crossed - it is a categorical exclusion, and FIRST FLOOR loses 22% of its linework to it. This is the constant that makes the terrace hatch's 19 diagonal strokes invisible to the wall reader, which is why the band rule had to be built on `cover` instead. Reported, not chased."
+  }
+ },
+ "derived_band_NOT_POSSIBLE_2026_08_29": {
+  "status": "MEASURED, NOT BUILT. Criteria 1 and 2 cannot both be satisfied by ANY choice of multiples, and Rahul asked for that to be reported rather than tuned around.",
+  "THE_ARITHMETIC": "the current W-3 band is ABSOLUTE - 3 to 18 inches for every sheet. A band expressed as a MULTIPLE of the sheet's own measured wall can agree with an absolute band at exactly ONE wall thickness. FLOOR PLAN's wall is 10.0 in and GHATIKIA's is 4.0 in, 2.5x apart, so no single multiple pair reproduces today's admission on both.",
+  "MEASURED_admitted_pairs_per_sheet": {
+   "band 3-18 in (today)": "FLOOR PLAN 76 \u00b7 FIRST FLOOR 323 \u00b7 GHATIKIA 360 \u00b7 BRICK WORK 104",
+   "0.30-1.80x (the multiples that reproduce FLOOR PLAN exactly, since 0.30x10=3 and 1.80x10=18)": "FLOOR PLAN 76 IDENTICAL \u00b7 FIRST FLOOR 222 (-31%) \u00b7 GHATIKIA 256 (-29%) \u00b7 BRICK WORK 101",
+   "0.75-4.50x (the multiples that reproduce GHATIKIA exactly, since 0.75x4=3 and 4.5x4=18)": "FLOOR PLAN 52 (-32%) \u00b7 FIRST FLOOR 354 \u00b7 GHATIKIA 360 IDENTICAL \u00b7 BRICK WORK 125",
+   "0.35-2.75x (a compromise)": "FLOOR PLAN 74 \u00b7 FIRST FLOOR 338 \u00b7 GHATIKIA 365 \u00b7 BRICK WORK 153 - moves everything",
+   "0.40-2.00x": "FLOOR PLAN 74 \u00b7 FIRST FLOOR 263 \u00b7 GHATIKIA 260 \u00b7 BRICK WORK 115 - moves everything"
+  },
+  "AND_THE_DATA_SAYS_A_MULTIPLE_IS_THE_WRONG_MODEL_ANYWAY": "gap histograms in ABSOLUTE INCHES: FLOOR PLAN peaks at 5, 10 and 12 in; GHATIKIA at 4, 5, 9 and 11; FIRST FLOOR at 4, 5 and 10; BRICK WORK at 1, 2, 3, 6 and 8. THREE OF FOUR SHEETS SHOW THE SAME TWO ABSOLUTE CLASSES - roughly 4-5 in partitions and 9-11 in external walls. Masonry dimensions are ABSOLUTE; they do not scale with anything on the sheet.",
+  "so_the_median_is_not_a_SCALE_it_is_a_MIX": "`_wall_thickness_ft` returns the median gap, which reports WHICH CLASS DOMINATES that sheet - 10 in where external walls dominate (FLOOR PLAN), 4 in where partitions do (GHATIKIA), 5 in between (FIRST FLOOR). Dividing by it therefore does not normalise anything: it rescales by an accident of how many of each class the sheet happens to draw.",
+  "THE_ACTUAL_DEFECT_LOCATED_EXACTLY": "the private ceiling of 11.04 in sat ON TOP OF GHATIKIA'S 11 in EXTERNAL-WALL PEAK (30 pairs at 11 in, 86 at 9 in). That is why 26 pairs sat within 1% above it and crossed EN MASSE for a 0.28% ppf change. THE THRESHOLD WAS PLACED WHERE A REAL WALL CLASS LIVES. The unified 18 in is not near any peak on any sheet, which is why `wall_gap_pairs` never stepped.",
+  "WHAT_THIS_MEANS_FOR_THE_FIX": "the band should stay ABSOLUTE, because masonry is. The rule is not 'derive it from the wall' but 'NO THRESHOLD MAY SIT ON A CLUSTER'. 3-18 in satisfies that on all four sheets; 3-11.04 in does not, because 11 in IS a wall class. The 29 Aug revert stands and the remaining question is narrower than it looked: not what multiple, but whether unifying to 3-18 in can be made to hold FIRST FLOOR and GHATIKIA's refit - which is the second-order collapse, not the band.",
+  "not_built": "no multiple was chosen. Reporting the impossibility, per Rahul's instruction."
+ },
+ "threshold_cluster_INSTRUMENT_2026_08_29": {
+  "status": "BUILT (pure + unit-tested), REPORTED. No parse number moved - it reads nothing back.",
+  "what": "`gap_peaks_in(gaps_in)` and `threshold_margins(gaps_in, thresholds, sizing=...)`. For each threshold: the nearest gap-histogram peak, the distance in inches, and how many pairs sit within 5% of it - the population that would cross TOGETHER.",
+  "it_reproduces_the_known_cliff": "GHATIKIA `geom_max` 11.04 in -> nearest peak 11, distance 0.04, 30 pairs within 5%. Flagged. That is the cliff that cost this thread a week, found by the instrument from the histogram alone.",
+  "A_NEW_LATENT_CLIFF_FOUND": "BRICK WORK: **W3_min = 3.0 in sits EXACTLY on its dominant 3 in peak, with 38 pairs within 5%**. That floor is LIVE AT FIVE SITES, and BRICK WORK's median wall IS 3.0 in - its dominant wall class sits on the admission floor. A small scale change there admits or drops 38 pairs at once. This is the sheet whose door count has moved 11 -> 12 -> 20 -> 17 with no instrument able to judge it.",
+  "A_STRUCTURAL_FINDING_worth_more_than_either": "`min_flank = W` is on a peak on ALL FOUR sheets (38 / 18 / 122 / 61 pairs within 5%) - and it must be, BY CONSTRUCTION. W is the MEDIAN of the same distribution min_flank filters, so it is placed at the MODE: the single densest point, where the most pairs are within reach of it. DERIVING A SELECTING THRESHOLD FROM THE MEDIAN OF THE DISTRIBUTION IT FILTERS PUTS IT IN THE WORST POSSIBLE PLACE. `face_tol = W/2` lands on a peak on two sheets the same way.",
+  "the_instrument_needed_a_SPLIT_or_it_cries_wolf": "a MEDIAN necessarily lands on its own dominant peak - that is what a median does, not a cliff - and everything derived from it inherits the position. `sizing` marks thresholds that MEASURE rather than SELECT; only a SELECTING threshold on a peak WITH a population is a latent cliff. Without the split it flagged 20 rows across four sheets.",
+  "peaks_per_sheet": {
+   "FLOOR PLAN": "5, 10, 12 in",
+   "GHATIKIA": "2, 3, 4, 5, 9, 11, 14, 20, 30 in",
+   "FIRST FLOOR": "2, 4, 5, 10, 14, 15, 19, 21, 22 in",
+   "BRICK WORK": "1, 2, 3, 6, 7, 8, 32 in"
+  },
+  "EMITTED_2026_08_31": "now on `meta.threshold_margins`: {gap_peaks_in, wall_in, thresholds[], latent_cliffs[]}, each threshold carrying value_in, nearest_peak_in, distance_in, pairs_within_5pct, kind (selecting|sizing) and latent_cliff. ONE DEFINITION, computed in the parser, for the scorecard to consume rather than re-derive - two derivations of one number is the wing_at/wing_pick trap. Corpus read: BRICK WORK [W3_min, geom_min, min_flank] \u00b7 FLOOR PLAN [face_tol, min_flank] \u00b7 GHATIKIA [face_tol, min_flank, geom_max] \u00b7 FIRST FLOOR [min_flank]. No parse number moved."
+ },
+ "refit_guard_ANSWERED_2026_08_29": {
+  "question": "can unifying to 3-18 in hold FIRST FLOOR's footprint and GHATIKIA's refit? What would have to hold for the refit to survive, and should the guard change?",
+  "MEASURED_under_the_unified_band": "GHATIKIA's refit reads median 0.84, stdev 0.168, SIGNAL/NOISE 0.95 - against a guard of 1.0. IT MISSES BY 0.05. Today, under the private band, it reads median 0.817, stdev 0.105, S/N 1.74.",
+  "what_changed_is_the_SCATTER_not_the_signal": "the median barely moved (0.817 -> 0.84). The stdev rose 0.105 -> 0.168, +60%. `rooms_checked` fell 12 -> 8 and the wing pick swapped to the RIGHT view (origin 43.5). For the refit to survive, the stdev would have to stay at or below 0.16 with that median - it is 0.168, missing by about 5%.",
+  "SHOULD_THE_GUARD_CHANGE_NO": "the guard states that a scale error is SYSTEMATIC, so its deviation must exceed the sample's own scatter. Loosening it to admit 0.95 would be tuning to a target, and it is precisely the circularity the guard exists to prevent - it is the thing that stops us fitting noise as scale. Missing by 5% is missing.",
+  "THE_REFIT_COLLAPSE_IS_A_SYMPTOM_NOT_A_GUARD_PROBLEM": "the unified band raised the scatter by 60% because it admitted 78 more pairs on this sheet, at 11-18 in - 2.75x to 4.5x GHATIKIA's own 4 in wall. Those are not walls. Changing the guard would MASK the over-admission rather than fix it, and the instrument above says why the over-admission happens: the thresholds are in the wrong places relative to the sheet's own wall classes.",
+  "so_the_narrowed_question_is_answered": "unifying to 3-18 in CANNOT hold both, and the reason is not the guard. The band admits non-walls on the two geometry-route sheets; the refit collapse and the FIRST FLOOR +5.6% are the same cause seen twice."
+ },
+ "unified_band_admits_NON_WALL_2026_08_31": {
+  "status": "MEASURED, NO FIX. Answers whether 3-18 in is too wide or the geometry route filters differently.",
+  "ANSWER_THE_BAND_IS_TOO_WIDE": "of the pairs the unified 3-18 in band newly admits over the private 3-11.04 in ceiling: GHATIKIA 53, FIRST FLOOR 48.",
+  "test_1_phantom_a_third_drawn_line_runs_between_the_two_faces": "GHATIKIA 22 of 53 = 42%; FIRST FLOOR 10 of 48 = 21%. The parser's own phantom test already names these as not-a-wall.",
+  "test_2_the_sharper_one_do_both_faces_ALREADY_belong_to_a_real_3_11_in_wall": {
+   "GHATIKIA": "BOTH faces already in a real wall 14 (26%) - the pair SPANS A ROOM between two opposite walls \u00b7 ONE face does 30 (57%) - a real wall face paired with a stray line across a gap \u00b7 NEITHER 9 (17%) - the only candidates for genuine new wall",
+   "neelachala FIRST FLOOR": "BOTH 16 (33%) \u00b7 ONE 20 (42%) \u00b7 NEITHER 12 (25%)"
+  },
+  "so": "83% of GHATIKIA's and 75% of FIRST FLOOR's newly admitted pairs RE-USE A FACE THAT IS ALREADY ACCOUNTED FOR IN A REAL WALL. They are not new walls; they are a real wall face pairing with something 11-18 in away. At best 9 and 12 pairs could be genuine.",
+  "IT_IS_NOT_THAT_THE_GEOMETRY_ROUTE_FILTERS_DIFFERENTLY": "FLOOR PLAN already runs the 3-18 in band at the five W-3 sites and does not suffer, because its wall is 10.0 in so 18 in is only 1.8x and cannot reach across a room. On GHATIKIA 18 in is 4.5x its 4.0 in wall and on FIRST FLOOR 3.6x its 5.1 in. THE SAME ABSOLUTE BAND REACHES ACROSS A ROOM ON A THIN-WALLED SHEET AND NOT ON A THICK-WALLED ONE - standing rule 1 seen from the other side.",
+  "what_this_settles": "the band is NOT the fix. Unifying to 3-18 in would admit mostly non-wall on exactly the two sheets it was meant to help, and that is why FIRST FLOOR moved +5.6% and GHATIKIA's refit collapsed - ONE cause seen twice, as read."
+ },
+ "close_the_loop_2026_08_31": {
+  "scope": "overlay every plan, list every out-of-bounds defect, classify, fix what is fixable and judged.",
+  "instrument_gap_closed_first": "the overlay never drew RAILINGS or DUCTS although the parser detects both, so a duct we found and a duct we missed looked identical. `overlay.build_layers` now fills `railing` and a new `ducts` layer. The module's own rule says an empty layer must mean 'found nothing'.",
+  "FIXED_1_wing_filtered_seg_px": {
+   "defect": "`_footprint_from_walls` is handed `_seg_px`, built from ALL of `struct` with no wing filter, so on a multi-wing sheet the outer ring bridged into the DISCARDED view. Seen in the overlay first: GHATIKIA's `footprint_ext` ran diagonally across the gutter to a column in the other drawing, with a door drawn on it.",
+   "class": "A - real defect, general cause, GHATIKIA is judged (R-2 >= 83.5 n>=12, anchors)",
+   "before_after": "GHATIKIA footprint 1997.0 -> 1738.4 (-12.9%), footprint x max 53.7 -> 44.1, stray openings 1 -> 0. The 258.6 sqft removed is the 9.6 x ~27 ft strip in the other view.",
+   "held": "anchors 69% -> 69%, R-2 83.5 -> 83.6 at n=12, M-1 1.07. FLOOR PLAN / FIRST FLOOR / BRICK WORK unchanged to the decimal (single wing -> `_in_wing` is a no-op)."
+  },
+  "FIXED_2_wing_filtered_the_balcony_builder": {
+   "defect": "`_rail_runs_raw` is traced BEFORE the wing split - correctly, it sizes the canvas - but the BALCONY builder consumed it unfiltered. GHATIKIA's right view mirrors its left at dx ~53.3 ft, so a mirrored run became a 20.0 sqft balcony ROOM at x 57.7-60.8, in a drawing we did not build.",
+   "class": "A",
+   "before_after": "GHATIKIA rooms 14 -> 13, balcony 39.6 -> 19.6 (-20.0 exactly), rooms in the discarded view 1 -> 0.",
+   "held": "footprint 1738.4, R-2 83.6 n=12, anchors 69%. Other three sheets unchanged.",
+   "note": "the exported `scene.railings` is filtered too, so the overlay stops drawing the other view's runs (38 -> 19 segments on GHATIKIA)."
+  },
+  "MEASURED_3_doors_missing_a_jamb": {
+   "defect": "`doors_placed_sound` scores WIDTH (against a drawn leaf, or a drawn gap when leafless) and never asks whether the opening has wall on BOTH SIDES.",
+   "measured": "doors with both jambs - FLOOR PLAN 15/16 \u00b7 BRICK WORK 15/15 \u00b7 GHATIKIA 13/18 \u00b7 neelachala FIRST FLOOR 31/54, while that sheet's `sound` reads 42/54.",
+   "class": "B, and NOT fixed - the hard line applies. FIRST FLOOR cannot judge door placement (0 arc paths, so every position check is `not_scorable`), and FLOOR PLAN is 1-of-16, far too thin to validate a placement fix against. A fix would move almost nothing on the judged sheet and a lot on the unjudgeable one: that is the per-sheet hack the rule forbids.",
+   "done": "emitted as `doors_placed_sound.both_jambs`, additive, no number moved. The defect is now visible instead of invisible."
+  },
+  "MY_OWN_AUDIT_WAS_WRONG_TWICE_AND_THAT_IS_THE_LESSON": "(1) 'rooms overlapping wall material' flagged 2 rooms on FLOOR PLAN and 2 on BRICK WORK - all four are DUCTS, which are wall-ringed VOIDS by design (\u00a74 D-5), so they overlap wall material correctly. (2) 'doors on no wall' flagged 6 on FIRST FLOOR and 1 on BRICK WORK - but a gap door sits IN the gap by construction, so wall-under-the-cut is the wrong test; the right one is wall on both flanking sides. THIRD AND FOURTH TIME AN AUDIT'S OWN GEOMETRY WAS THE FAULT, after the 14.3 ft 'missing wall' and the `doors_placed_sound` clustering.",
+  "STILL_OPEN_all_wrong_size_rooms_are_MERGES": "applying the corrected discriminator to every room scoring under 80%: GHATIKIA `dining` 271.7 (3 labels) and `stairs` 57.1 (1 label, sides 0.94/2.19 - merged on one axis); FIRST FLOOR 4 blobs (5, 4, 5 and 2 labels) plus 3 single-label anisotropic rooms. NOT ONE IS SCALE-LIKE on any sheet, which is consistent with the 29 Aug conclusion that GHATIKIA's scale is now correct and the residual is boundary disease."
+ },
+ "two_pass_ambiguity_2026_08_31": {
+  "status": "MEASURED AND STAMPED. `meta.parse_pass` now ships on every scene; region records carry `pass` and `ppf` too.",
+  "what": "`parse` re-enters itself once for the scale refit, and THE TWO PASSES ARE EACH INTERNALLY CONSISTENT WHILE DISAGREEING ABOUT NEARLY EVERYTHING. Only GHATIKIA refits today, so only GHATIKIA has two passes.",
+  "the_full_diff_on_GHATIKIA": {
+   "ppf": "8.80 -> 7.189",
+   "regions": "2 -> 2 (same count, DIFFERENT BASIS)",
+   "region basis": "'split: a band of zero ink across the full extent' -> 'already separate at the 8 ft proximity stage'",
+   "WHICH HALF IS BUILT": "origin x 43.5 (the RIGHT view) -> x -0.2 (the LEFT view). THE TWO PASSES BUILD DIFFERENT DRAWINGS.",
+   "rooms": "7 -> 13",
+   "doors": "20 -> 8",
+   "unverified doors": "2 -> 10",
+   "windows": "19 -> 14",
+   "columns": "20 -> 20 (the only count that holds)",
+   "footprint": "1099.0 -> 1738.4",
+   "M-1": "1.15 -> 1.07",
+   "R-2": "60.7 at n=7 -> 83.6 at n=12",
+   "carpet": "659.3 -> 1167.4",
+   "anchors": "56% -> 69%",
+   "measured wall": "6.22 in -> 4.01 in (a 55% difference in the sheet's OWN wall)",
+   "latent cliffs": "[W3_min, geom_min, face_tol] -> [face_tol, min_flank, geom_max]"
+  },
+  "SO_THE_AMBIGUITY_IS_WIDER_THAN_THE_SPLITTER": "every emitted field except the column count differs between passes, including which half of the sheet is built and the measured wall thickness that six other thresholds are derived from. A value from this sheet without its pass is ambiguous, and a diff that mixes passes compares two different parses.",
+  "why_the_basis_differs_and_both_are_right": "at ppf 8.80 the two views need the empty-band split; at 7.189 every distance in FEET is larger, so the gutter already exceeds the 8 ft proximity threshold and they never union. Neither pass is wrong.",
+  "named_pattern": "A RE-ENTRANT PARSE PRODUCES TWO INTERNALLY-CONSISTENT ANSWERS, AND A VALUE WITHOUT ITS PASS IS AMBIGUOUS. Same class as index not being identity.",
+  "emitted": "meta.parse_pass = {index, ppf, from_scale_refit}; each region carries `pass` and `ppf`. Corpus: BRICK WORK / FLOOR PLAN / FIRST FLOOR pass 1, GHATIKIA pass 2 from the refit."
+ },
+ "region_ask_2026_08_31": {
+  "status": "SHIPPED (\u00a713 R-4). Emission + ASK only; nothing built differently yet.",
+  "keyed_by_origin_never_index": "each region carries `key` = 'r@{x},{y}' from its ORIGIN. An index reorders the moment enumeration changes and every pinned number then refers to a different building - the same lesson as `wing_pick.origin_ft`. GHATIKIA: `r@0,0` (built) and `r@53,0`.",
+  "the_ask": "on a sheet with more than one region, a \u00a70.2 ASK enumerates every region with its key, size, position, title text and whether it was built, then asks what each one IS - a floor (stilt, basement, first, typical, terrace) or a block of one floor - and, where no title can be read, WHAT FLOOR IS IT.",
+  "R_8_READS_BLIND_WHEN_THE_STATEMENT_CANNOT_BE_ATTRIBUTED": "if a printed area statement is read on a sheet with more than one region, the per-floor figures (built_up, carpet, common, stilt, flats) are DROPPED and R-8 goes blind for both regions, with an ASK. It is never attached to the built region, and never to the larger. THE PLOT SURVIVES - a site area is not per-region. NOT EXERCISED BY THIS CORPUS: the only sheet with a printed statement (FLOOR PLAN) has ONE region, so this is a defensive guard and is unproven on real data.",
+  "supersedes": "the wing near-tie ASK of 28 Aug. There was never a tie-break to invent: the question was always which plan the user wants, and R-4 asks it properly.",
+  "nothing_moved": "all four sheets identical - fp 1247.1 / 1796.8 / 1738.4 / 4472.1, anchors 70/79/69/60%, R-2 98.0 (n=8), 83.6 (n=12), 96.9 (n=16), M-1 1.13/1.06/1.07/1.09."
+ },
+ "reparse_trigger_MEASURED_2026_08_31": {
+  "status": "MEASURED, NOT CHANGED.",
+  "what_the_trigger_IS": "`scale_refit_ratio`'s guard, and it has TWO parts. (1) A DERIVED comparison: refit when |median - 1.0| > stdev of the same sample, i.e. the systematic part must exceed the scatter. NO CONSTANT - both sides are measured from the sheet. (2) A FIXED COUNT FLOOR: `min_sides = 8`. That IS a constant, and it is the ELEVENTH.",
+  "units": "(1) is DIMENSIONLESS - a ratio of a ratio-deviation to a ratio-stdev, so it carries no unit and cannot drift with scale. (2) is a COUNT of side samples.",
+  "margin_of_the_derived_part": "observed signal-to-noise across the corpus: FLOOR PLAN 0.03, neelachala FIRST FLOOR 0.12, GHATIKIA 1.74 (BRICK WORK has 0 samples, so no value). The trigger sits at 1.0. NEAREST OBSERVED VALUE 1.74, DISTANCE 0.74, inside a 14x empty gap between 0.12 and 1.74. BY THE CLUSTER RULE IT IS SAFE - it sits on nothing.",
+  "BUT_THE_DISTRIBUTION_IS_THREE_POINTS": "Rahul's objection stands and the measurement supports it: a 14x gap between 0.12 and 1.74 means we have observed a sheet disagreeing by 22% and sheets disagreeing by ~0.5-9%, and NOTHING IN BETWEEN. The trigger is unexercised anywhere near its own value. A sheet disagreeing by 3% with a tight sample would sit near 1.0 and we cannot say what it should do.",
+  "margin_of_the_fixed_floor": "side-sample counts are 0 (BRICK WORK), 14 (GHATIKIA), 16 (FLOOR PLAN), 32 (FIRST FLOOR) against `min_sides = 8`. Nearest is 14, a margin of 6 - 75% above the floor. Not on a peak, but it is an absolute count in the same family as the nine route floors, and BRICK WORK sits below it at 0."
+ },
+ "parse_passes_emitted_2026_08_31": {
+  "emitted": "meta.parse_passes = {count, built_pass, by_pass[...], pass_ppf[...]} to the scorecard's spec. `by_pass` is a TUPLE OVER ALL PASSES including the discarded one, each carrying pass, ppf, route, regions and wing_origin_ft - because A CHANGE TO A DISCARDED PASS CAN CHANGE WHICH PASS IS DISCARDED. `pass_ppf` is ROW DATA and must never be hashed: it is continuous, so hashing it would make every scale change look like a route change. Single-pass sheets emit the SAME SHAPE with count 1, so a diff never has to tell 'one pass' from 'field missing'.",
+  "A_NEW_FINDING_THE_ORIGIN_KEY_IS_ITSELF_PASS_DEPENDENT": "GHATIKIA's regions key as `r@0,0` + `r@44,0` on pass 1 and `r@0,0` + `r@53,0` on pass 2. THE KEY IS IN FEET AND FEET MOVE WITH ppf. Keying by origin does what it was adopted for - it survives enumeration REORDERING - but it does NOT survive a scale change, so `r@44,0` and `r@53,0` are the SAME PHYSICAL REGION under two scales. A cross-pass or cross-scale pin must compare within a pass, or key on something scale-free.",
+  "and_the_built_flag_flips": "pass 1 builds region index 1 (`r@44,0`, the RIGHT view); pass 2 builds region index 0 (`r@0,0`, the LEFT). Both the index AND the origin differ, which is why the pass must be carried with either."
+ },
+ "separator_is_the_ink_not_a_distance_2026_08_31": {
+  "status": "SHIPPED. Region separation no longer depends on a distance in feet.",
+  "the_defect": "two groups stayed separate if their bboxes were more than `gap_ft = 8` FEET apart. Feet move with ppf, so GHATIKIA separated for a DIFFERENT REASON on each parse pass - a zero-ink band at 8.80, mere proximity at 7.189. The two passes agreed on TWO REGIONS by coincidence, not by agreement.",
+  "the_fix": "two groups remain separate ONLY if a CLEAN GUTTER runs between them: a run of zero-ink lines at least EMPTY_BAND_MIN_FT wide across the band. Otherwise they merge. Proximity is demoted to what it was for - grouping connected components of one drawing. `_band_crop` is now shared by `_band_ink` and `_band_bridged` so the separator and the splitter can never disagree about WHERE the band is, and `_band_ink` uses the SAME run-width predicate as `_empty_bands`.",
+  "SCALE_INVARIANCE_VERIFIED": "GHATIKIA now reports basis 'separate: a band with NO INK between them' with separated_by {empty_band_pairs: 1, ink_in_band_pairs: 0} on BOTH passes - ppf 8.80 and 7.189. Before the fix, pass 1 said zero-ink band and pass 2 said proximity.",
+  "judged_set_all_held": "regions 1/1/2/1 as required; FIRST FLOOR STILL ONE REGION, basis 'merged: ink in the band between them' - its terrace hatch puts ink across the band, so the 22 Aug ruling stands. footprint 1247.1 / 1796.8 / 1738.4 / 4472.1 unchanged; anchors 70/79/69/60% unchanged; R-2 98.0 (n=8, off 0, worst 90.4), 83.6 (n=12, off 2), 96.9 (n=16, off 7); M-1 1.13/1.06/1.07/1.09.",
+  "a_first_attempt_was_WRONG_and_the_test_caught_it": "my first `_band_ink` asked 'is there ANY ink in the band', which is too strict: one stray dimension line lying in a gutter would weld two plans into one. A synthetic unit test caught it before it reached the corpus. Corrected to the run-width predicate.",
+  "CAVEAT_recorded_not_guarded": "a SINGLE line drawn across the FULL width of a gutter also leaves no clean run and therefore merges two drawings. That is the ruled test's own semantics - anything drawn across the gutter means the drawings touch - and it is exactly what makes FIRST FLOOR's terrace hatch a join. NO SHEET IN THE CORPUS HAS SUCH A LINE IN A REAL GUTTER, so the sensitivity is unexercised."
+ },
+ "notes_open_items_2026_08_31": {
+  "min_sides_8_is_the_eleventh_constant": "`scale_refit_ratio(rooms, min_sides=8)` - a fixed COUNT of side samples below which no refit is considered. Sample counts across the corpus are 0 (BRICK WORK), 14 (GHATIKIA), 16 (FLOOR PLAN), 32 (FIRST FLOOR); nearest margin 6. Same family as the nine route floors. NOT DERIVED, and Rahul: DO NOT derive it from three samples.",
+  "the_refit_trigger_is_unexercised_near_its_own_value": "observed signal-to-noise is 0.03, 0.12 and 1.74 against a trigger of 1.0 - one sheet disagreeing by 22% and two by under 1%, with NOTHING IN BETWEEN and a 14x empty gap around the trigger. It is SAFE by the cluster rule (it sits on nothing) and simultaneously UNTESTED anywhere near where it fires. A sheet disagreeing by ~3% with a tight sample would land beside it and we cannot say what should happen. Needs a fourth and fifth sheet, not a derivation."
+ },
+ "defect_sheet_review_2026_09_01": {
+  "rulings": {
+   "Q1 staircase": "BUILD ACTUAL STEPS per S-6, not a block. Queued.",
+   "Q2 roof/ceiling": "BUILD, BUT NOT YET - the floor plan reading must be verified first and that needs the ceiling absent. One-line job, queued after geometry.",
+   "Q3 FIRST FLOOR gap": "SLAB IT AS TERRACE, first floor only, per the drawing. Not open. Queued.",
+   "Q4 column in flat-1's entrance": "CORRECT AS DRAWN. 21 in clear is what the drawing says. ASK CLOSED - not an error."
+  },
+  "FIXED_slab_is_the_footprint": "the floor slab was the wall BOUNDING BOX. Now the `footprint_ft` ring via `_add_poly_prism`. FIRST FLOOR 7396 -> 4463 sqft, FLOOR PLAN 2841 -> 1794, GHATIKIA 2548 -> 1736, BRICK WORK 1503 -> 1246. The mesh renames `floor` -> `floor_0`; the VIEWER matches on `name.includes('floor')` (planMaterials.ts, gbuffer.ts) so it is unaffected, and the one test asserting the exact string was re-derived to match the viewer's own contract.",
+  "FIXED_ducts_are_not_columns": "ducts were concatenated onto the column list and built as SOLID full-height boxes named `column_i` - a shaft became structure and the name hid it. Now built as a thin shaft-wall ring named `duct_i_k`, leaving the void open (\u00a74 D-5). LATENT: `scene['ducts']` is empty on all four sheets today, though FLOOR PLAN detects two ducts as void ROOMS.",
+  "WITHDRAWN_defects_3_and_4_the_railings_are_CORRECT": "I reported flat-1's balcony and the utility as SOLID BLOCKS. THEY ARE NOT. I measured each railing mesh's BOUNDING BOX and called it area: the true rail areas are 5.16, 3.18 and 3.08 sqft - 0.25 ft thick, 3.50 ft high, 2-3 sided runs with a floor slab inside. A top-down render settles it. FIFTH TIME AN AUDIT'S OWN GEOMETRY WAS THE FAULT, and the most costly: it consumed a ruling.",
+  "WITHDRAWN_the_180_degree_flip_was_MY_RENDERER": "GHATIKIA's image 13 was rotated 180 degrees. NOT the model and NOT the viewer: at a top-down camera my renderer's `right = cross(fwd, up_world)` degenerates and its SIGN flips, giving right = -X and up = -plan_y. It affected EVERY top view in the sheet. Keyed the basis on the ELEVATION instead (the degenerate magnitude at el 89.9 is 0.0017, which sailed past a 1e-3 guard). The 2D overlay always registered correctly on that sheet, which is the evidence the scene was right all along.",
+  "STILL_OPEN_from_the_review": [
+   "staircase as actual steps (Q1)",
+   "terrace slab over FIRST FLOOR's gap (Q3)",
+   "roof/ceiling (Q2, deliberately later)",
+   "GHATIKIA: the staircase's middle flight-divider is built as a WALL, and the lift is read wrong - S-4 says tread lines are not walls and the divider is the same rule",
+   "GHATIKIA doors: 'wall lines look good, doors very few correct' - needs a proper check after the divider fix",
+   "gbuffer segClass"
+  ]
+ },
+ "orientation_anchor_chain_2026_09_01": {
+  "ruling": "Rahul: the orientation anchor is a CHAIN - north arrow first where printed, then staircase/lobby, then corner rooms or balconies, then n/a. The scorecard is building the check; the expected BEARING is recorded here per sheet.",
+  "FLOOR PLAN.pdf": {
+   "anchor": "staircase/lobby core",
+   "evidence": "the lift+stair core sits at x 27-41 ft, on the EAST half of a 95.2 x 29.8 ft plate; the two flats sit either side of it. No north arrow found.",
+   "expected_bearing": "north = +plan_y (screen up in the parsed frame); the plate runs EAST-WEST"
+  },
+  "neelachala FIRST FLOOR.pdf": {
+   "anchor": "staircase",
+   "evidence": "two stair cores at (12.8, 37.9) and (12.8, 133.9), one per block, both on the WEST side; the terrace band runs across y 66.7-80.7. No north arrow found.",
+   "expected_bearing": "north = +plan_y; the building runs NORTH-SOUTH, 42.0 x 177.7 ft"
+  },
+  "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf": {
+   "anchor": "staircase + lift",
+   "evidence": "STAIRCASE 2.39x3.91 m and LIFT 1.62x1.57 m at the TOP-CENTRE of the built (left) region, printed title FIRST FLOOR PLAN beneath. No north arrow found.",
+   "expected_bearing": "north = +plan_y; the staircase must render at the TOP of a north-up view - this is the sheet where a 180-degree error was spotted, so it is the most useful anchor in the corpus"
+  },
+  "BRICK WORK LAYOUT.pdf": {
+   "anchor": "n/a",
+   "evidence": "no north arrow, no staircase room detected, no room dimensions, no printed titles. The chain runs out.",
+   "expected_bearing": "UNKNOWN - record as n/a rather than assume"
+  },
+  "note": "no sheet in this corpus prints a north arrow, so every entry falls to the second link or lower. That is itself worth knowing before the check is built."
+ },
+ "build_list_2026_09_01": {
+  "1_staircase_actual_steps": {
+   "status": "SHIPPED",
+   "how": "n = round(storey height / 0.575 ft) risers, then the riser is H/n EXACTLY so the flight climbs one storey; the TREAD follows from the drawn flight length. Only the riser height is assumed.",
+   "evidence_per_sheet": "NO SHEET DRAWS A CLEAN TREAD LADDER. Best repeated pitches: neelachala FIRST FLOOR 0.84 ft x3-4, GHATIKIA 0.77 ft x3 - suggestive, not a ladder. So the ruling's SECOND branch applies everywhere: derive from flight length and a plausible riser.",
+   "built": "GHATIKIA ONLY: 17 risers of 6.9 in, tread 8.3 in, from an 11.7 ft flight and a 9.84 ft storey. The derived 8.3 in tread against the drawn 9.2 in pitch is the corroboration.",
+   "NOT_built_and_why": "FLOOR PLAN's 21.4 sqft `stairs` room is 4.7 x 4.6 ft, aspect 1.03 - it is the LIFT, mistyped. FIRST FLOOR's two are 14 x 16 ft, aspect ~1.2 - a whole stair CORE (flight + lift + landing) read as one room. A flight must be long (aspect >= 1.6) and stair-wide (3.0-6.5 ft). BUILDING STEPS IN A LIFT WOULD BE WORSE THAN BUILDING NOTHING; each refusal is reported on meta.stairs_built."
+  },
+  "2_terrace_slab": {
+   "status": "SHIPPED",
+   "how": "the band two regions were MERGED ACROSS is now recorded in feet (`join_evidence.joined_bands_ft`) and slabbed. Only a sheet with a join gets one.",
+   "result": "neelachala FIRST FLOOR: one terrace at x 1.91-41.83, y 66.68-80.69 = 39.9 x 14.0 ft, matching the measured band y 67.6-80.7. The other three sheets get none.",
+   "bug_caught": "my first version read the band AFTER the merge had replaced groups[i] and popped groups[j] - it raised IndexError. The band is now captured BEFORE the merge."
+  },
+  "5_gbuffer_segClass": {
+   "status": "SHIPPED",
+   "what": "door leaves and railings fell through to `other`, painting a door the same colour as anything unrecognised and corrupting the render conditioning maps. Added `door`, `railing`, `stair`, `terrace` classes with distinct colours, and `duct` -> column. Ordered BEFORE the broader tests so `floor_open_*` still reads as floor. 3 new frontend tests, 35 passing."
+  },
+  "still_open": [
+   "3. GHATIKIA: the stair flight-divider is built as a WALL, and the lift is read wrong (S-4 generalised)",
+   "4. GHATIKIA doors - 'very few correct'",
+   "6. roof/ceiling (Q2, deliberately last)"
+  ]
+ },
+ "orientation_bearing_chirality_2026_09_01": {
+  "ruling": "Rahul, via the scorecard: record the RULED BEARING and CHIRALITY per sheet, following the chain - north arrow, then staircase/lobby, then corner rooms or balconies, then n/a. This entry carries the per-sheet verdict; orientation_anchor_chain_2026_09_01 carries the chain evidence.",
+  "rung_1_measured": "meta.north_arrow_deg now READS the drawn arrow (a closed narrow spike, 3-6 vertices, aspect measured along its OWN axis so a 45-degree arrow is not rejected by its bounding box, clear of the plan, WITH a lone `N`). It returns None on all four sheets. FLOOR PLAN is the sharp case: it has exactly ONE spike candidate and no `N`, and that spike is a 5.0 ft sliver of the ARCHITRAVE LOGO at (74.3, -10.7) below the sheet - without the letter the reader reported a confident 81.8 deg for it. The letter is what makes a spike a north arrow. RUNG 1 CANNOT FIRE ON THIS CORPUS.",
+  "contradiction_with_the_scorecard": "The scorecard's request states that FLOOR PLAN prints a north arrow. MEASURED HERE, IT DOES NOT: 24 live words and none of them `N`/`NORTH`; 6413 drawing paths, 775 filled, and the only isolated spike outside the plan is the logo sliver above. Reported, not resolved - per the coordination rule a contradicting measurement is STOPPED ON and reported, not overridden.",
+  "chirality_convention": "Scene frame: plan +x = EAST (screen right), plan +y = NORTH (screen up); the GLB is Y-up with plan_y -> -Z, fixed 18 Aug 2026. RIGHT-HANDED, not mirrored, on every sheet - no geometry axis is negated anywhere in the parser.",
+  "FLOOR PLAN.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 1 spike candidate (the ARCHITRAVE logo), no `N`",
+   "chirality": "as drawn, not mirrored - VERIFIED 18 Aug 2026 on the C.TOILET/A.TOILET landmark, and the wall overlay registers at page rotation 270"
+  },
+  "BRICK WORK LAYOUT.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 4,
+   "rung_1": "absent - 0 spike candidates, and ZERO live words on this sheet, so `no N` is a text-extraction limit here, not a statement about the drawing",
+   "chirality": "as drawn, not mirrored - the wall overlay registers at page rotation 0. Bearing n/a: the chain runs out (no arrow, no staircase room, no room dims, no printed title)"
+  },
+  "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates (231 live words, no `N`)",
+   "chirality": "as drawn, not mirrored - the 1 Sep 180-degree report was WITHDRAWN: it was my scratch renderer's basis flipping sign at a top-down camera, and the 2D overlay always registered correctly on this sheet"
+  },
+  "neelachala FIRST FLOOR.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates (359 live words, no `N`)",
+   "chirality": "as drawn, not mirrored - convention only; NOT independently verified on this sheet, unlike the other three"
+  },
+  "note": "Every bearing is UNRULED because rung 1 is absent corpus-wide and rung 2 (a staircase or lobby position) fixes which EDGE the core sits on, not a bearing in degrees. Recording `unruled` with the rung reached is the honest state; a bearing invented from rung 2 would be inherited silently by every corner-room and balcony argument below it."
+ },
+ "orientation_bearing_cold_sheets_2026_09_05": {
+  "ruling": "Rahul's chain, extended to the five cold sheets so the scorecard can check orientation on the whole corpus. Rung 1 north arrow, then staircase/lobby, then corner rooms or balconies, then n/a. `meta.north_arrow_deg` reads None on EVERY sheet in the corpus, so rung 1 fires nowhere and every entry below falls to rung 2 or lower - a fact about the corpus, not about the rung.",
+  "chirality_convention": "plan +x = EAST (screen right), plan +y = NORTH (screen up); the GLB is Y-up with plan_y -> -Z (18 Aug 2026). Right-handed, not mirrored, on every sheet - no geometry axis is negated anywhere in the parser. M-2's placement slope reads 0.938-1.088 across the corpus, which confirms the axis is not SCALED; it cannot see a mirror and says so.",
+  "Typical Floor Plan.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates",
+   "anchor": "staircase + lift",
+   "evidence": "the stair/lift core sits at (3.8, 44.2) ft on a 41.6 x 78.2 ft plate - hard against the WEST edge, two thirds up the NORTH-SOUTH axis; the two FLAT NO. labels sit at (23.3, 56.7) and (27.5, 29.0), one flat either side of it",
+   "expected_bearing": "north = +plan_y; the building runs north-south"
+  },
+  "First Floor Plan.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates",
+   "anchor": "staircase + lift",
+   "evidence": "identical drawing to Typical Floor Plan at a different scale: same core at (3.8, 44.2), same flat labels, same 41.6 x 78.2 plate",
+   "expected_bearing": "north = +plan_y"
+  },
+  "Typical Floor Plan - (1st,2nd,3rd) - 19.06.2025.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates, 24 live words, none `N`",
+   "anchor": "staircase + lift",
+   "evidence": "two common-area rooms at (15.4, 30.8) 81.7 sqft and (20.3, 24.4) 40.6 sqft, CENTRAL on a 28.4 x 51.8 ft plate - a central core, not an edge core, so this anchor is weaker here than on the Patrapada pair. THE ONLY SHEET IN THE CORPUS THAT BUILDS A STAIRCASE: 20 risers of 5.9 in over 2 drawn flights",
+   "expected_bearing": "north = +plan_y"
+  },
+  "BIJAYALAXMI DHAL-02.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 2,
+   "rung_1": "absent - 0 spike candidates",
+   "anchor": "staircase + lift",
+   "evidence": "core at (40.4, 25.4) 174.4 sqft and (48.2, 34.3) 26.7 sqft, mid-span on an 87.1 x 37.8 ft plate that runs EAST-WEST - the widest sheet in the corpus",
+   "expected_bearing": "north = +plan_y; the building runs east-west"
+  },
+  "BIJAYALAXMI DHAL-01.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNRULED",
+   "rung_reached": 4,
+   "rung_1": "absent",
+   "anchor": "n/a",
+   "evidence": "A STILT FLOOR PARKING LAYOUT, not a floor plan - 1 room on a 15.6 x 11.5 ft extent, and its 20.4 sqft `stairs` room is the only anchor-shaped thing on it. The chain runs out; record n/a rather than assume. DO NOT FIX THIS SHEET.",
+   "expected_bearing": "UNKNOWN"
+  },
+  "ganganagar plan.pdf": {
+   "bearing_deg": null,
+   "bearing_source": "UNPARSEABLE",
+   "rung_reached": 0,
+   "evidence": "no vector linework at all - routes to the raster path and skips. A PDF does not guarantee vectors.",
+   "expected_bearing": "UNKNOWN"
+  },
+  "note": "Every bearing in the corpus is UNRULED. Rung 1 is absent on all ten sheets and rung 2 fixes which EDGE a core sits on, not a bearing in degrees. Recording `unruled` with the rung reached and the geometry is the honest state; a bearing invented from rung 2 would be inherited silently by every corner-room and balcony argument below it."
  }
 }

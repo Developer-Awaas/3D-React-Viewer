@@ -22,9 +22,27 @@ def _scene(scale_src, door_ft, n=6):
     }
 
 
-def test_verified_scale_never_flagged():
+def test_a_verified_scale_IS_flagged_but_never_auto_corrected(monkeypatch):
+    """RE-DERIVED 2 Sep 2026 on Rahul's ruling, not adjusted to pass. A door
+    being 2.5-3.5 ft wide is a fact about BUILDINGS, not about how we happened
+    to derive the scale, so the check runs on every sheet - it used to run on
+    one of four. AUTO-CORRECTION stays gated to a guess: letting a door-width
+    guess silently reshape a building whose scale the sheet PRINTS would
+    overrule the drawing's own statement (§0.1)."""
+    monkeypatch.setenv("DRISHTI_AUTOSCALE", "1")
     s = P._apply_scale_correction(_scene("dimension_text", 4.5))
-    assert "needs_review" not in s["meta"]["scale"]        # only guessed scales
+    sc = s["meta"]["scale"]
+    assert sc["needs_review"] is True                 # flagged now
+    assert sc["door_median_ft"] == 4.5
+    assert sc["source"] == "dimension_text"           # NOT rescaled
+    assert sc["pt_per_ft"] == 5.0
+
+
+def test_the_door_median_is_reported_even_when_it_looks_right():
+    """It is a measurement, not just an alarm - the scorecard reads it."""
+    s = P._apply_scale_correction(_scene("dimension_text", 3.0))
+    assert s["meta"]["scale"]["door_median_ft"] == 3.0
+    assert "needs_review" not in s["meta"]["scale"]
 
 
 def test_good_doors_on_guessed_scale_pass():

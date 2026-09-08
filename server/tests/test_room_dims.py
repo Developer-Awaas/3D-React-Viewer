@@ -106,9 +106,28 @@ class TestAttach:
         rooms = [{"dim_match_pct": 95.0}, {"dim_match_pct": 61.5},
                  {"dim_match_pct": 60.0}, {}]
         s = R.summary(rooms)
-        assert s == {"rooms_checked": 3, "median_match_pct": 61.5,
+        # RE-DERIVED 2 Sep 2026 on Rahul's ruling: R-2's basis is now NAMED,
+        # because area SQUARES the per-side error and a ratchet on an
+        # unlabelled basis is a ratchet on an unknown quantity. The area
+        # numbers themselves are unchanged - the basis did not move.
+        assert s == {"rooms_checked": 3, "basis": "area",
+                     "median_match_pct": 61.5,
                      "worst_match_pct": 60.0, "rooms_off": 2}
         assert R.summary([{"area_sqft": 10}]) is None
+
+    def test_both_bases_are_emitted_when_a_room_has_a_polygon(self):
+        rooms = [{"dim_match_pct": 90.2, "dim_side_match_pct": 95.0},
+                 {"dim_match_pct": 80.0, "dim_side_match_pct": 89.4}]
+        s = R.summary(rooms)
+        assert s["basis"] == "area" and s["median_match_pct"] == 90.2
+        assert s["median_side_match_pct"] == 95.0 and s["sides_checked"] == 2
+
+    def test_area_squares_the_per_side_error(self):
+        """A room 5% small on BOTH sides scores 90.2 on area, 95.0 per side -
+        which is why R-2 reads harsher than per-side reality."""
+        assert R.match_pct(0.95 * 0.95 * 100, 100) == 90.2
+        assert R.side_match_pct([9.5, 9.5], [10.0, 10.0]) == 95.0
+        assert R.side_match_pct([10.0], [10.0]) is None      # needs both sides
 
 
 class TestDoctor:
@@ -263,3 +282,20 @@ def test_ghatikia_r2_sample_is_ratcheted():
     assert s["rooms_checked"] >= 12, s
     assert s["median_match_pct"] >= 83.5, s
     assert s["rooms_off"] <= 3, s
+
+
+def test_printed_labels_in_room_counts_merges():
+    """THE CORRECTED DISCRIMINATOR (28 Aug 2026, Rahul): count the printed
+    dimension labels inside a room FIRST. More than one = the room is a MERGE
+    of spaces the sheet names separately, whatever the side ratios do —
+    isotropy is only meaningful at a count of 1, because a merge is isotropic
+    whenever the absorbed neighbours sit on BOTH axes. Scored on GHATIKIA:
+    label-count 12 of 12 correct, isotropy 10 of 12."""
+    rooms = [{"_lab": 1, "x": 0, "y": 0, "area_sqft": 100},
+             {"_lab": 2, "x": 50, "y": 0, "area_sqft": 100}]
+    pairs = [{"lab": 1, "fx": 0, "fy": 0, "w_ft": 10, "h_ft": 10},
+             {"lab": 1, "fx": 2, "fy": 2, "w_ft": 4, "h_ft": 4},
+             {"lab": 2, "fx": 50, "fy": 0, "w_ft": 10, "h_ft": 10}]
+    R.attach_printed_dims(rooms, pairs)
+    assert rooms[0]["printed_labels_in_room"] == 2      # a MERGE
+    assert rooms[1]["printed_labels_in_room"] == 1      # one room

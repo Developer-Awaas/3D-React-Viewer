@@ -217,6 +217,26 @@ def match_pct(measured_sqft, printed_sqft):
     return round(max(0.0, 100.0 - 100.0 * d), 1)
 
 
+def side_match_pct(measured_sides, printed_sides):
+    """R-2's SECOND BASIS: the same comparison per SIDE, not per area.
+
+    R-2 scores AREA, and area SQUARES the per-side error - a room 5% small on
+    both sides scores 90.2 on area against 95.0 per side. Measured 2 Sep 2026
+    across the corpus, R-2 has been running roughly 11 points harsher than
+    per-side reality, ALWAYS IN THE SAME DIRECTION. The basis does not change
+    (a ratchet re-based is a ratchet reset); BOTH are emitted so the number is
+    LABELLED rather than assumed. Pure -> unit-tested.
+    """
+    m = sorted(float(v) for v in (measured_sides or []) if v)
+    p = sorted(float(v) for v in (printed_sides or []) if v)
+    if len(m) < 2 or len(p) < 2:
+        return None
+    d = [abs(a - b) / b for a, b in zip(m, p) if b]
+    if not d:
+        return None
+    return round(max(0.0, 100.0 - 100.0 * (sum(d) / len(d))), 1)
+
+
 def attach_printed_dims(rooms, pairs):
     """Give each room the printed dimension label that sits inside it, and
     score our measurement against it.
@@ -226,6 +246,16 @@ def attach_printed_dims(rooms, pairs):
     coordinates). A label is used once, by the room it sits in — the nearest
     one wins if a component holds several. area_sqft is NOT touched. Returns
     how many rooms gained a printed dimension. Pure -> unit-tested."""
+    # HOW MANY printed labels sit in each room's own component (28 Aug 2026).
+    # More than one means the room is a MERGE of spaces the sheet names
+    # separately, and that is the FIRST discriminator — it beats isotropy,
+    # which scored 10 of 12 against this test's 12 of 12 on GHATIKIA, because a
+    # merge is isotropic whenever the absorbed neighbours sit on both axes.
+    _per_lab = {}
+    for p in pairs or []:
+        _per_lab[p.get("lab")] = _per_lab.get(p.get("lab"), 0) + 1
+    for r in rooms:
+        r["printed_labels_in_room"] = _per_lab.get(r.get("_lab"), 0)
     used, gained = set(), 0
     for r in rooms:
         best, best_d = None, None
@@ -244,6 +274,14 @@ def attach_printed_dims(rooms, pairs):
         r["printed_dim_ft"] = [p["w_ft"], p["h_ft"]]
         r["printed_area_sqft"] = printed
         r["dim_match_pct"] = match_pct(r.get("area_sqft", 0) or 0, printed)
+        # THE SAME ROOM SCORED PER SIDE, so the basis is stated, not assumed.
+        _poly = r.get("polygon_ft") or []
+        if len(_poly) >= 3:
+            _xs = [q[0] for q in _poly]
+            _ys = [q[1] for q in _poly]
+            r["dim_side_match_pct"] = side_match_pct(
+                [max(_xs) - min(_xs), max(_ys) - min(_ys)],
+                [p["w_ft"], p["h_ft"]])
         gained += 1
     return gained
 
@@ -256,7 +294,17 @@ def summary(rooms):
     if not scored:
         return None
     scored.sort()
-    return {"rooms_checked": len(scored),
-            "median_match_pct": scored[len(scored) // 2],
-            "worst_match_pct": scored[0],
-            "rooms_off": sum(1 for v in scored if v < 80.0)}
+    sides = sorted(r["dim_side_match_pct"] for r in rooms
+                   if r.get("dim_side_match_pct") is not None)
+    out = {"rooms_checked": len(scored),
+           # THE BASIS IS NAMED. Area squares the per-side error, so this
+           # number is systematically the harsher of the two (2 Sep 2026).
+           "basis": "area",
+           "median_match_pct": scored[len(scored) // 2],
+           "worst_match_pct": scored[0],
+           "rooms_off": sum(1 for v in scored if v < 80.0)}
+    if sides:
+        out["median_side_match_pct"] = sides[len(sides) // 2]
+        out["worst_side_match_pct"] = sides[0]
+        out["sides_checked"] = len(sides)
+    return out

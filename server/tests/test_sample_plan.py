@@ -88,7 +88,12 @@ def test_sample_glb_parts(sample_scene, tmp_path):
     out = tmp_path / "sample.glb"
     build_glb(sample_scene, str(out))
     names = set(trimesh.load(str(out)).geometry.keys())
-    assert "floor" in names
+    # The slab is now the FOOTPRINT POLYGON, not a bbox box (1 Sep 2026),
+    # so it comes from `_add_poly_prism` and is named `floor_0`. Matched
+    # the way the VIEWER matches it - `name.includes("floor")` in
+    # planMaterials.ts and gbuffer.ts - rather than by an exact string the
+    # viewer never used.
+    assert any("floor" in n for n in names)
     assert any(n.startswith("wall") for n in names)
     assert sum(1 for n in names if n.startswith("glass_")) == 6
     assert any(n.startswith("column_") for n in names)

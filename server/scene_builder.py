@@ -166,7 +166,7 @@ def scene_from_segments(segments, width_px, height_px, width_ft=DEFAULT_WIDTH_FT
     warnings = ["scale is a placeholder (assumed width) until Step 4"]
     if not rooms:
         warnings.append("rooms/furniture not yet extracted")
-    return {
+    scene = {
         "meta": {
             "source": "cubicasa detection",
             "units": "ft",
@@ -181,3 +181,17 @@ def scene_from_segments(segments, width_px, height_px, width_ft=DEFAULT_WIDTH_FT
         "rooms": rooms, "walls": walls, "openings": out_openings,
         "columns": [], "ducts": [], "furniture": furniture,
     }
+    # THE COLD-SHEET GUARD, ON THE PATH THAT MOST NEEDS IT (2 Sep 2026, Rahul).
+    # This scene's scale is `assumed_width` - a 40 ft guess - and an assumed
+    # width IS the definition of an unverified scale. Until now the refusal
+    # existed only on the vector path, which is the one least likely to need
+    # it. Same function the parser calls, so the two can never disagree.
+    import plausibility as _plaus
+    _plaus.scale_guard(scene)
+    _rv, _rmed, _rwhy = _plaus.room_median_check(
+        [r.get("area_sqft") for r in rooms])
+    scene["meta"]["plausibility"] = {"room_median_sqft": _rmed, "verdict": _rv,
+                                     "why": _rwhy}
+    if _rv is False:
+        scene["refusals"].append({"code": "rooms_implausible", "message": _rwhy})
+    return scene

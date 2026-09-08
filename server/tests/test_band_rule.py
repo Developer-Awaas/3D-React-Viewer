@@ -95,3 +95,63 @@ def test_the_split_is_inert_on_every_single_view_sheet():
             continue
         with open(path, "rb") as f:
             assert parse(f.read(), None)["meta"]["wing"]["count"] == wings, name
+
+
+# --- SEPARATION MUST NOT DEPEND ON A DISTANCE IN FEET (31 Aug 2026) ----------
+def test_regions_separate_on_an_empty_band_not_on_proximity():
+    """`gap_ft = 8` is a distance in FEET and feet move with ppf, so GHATIKIA
+    used to separate for a DIFFERENT REASON on each parse pass — a zero-ink band
+    at ppf 8.80, mere proximity at 7.189. The two passes agreed on TWO REGIONS by
+    coincidence, not by agreement. Ink is ink at any scale."""
+    path = os.path.join(PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")
+    if not os.path.exists(path):
+        pytest.skip("corpus file not present")
+    from pdf_vector import parse
+    raw = open(path, "rb").read()
+    for kw in ({"_refit": False}, {}):                 # pass 1 and pass 2
+        m = parse(raw, None, **kw)["meta"]
+        rs = m["regions"]
+        assert len(rs) == 2
+        ev = rs[0]["join_evidence"]
+        assert ev["basis"] == "separate: a band with NO INK between them"
+        assert ev["separated_by"] == {"empty_band_pairs": 1,
+                                      "ink_in_band_pairs": 0}
+
+
+def test_first_floor_still_one_region_the_terrace_puts_ink_in_the_band():
+    """The 22 Aug ruling: FIRST FLOOR's two blocks are ONE building, joined by
+    the terrace. If the separator ever splits them, that ruling has been
+    silently reversed — the failure mode that matters most."""
+    path = os.path.join(PLANS, "neelachala FIRST FLOOR.pdf")
+    if not os.path.exists(path):
+        pytest.skip("corpus file not present")
+    from pdf_vector import parse
+    with open(path, "rb") as f:
+        m = parse(f.read(), None)["meta"]
+    assert len(m["regions"]) == 1
+    assert m["regions"][0]["join_evidence"]["basis"].startswith("merged")
+
+
+def test_a_stray_line_in_the_gutter_does_not_merge_two_drawings():
+    """The test is a CLEAN LINE of zero ink across the band, not "no ink at
+    all": one stray dimension line lying in a gutter must not weld two plans
+    into one."""
+    from pdf_vector import _band_ink, NORM_PPX
+    W, H = int(30 * NORM_PPX), int(10 * NORM_PPX)
+    cover = np.zeros((H, W), np.uint8)
+    left = (0, 0, int(12 * NORM_PPX), H)
+    right = (int(18 * NORM_PPX), 0, W, H)
+    assert _band_ink(cover, left, right) is False        # clean gutter -> apart
+    # a stray line over PART of the gutter still leaves a clean run
+    cover[int(2 * NORM_PPX):int(2 * NORM_PPX) + 2,
+          int(12 * NORM_PPX):int(14 * NORM_PPX)] = 255
+    assert _band_ink(cover, left, right) is False        # still apart
+    # ink drawn ALL THE WAY ACROSS leaves no clean run: one drawing
+    cover[:, int(12 * NORM_PPX):int(18 * NORM_PPX)] = 255
+    assert _band_ink(cover, left, right) is True
+
+    # CAVEAT, recorded rather than guarded: a SINGLE line crossing the full
+    # width of a gutter also leaves no clean run, so it merges two drawings.
+    # That is the ruled test's own semantics - anything drawn across the gutter
+    # means the drawings touch - and it is what makes FIRST FLOOR's terrace
+    # hatch a join. No sheet in the corpus has such a line in a real gutter.

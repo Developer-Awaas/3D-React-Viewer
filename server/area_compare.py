@@ -97,6 +97,109 @@ def _columns(hdr):
     return out
 
 
+_FREE_BUA = re.compile(r"^B\.?U\.?A\.?\s*[-=:]?\s*([\d,]+(?:\.\d+)?)?", re.I)
+_FREE_CA = re.compile(r"^C\.?A\.?\s*[-=:]?\s*([\d,]+(?:\.\d+)?)?", re.I)
+_FREE_NUM = re.compile(r"^[-=]?\s*([\d,]+(?:\.\d+)?)")
+
+
+def parse_free_text_areas(tokens, total_tol=0.01):
+    """A printed area statement that is NOT a table (2 Sep 2026, Rahul).
+
+    Patrapada's sheets print the areas as live text INSIDE the drawing, beside
+    each flat: `B.U.A=1129.27 sq.ft.` / `C.A=1043.98` / `SUPER B.U.A=1648.23`,
+    with a whole-floor `B.U.A. -2543.61 SQ.FT.` at the bottom. There is no
+    header row and no column, so `parse_area_statement` returns None and TWO
+    FULLY INSTRUMENTED SHEETS READ AS BLIND.
+
+    Everything here is positional-free and derived:
+      - the value may be glued to the tag (`B.U.A=1129.27`) or be the NEXT
+        token (`B.U.A.` `-2543.61`); both forms occur on the same sheet;
+      - `SUPER` in the preceding token makes it SUPER built-up, which must
+        never be counted as built-up;
+      - THE TOTAL IS IDENTIFIED BY ARITHMETIC, NOT BY POSITION: a B.U.A whose
+        value equals the sum of the others is the whole-floor plate. On this
+        sheet 1129.27 + 1147.22 = 2276.49 against a printed 2543.61, so the
+        plate is NOT the sum and the 267.12 difference is the common area -
+        the same shape as FLOOR PLAN's 1705 + 246 = 1951 (D-8).
+      - flats pair a B.U.A with the nearest C.A, by distance, so left/right or
+        top/bottom layouts read the same.
+
+    Returns the same shape as `parse_area_statement`, or None. Pure.
+    """
+    toks = [t for t in (tokens or []) if (t.get("text") or "").strip()]
+    found = []
+    for i, t in enumerate(toks):
+        txt = (t["text"] or "").strip()
+        kind = "bua" if _FREE_BUA.match(txt) else "ca" if _FREE_CA.match(txt) else None
+        if not kind:
+            continue
+        m = (_FREE_BUA if kind == "bua" else _FREE_CA).match(txt)
+        raw = m.group(1)
+        if raw is None and i + 1 < len(toks):
+            n = _FREE_NUM.match((toks[i + 1]["text"] or "").strip())
+            raw = n.group(1) if n else None
+        if raw is None:
+            continue
+        try:
+            val = float(raw.replace(",", ""))
+        except ValueError:
+            continue
+        if val <= 0:
+            continue
+        prev = (toks[i - 1]["text"] or "").upper() if i else ""
+        if kind == "bua" and ("SUPER" in prev or "SUPER" in txt.upper()):
+            kind = "super"
+        found.append({"kind": kind, "val": val,
+                      "x": center_x(t), "y": center_y(t)})
+    if not found:
+        return None
+    bua = [f for f in found if f["kind"] == "bua"]
+    ca = [f for f in found if f["kind"] == "ca"]
+    if not bua:
+        return None
+    # THE TOTAL BY ARITHMETIC: the one that equals the sum of the rest
+    total = None
+    for cand in bua:
+        rest = [b["val"] for b in bua if b is not cand]
+        if rest and abs(cand["val"] - sum(rest)) <= total_tol * cand["val"]:
+            total = cand
+            break
+    if total is None and len(bua) > 2:
+        total = max(bua, key=lambda b: b["val"])   # a printed plate, not a flat
+    flats_bua = [b for b in bua if b is not total]
+    if not flats_bua:
+        return None
+    out = {"flats": []}
+    used = set()
+    for i, b in enumerate(sorted(flats_bua, key=lambda b: (b["y"], b["x"]))):
+        mate, md = None, None
+        for j, c in enumerate(ca):
+            if j in used:
+                continue
+            d = (c["x"] - b["x"]) ** 2 + (c["y"] - b["y"]) ** 2
+            if md is None or d < md:
+                mate, md, mj = c, d, j
+        f = {"name": f"FLAT-{i + 1}", "built_up_sqft": round(b["val"], 2)}
+        if mate is not None:
+            used.add(mj)
+            f["carpet_sqft"] = round(mate["val"], 2)
+        out["flats"].append(f)
+    out["built_up_total_sqft"] = round(sum(f["built_up_sqft"] for f in out["flats"]), 2)
+    cps = [f["carpet_sqft"] for f in out["flats"] if "carpet_sqft" in f]
+    if cps:
+        out["carpet_total_sqft"] = round(sum(cps), 2)
+    if total is not None and total["val"] > out["built_up_total_sqft"]:
+        # printed whole-floor plate: the remainder over the flats IS the common
+        # area, exactly as FLOOR PLAN prints it separately (D-8)
+        out["plate_total_sqft"] = round(total["val"], 2)
+        out["common_area_sqft"] = round(total["val"] - out["built_up_total_sqft"], 2)
+    sup = [f["val"] for f in found if f["kind"] == "super"]
+    if sup:
+        out["super_built_up_total_sqft"] = round(sum(sup), 2)
+    out["source"] = "free text on the drawing (no table)"
+    return out
+
+
 def parse_area_statement(tokens):
     """Tokens (whole sheet) -> the printed area statement, or None if the sheet
     carries no such table. Pure.
