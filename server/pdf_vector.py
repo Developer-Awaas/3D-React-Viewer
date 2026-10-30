@@ -2070,6 +2070,106 @@ def gap_peaks_in(gaps_in, min_count=8):
     return sorted(k for k, v in h.items() if v >= min_count)
 
 
+def wall_modes(gaps_in, min_count=8):
+    """The sheet's wall CLASSES — a median of a mix is neither of them.
+
+    `_wall_thickness_ft` returns the MEDIAN measured gap, and on a bimodal
+    sheet that is a number describing no wall on the drawing: Typical Floor
+    Plan's gaps cluster at 4 in and 11 in and its median reads 4.5 in. Recorded
+    31 Aug as the median-of-a-mix problem; it has now blocked three consumers -
+    the duct impostor test, the thickness an unpaired line is painted at, and
+    the filter that decides which implied faces are admissible.
+
+    Derived from the distribution, not from a constant: the same 1-inch
+    histogram `gap_peaks_in` uses, with ADJACENT occupied bins merged into one
+    class, because a 4 in wall drawn at 4.2 and 4.6 in is one wall and not two.
+    Returns [{"in", "ft", "count"}] heaviest first. Pure -> unit-tested.
+    """
+    import collections
+    h = collections.Counter(int(round(g)) for g in (gaps_in or []) if g > 0)
+    keys = sorted(k for k, v in h.items() if v >= min_count)
+    out, run = [], []
+    for k in keys:
+        if run and k - run[-1] > 1:
+            out.append(run)
+            run = []
+        run.append(k)
+    if run:
+        out.append(run)
+    modes = []
+    for grp in out:
+        n = sum(h[k] for k in grp)
+        val = sum(k * h[k] for k in grp) / n
+        modes.append({"in": round(val, 2), "ft": round(val / 12.0, 3), "count": n})
+    return sorted(modes, key=lambda m: -m["count"])
+
+
+def implied_partners(segs, modes_ft, min_len=2.0, min_agree=2, tol=0.08,
+                     near_frac=0.20, min_in=WALL_GAP_MIN_IN,
+                     max_in=WALL_GAP_MAX_IN, min_ovl=2.0):
+    """THE INNER FACE IS DRAWN BY THE WALLS THAT MEET IT (28 Sep 2026, Rahul).
+
+    A wall whose second face was never drawn still has that face STATED: the
+    perpendicular walls terminate on it. Traced on Typical Floor Plan, the
+    bedroom labelled 10'-2"X12'-0" has its west wall drawn as ONE line at
+    x = 0.00 with no partner anywhere in its span, while every horizontal wall
+    meeting it stops at x = 0.94 - so the face is on the sheet, drawn by its
+    neighbours rather than by its own line.
+
+    For each unpaired long line this takes the offset that at least
+    `min_agree` perpendicular terminations agree on, and SYNTHESISES the
+    partner there. Everything downstream then sees an ordinary pair.
+
+    THE GATE IS THE SHEET'S OWN WALL CLASSES, and it is what makes this safe:
+    an offset is admitted only within `near_frac` of one of `modes_ft`. Five of
+    six sheets carry a SECOND cluster at 1.25-1.45 ft, roughly three times the
+    internal wall - perpendiculars terminating at the FAR face of a wall beyond
+    - and admitting those would paint a wall where none exists. Unfiltered,
+    FLOOR PLAN gained 15 such candidates. Pure -> unit-tested.
+    """
+    if not segs or not modes_ft:
+        return []
+    H, V = [], []
+    for x0, y0, x1, y1 in segs:
+        if abs(y1 - y0) < 0.05 and abs(x1 - x0) >= min_len:
+            H.append(((y0 + y1) / 2.0, min(x0, x1), max(x0, x1)))
+        elif abs(x1 - x0) < 0.05 and abs(y1 - y0) >= min_len:
+            V.append(((x0 + x1) / 2.0, min(y0, y1), max(y0, y1)))
+    lo, hi = min_in / 12.0, max_in / 12.0
+
+    def unpaired(S):
+        out = []
+        for i, (p1, a1, b1) in enumerate(S):
+            if not any(i != j and lo <= abs(p2 - p1) <= hi
+                       and min(b1, b2) - max(a1, a2) >= min_ovl
+                       for j, (p2, a2, b2) in enumerate(S)):
+                out.append((p1, a1, b1))
+        return out
+
+    def at_mode(d):
+        return any(abs(d - m) <= near_frac * m for m in modes_ft if m > 0)
+
+    out = []
+    for S, Perp, horiz in ((unpaired(V), H, False), (unpaired(H), V, True)):
+        for p, a, b in S:
+            ends = []
+            for q, c, e in Perp:
+                if not (a - 0.5 <= q <= b + 0.5):
+                    continue
+                ends += [t - p for t in (c, e) if lo <= abs(t - p) <= hi]
+            best = None
+            for d in ends:
+                n = sum(1 for o in ends if abs(o - d) <= tol)
+                if n >= min_agree and at_mode(abs(d)) \
+                        and (best is None or n > best[1]):
+                    best = (d, n)
+            if best is None:
+                continue
+            q = p + best[0]
+            out.append((a, q, b, q) if horiz else (q, a, q, b))
+    return out
+
+
 def threshold_margins(gaps_in, thresholds_in, near_frac=0.05, min_count=8,
                       sizing=()):
     """NO THRESHOLD MAY SIT ON A CLUSTER (29 Aug 2026, Rahul) — as an
@@ -3331,6 +3431,27 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
         ppf, scale_src = _scale_ppf(col_rects, x1 - x0, width_ft)
     w_ft = (x1 - x0) / ppf
     d_ft = (y1 - y0) / ppf
+
+    # IMPLIED FACES (28 Sep 2026, Rahul). A wall drawn as a single line still
+    # has its second face STATED: the perpendicular walls terminate on it. On
+    # Typical Floor Plan the bedroom labelled 10'-2"X12'-0" has its west wall
+    # drawn as ONE line at x = 0.00 with no partner in its span, while every
+    # horizontal meeting it stops at x = 0.94.
+    #
+    # PLACED AFTER `ppf` IS RESOLVED, and that is not cosmetic: the first build
+    # put it beside `struct`, where `ppf` does not exist yet, so it raised
+    # NameError inside its own `except` and did NOTHING on all nine sheets
+    # while every number stayed identical - a clean-looking pass for a route
+    # that never ran. Same failure mode as `_page_drawings` dropping `fill`
+    # (7 Sep), which is why the count is EMITTED on `meta.implied_faces`.
+    _wm_early = wall_modes([g["gap_in"] for g in
+                            (wall_gap_pairs(drawings, ppf) or [])])
+    _implied = []
+    if _wm_early and struct:
+        _sft = [(g[0] / ppf, g[1] / ppf, g[2] / ppf, g[3] / ppf) for g in struct]
+        _implied = [(q[0] * ppf, q[1] * ppf, q[2] * ppf, q[3] * ppf)
+                    for q in implied_partners(_sft, [m["ft"] for m in _wm_early])]
+        struct = struct + _implied
 
     # STRUCTURAL TEST (replaces the page-unit length cap): a line survives if
     # it has a parallel partner at wall thickness, or if it is no longer than
@@ -5986,6 +6107,45 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     except Exception:
         _chh = []
 
+    # L-6 GEOMETRIC FALLBACK (15 Sep 2026, Rahul): a room typed `stairs` that is
+    # ISOTROPIC is a lift, not a staircase. This is the SAME test `_stair_flight`
+    # already uses to REFUSE building steps in a lift - now it types the room
+    # instead of only declining to build in it.
+    #
+    # FLOOR PLAN is the case: a 21.4 sqft `stairs` room measuring 4.7 x 4.6 ft,
+    # aspect 1.03, whose printed label reads `LIFT 5'X5'`. A flight is long and
+    # narrow (aspect >= 1.6); a shaft is square.
+    #
+    # THE LABEL WINS WHERE THERE IS ONE - `furnish.classify_room_type` now types
+    # `lift` directly from the printed word, and this only reaches rooms that
+    # arrived as `stairs` with no lift label of their own.
+    #
+    # IT CANNOT SPLIT A MERGED ROOM, and GHATIKIA is that case: its 57.1 sqft
+    # `stairs` room is the lift merged with the staircase ALONG ITS LENGTH, so
+    # it measures 4.85 x 11.71 ft, aspect 2.41, and reads as a flight. Aspect
+    # cannot see inside a merge; the merge has to be split first.
+    for _rm in rooms:
+        if _rm.get("type") != "stairs":
+            continue
+        _p = _rm.get("polygon_ft") or []
+        if len(_p) < 3:
+            continue
+        _xs = [q[0] for q in _p]
+        _ys = [q[1] for q in _p]
+        _w, _h = max(_xs) - min(_xs), max(_ys) - min(_ys)
+        _short, _long = sorted((_w, _h))
+        if _stairs.is_lift(_long, _short):
+            _rm["type"] = "lift"
+            _rm["typed_by"] = (f"isotropic shaft: {_long:.1f} x {_short:.1f} ft, "
+                               f"aspect {_long / _short:.2f} < "
+                               f"{_stairs.STAIR_MIN_ASPECT} (L-6)")
+
+    try:
+        _wall_modes = wall_modes([_g["gap_in"] for _g in
+                                  (wall_gap_pairs(drawings, ppf) or [])])
+    except Exception:
+        _wall_modes = []
+
     scene = {
         # READ THESE FIRST - before any number (standing protocol, 2 Sep 2026).
         "scale_verified": None,
@@ -6094,6 +6254,15 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             "flat_labels": _flat_labels,
             "stair_ladders_rejected": _stair_rejected,
             "wall_line_thicknesses": _gap_dist,
+            # THE SHEET'S WALL CLASSES (27 Sep 2026). `_wall_thickness_ft`
+            # returns the MEDIAN, and EVERY sheet in this corpus is multi-modal
+            # - 2 to 6 classes - so that median describes no wall on 7 of 9.
+            # EMITTED, NOT CONSUMED: see §12 for why swapping it in moves the
+            # golden sheets.
+            "wall_modes": _wall_modes,
+            # second faces SYNTHESISED from perpendicular terminations,
+            # gated on the sheet's own wall classes (28 Sep 2026)
+            "implied_faces": len(_implied),
             "rejected_summary": _rej_summary,
             # A SHEET MAY CARRY SEVERAL PLAN REGIONS (31 Aug 2026, Rahul).
             # It is not one sheet, one building: a user may upload five

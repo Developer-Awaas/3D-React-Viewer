@@ -23,7 +23,9 @@ SQFT_TO_SQM = 0.09290304
 
 # room types that are COMMON area, never carpet (R-5, L-5, S-5). "stairs" also
 # carries lifts — furnish.classify_room_type maps lift/elevator to it.
-COMMON_TYPES = frozenset({"stairs", "lobby", "duct"})   # §4 D-5: a duct is common area
+COMMON_TYPES = frozenset({"stairs", "lobby", "duct", "lift"})  # §4 D-5: a duct is
+# common area; `lift` joined 15 Sep when it stopped being folded into "stairs" -
+# R-5/L-5/S-5 already counted the lift as common, so this keeps carpet identical
 
 # B-5: balconies are reported SEPARATELY in Indian practice - neither carpet
 # nor common. They are part of the built-up plate.

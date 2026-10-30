@@ -25,7 +25,13 @@ _ROOM_KEYWORDS = (
     ("balcony",  ("balcony", "verandah", "veranda", "terrace", "sit out",
                   "sitout", "ots", "open to sky", "deck")),
     ("store",    ("store", "storage", "utility", "wash area", "dry")),
-    ("stairs",   ("stair", "staircase", "steps", "lift", "elevator")),
+    # L-6: a LIFT is not a staircase. It is a shaft with no floor, and the
+    # sheets print the word - FLOOR PLAN `LIFT 5'X5'`, GHATIKIA
+    # `LIFT 1.63x1.57`. Folding it into `stairs` is why zero lifts were
+    # detected on any of ten sheets (15 Sep 2026). BEFORE `stairs`, so a label
+    # reading `LIFT` never falls through to it.
+    ("lift",     ("lift", "elevator")),
+    ("stairs",   ("stair", "staircase", "steps")),
     ("lobby",    ("lobby", "foyer", "passage", "corridor", "entrance", "entry")),
 )
 

@@ -65,3 +65,30 @@ def tread_scale_check(pitches_ft):
     if any(tread_ok(x / 12.0) for x in p):
         return True, round(med, 1), None
     return False, round(med, 1), round(med / TREAD_MID_IN, 3)
+
+
+# L-6: A LIFT IS NOT A STAIRCASE, and the shape says which (15 Sep 2026).
+# A flight is long and narrow; a shaft is square. `_stair_flight` used this to
+# REFUSE building steps in a lift before the lift had a type of its own; it now
+# also TYPES the room. Lives here because both the parser and the builder read
+# it, and two definitions of one number is the `wing_at` / `wing_pick` trap.
+STAIR_MIN_ASPECT = 1.6
+# A lift shaft is SMALL. NBC/IS residential practice puts a passenger-lift shaft
+# at roughly 2.5 x 2.5 m; 6.25 m2 = 67.3 sqft is taken as the ceiling. Quoted,
+# not fitted: our own lifts measure 20.4-57.1 sqft and sit well inside it, while
+# neelachala FIRST FLOOR's stair CORES measure 166.9 and 168.1 sqft and are
+# correctly excluded - a 168 sqft "lift" is a room, and aspect alone typed it as
+# one until this bound was added (15 Sep 2026).
+LIFT_MAX_SQFT = round(6.25 * 10.7639, 1)      # 6.25 m2 -> sqft
+
+
+def is_lift(long_ft, short_ft):
+    """A room typed `stairs` that is ISOTROPIC is a lift. Refusal-shaped: it
+    types nothing it is not sure about, and it CANNOT see inside a merge -
+    GHATIKIA's lift is merged with its staircase along its length and measures
+    aspect 2.41, so it reads as a flight. Pure."""
+    if not short_ft or short_ft <= 0 or not long_ft:
+        return False
+    if long_ft * short_ft > LIFT_MAX_SQFT:
+        return False
+    return (max(long_ft, short_ft) / min(long_ft, short_ft)) < STAIR_MIN_ASPECT

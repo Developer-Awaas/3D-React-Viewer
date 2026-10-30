@@ -37,3 +37,27 @@ def test_tread_scale_check_reads_every_ladder_not_just_the_accepted_ones():
     bad, med, over = tread_scale_check([18.4 / 12, 20.0 / 12])  # everything at 2x
     assert bad is False and over > 1.6
     assert tread_scale_check([]) == (None, None, None)         # blind, says so
+
+
+def test_a_lift_is_isotropic_AND_small():
+    """L-6, 15 Sep 2026: a room typed `stairs` that is square is a lift - the
+    same test `_stair_flight` already used to refuse building steps in one.
+
+    The SIZE bound is not optional: aspect alone typed neelachala FIRST FLOOR's
+    166.9 and 168.1 sqft stair CORES as lifts, because a core is roughly square.
+    An NBC residential lift shaft is about 2.5 x 2.5 m."""
+    from stairs import is_lift, LIFT_MAX_SQFT, STAIR_MIN_ASPECT
+    assert LIFT_MAX_SQFT == 67.3 and STAIR_MIN_ASPECT == 1.6
+    assert is_lift(4.7, 4.6)            # FLOOR PLAN, printed `LIFT 5'X5"`
+    assert is_lift(7.0, 5.8)            # Typical FP (19.06)
+    assert not is_lift(16.6, 14.1)      # FIRST FLOOR's stair core - too big
+    assert not is_lift(11.7, 4.9)       # GHATIKIA's flight - aspect 2.41
+    assert not is_lift(5.0, 0)
+
+
+def test_it_cannot_see_inside_a_merge():
+    """GHATIKIA's lift is merged with its staircase ALONG ITS LENGTH: 4.85 x
+    11.71 ft, aspect 2.41, so it reads as a flight. Only the printed label
+    saves it, and the merge has to be split before geometry can."""
+    from stairs import is_lift
+    assert not is_lift(11.71, 4.85)

@@ -311,7 +311,7 @@ def _add_furniture(meshes, f, i):
 # climbs exactly one storey, so riser = H / (all treads in this staircase).
 
 
-from stairs import riser_ok        # ONE definition, shared with the parser
+from stairs import riser_ok, STAIR_MIN_ASPECT   # ONE definition, shared
 
 
 def _overlaps(room, box):

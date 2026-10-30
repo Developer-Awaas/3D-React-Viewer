@@ -840,3 +840,67 @@ def test_chhajja_bands_group_the_hatch_into_sunshades():
     assert chhajja_bands([]) == []
     # a degenerate band (zero depth) is dropped, as GHATIKIA draws one
     assert chhajja_bands([((0.0, 0.0), (2.14, 0.0))]) == []
+
+
+def test_wall_modes_merges_adjacent_bins_into_one_class():
+    """A 4 in wall drawn at 4.2 and 4.6 in is ONE wall, not two - so adjacent
+    occupied bins merge. Measured 27 Sep: Typical Floor Plan reads 4.05 in x284
+    and 11.0 in x135, and its MEDIAN is 4.5 in, which is neither."""
+    from pdf_vector import wall_modes
+    gaps = [4.0] * 10 + [4.4] * 10 + [11.0] * 12
+    got = wall_modes(gaps)
+    assert len(got) == 2
+    assert got[0]["count"] == 20 and abs(got[0]["in"] - 4.0) < 0.6
+    assert got[1]["count"] == 12 and got[1]["in"] == 11.0
+    assert wall_modes([]) == []
+    assert wall_modes([4.0] * 3) == []          # below min_count, not a class
+
+
+def test_the_heaviest_mode_is_NOT_the_wall_thickness():
+    """Why this is emitted and not wired: partitions outnumber external walls,
+    so count picks the THIN class. FLOOR PLAN's heaviest mode is 5 in while its
+    real wall - and its median - is 10 in."""
+    from pdf_vector import wall_modes
+    got = wall_modes([5.0] * 24 + [10.0] * 18)
+    assert got[0]["in"] == 5.0 and got[1]["in"] == 10.0
+
+
+def test_wall_modes_merges_adjacent_bins_into_one_class():
+    """A 4 in wall drawn at 4.2 and 4.6 in is ONE wall, not two, so adjacent
+    occupied bins merge. Measured 27 Sep: Typical Floor Plan reads 4.05 in x284
+    and 11.0 in x135 — and its MEDIAN is 4.5 in, which is neither."""
+    from pdf_vector import wall_modes
+    got = wall_modes([4.0] * 10 + [4.4] * 10 + [11.0] * 12)
+    assert len(got) == 2
+    assert got[0]["count"] == 20 and abs(got[0]["in"] - 4.2) < 0.4
+    assert got[1]["count"] == 12 and got[1]["in"] == 11.0
+    assert wall_modes([]) == []
+    assert wall_modes([4.0] * 3) == []          # below min_count: not a class
+
+
+def test_the_heaviest_mode_is_NOT_the_wall_thickness():
+    """Why this is emitted and not wired: partitions outnumber external walls,
+    so count picks the THIN class. FLOOR PLAN's heaviest mode is 5 in while its
+    real wall — and its median — is 10 in."""
+    from pdf_vector import wall_modes
+    got = wall_modes([5.0] * 24 + [10.0] * 18)
+    assert got[0]["in"] == 5.0 and got[1]["in"] == 10.0
+
+
+def test_implied_partner_is_synthesised_only_at_a_wall_CLASS():
+    """The inner face is stated by the perpendiculars that terminate on it.
+    The gate is the sheet's own classes: five of six sheets carry a second
+    cluster at ~3x the internal wall - perpendiculars stopping at the FAR face
+    of a wall beyond - and admitting those paints a wall where none exists."""
+    from pdf_vector import implied_partners
+    # one unpaired vertical at x=0, three horizontals all stopping at x=0.94
+    segs = [(0.0, 0.0, 0.0, 12.0)] + [(0.94, y, 9.0, y) for y in (2.0, 6.0, 10.0)]
+    got = implied_partners(segs, [0.94])
+    assert got == [(0.94, 0.0, 0.94, 12.0)]
+    # the same geometry with the offset at 3x a class is rejected
+    far = [(0.0, 0.0, 0.0, 12.0)] + [(1.34, y, 9.0, y) for y in (2.0, 6.0, 10.0)]
+    assert implied_partners(far, [0.44]) == []
+    # one agreeing perpendicular is not a face
+    lone = [(0.0, 0.0, 0.0, 12.0), (0.94, 2.0, 9.0, 2.0)]
+    assert implied_partners(lone, [0.94]) == []
+    assert implied_partners(segs, []) == []
