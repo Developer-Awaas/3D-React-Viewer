@@ -2683,3 +2683,41 @@ the route must prove it fired.
 **Next, and it is now the only thing standing between us and the three sheets:
 admit layer-`0` lines that carry the wall signature.** Four checks green; 1 new
 test.
+
+## Implied faces: rejection counted, gains still blocked upstream (30 Oct 2026)
+
+**The work was already built on 28 Sep (now committed in `f088a9a`); this turn
+added the one thing the gate report needed — the off-class rejection count.**
+`implied_partners` returns `(faces, rejected)`: an offset ≥2 perpendiculars agree
+on but which matches **no** wall class is the far face of a wall *beyond*, and it
+is **counted, not dropped silently**.
+
+| sheet | implied admitted | rejected at ~3× | fp | carpet | R-8 | plan/ink |
+|---|---|---|---|---|---|---|
+| **BRICK WORK** | 1 | **2** | **1247.1** | 581.3 | — | 47.7% |
+| **FLOOR PLAN** | 1 | 0 | **1796.8** | 1191.1 | **96.5** | 41.8% |
+| **GHATIKIA** | 0 | 0 | **1738.4** | 1167.4 | — | 42.0% |
+| **FIRST FLOOR** | 0 | 0 | **4472.1** | 3010.1 | — | 65.6% |
+| Typical Floor Plan | 1 | **2** | 1101.7 → **1117.8** | 365.1 | 44.8 → **45.4** | 64.2% |
+| First Floor Plan | 1 | **2** | 1101.1 | 365.9 | 44.8 | 55.4% |
+| DHAL-02 · 19.06 · DHAL-01 | 0 | 0 | unchanged | — | 40.4 | — |
+
+**The golden four are byte-identical** — and unfiltered, FLOOR PLAN would have
+taken **15 false candidates**. The class gate is doing exactly its job.
+
+**But the expected gains do not arrive, and the cause is upstream and measured.**
+`implied_partners` runs on `struct`, and on a **layers-route** sheet `struct`
+holds only wall-LAYER lines: **524 segments reach the reader against 838 long
+lines on the sheet, 378 of them on layer `0`.** The traced bedroom proves it
+exactly — its west wall is a **32.22 ft line at x = 0.00 on layer `0`** — so the
+reader never sees the very line whose face is implied, and the room at
+(7.5, 24.5) is **still not found**.
+
+**The thickness an unpaired line is painted at is still the MEDIAN.** Said
+plainly: `_wall_thickness_ft` is untouched. Per the eighth-constant finding that
+job may have no answer — no sheet is unimodal, and the heaviest mode is not the
+wall (FLOOR PLAN's dominant class is 5 in against a real wall of 10 in).
+
+**Verified end to end:** GLB still builds on both a moved and a golden sheet
+(Typical FP 379 meshes / 455.7 KB, FLOOR PLAN 140 / 142.0 KB), `wall_volume_ratio`
+0.841 / 0.975, `seg_unclassified_pct` 0.0%. Four checks green.

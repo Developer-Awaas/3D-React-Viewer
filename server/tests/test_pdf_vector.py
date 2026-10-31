@@ -895,12 +895,12 @@ def test_implied_partner_is_synthesised_only_at_a_wall_CLASS():
     from pdf_vector import implied_partners
     # one unpaired vertical at x=0, three horizontals all stopping at x=0.94
     segs = [(0.0, 0.0, 0.0, 12.0)] + [(0.94, y, 9.0, y) for y in (2.0, 6.0, 10.0)]
-    got = implied_partners(segs, [0.94])
-    assert got == [(0.94, 0.0, 0.94, 12.0)]
-    # the same geometry with the offset at 3x a class is rejected
+    got, rej = implied_partners(segs, [0.94])
+    assert got == [(0.94, 0.0, 0.94, 12.0)] and rej == 0
+    # the same geometry with the offset at 3x a class is rejected AND COUNTED
     far = [(0.0, 0.0, 0.0, 12.0)] + [(1.34, y, 9.0, y) for y in (2.0, 6.0, 10.0)]
-    assert implied_partners(far, [0.44]) == []
-    # one agreeing perpendicular is not a face
+    assert implied_partners(far, [0.44]) == ([], 1)
+    # one agreeing perpendicular is not a face, and is not an off-class reject
     lone = [(0.0, 0.0, 0.0, 12.0), (0.94, 2.0, 9.0, 2.0)]
-    assert implied_partners(lone, [0.94]) == []
+    assert implied_partners(lone, [0.94]) == ([], 0)
     assert implied_partners(segs, []) == []

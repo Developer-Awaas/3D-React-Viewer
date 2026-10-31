@@ -2149,7 +2149,7 @@ def implied_partners(segs, modes_ft, min_len=2.0, min_agree=2, tol=0.08,
     def at_mode(d):
         return any(abs(d - m) <= near_frac * m for m in modes_ft if m > 0)
 
-    out = []
+    out, rejected = [], 0
     for S, Perp, horiz in ((unpaired(V), H, False), (unpaired(H), V, True)):
         for p, a, b in S:
             ends = []
@@ -2157,17 +2157,26 @@ def implied_partners(segs, modes_ft, min_len=2.0, min_agree=2, tol=0.08,
                 if not (a - 0.5 <= q <= b + 0.5):
                     continue
                 ends += [t - p for t in (c, e) if lo <= abs(t - p) <= hi]
-            best = None
+            best, off_class = None, None
             for d in ends:
                 n = sum(1 for o in ends if abs(o - d) <= tol)
-                if n >= min_agree and at_mode(abs(d)) \
-                        and (best is None or n > best[1]):
-                    best = (d, n)
+                if n < min_agree:
+                    continue
+                if at_mode(abs(d)):
+                    if best is None or n > best[1]:
+                        best = (d, n)
+                elif off_class is None or n > off_class[1]:
+                    off_class = (d, n)
             if best is None:
+                # A CONSISTENT OFFSET THAT MATCHES NO CLASS is the far face of
+                # a wall BEYOND - five of six sheets cluster at ~3x the
+                # internal wall. Counted, because a filter that deletes
+                # silently is how the 16-room cap hid.
+                rejected += off_class is not None
                 continue
             q = p + best[0]
             out.append((a, q, b, q) if horiz else (q, a, q, b))
-    return out
+    return out, rejected
 
 
 def threshold_margins(gaps_in, thresholds_in, near_frac=0.05, min_count=8,
@@ -3446,11 +3455,13 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
     # (7 Sep), which is why the count is EMITTED on `meta.implied_faces`.
     _wm_early = wall_modes([g["gap_in"] for g in
                             (wall_gap_pairs(drawings, ppf) or [])])
-    _implied = []
+    _implied, _imp_rej = [], 0
     if _wm_early and struct:
         _sft = [(g[0] / ppf, g[1] / ppf, g[2] / ppf, g[3] / ppf) for g in struct]
+        _imp_ft, _imp_rej = implied_partners(
+            _sft, [m["ft"] for m in _wm_early])
         _implied = [(q[0] * ppf, q[1] * ppf, q[2] * ppf, q[3] * ppf)
-                    for q in implied_partners(_sft, [m["ft"] for m in _wm_early])]
+                    for q in _imp_ft]
         struct = struct + _implied
 
     # STRUCTURAL TEST (replaces the page-unit length cap): a line survives if
@@ -6263,6 +6274,9 @@ def parse(raw, width_ft=None, wing="largest", ppf_hint=None, force_geometry=Fals
             # second faces SYNTHESISED from perpendicular terminations,
             # gated on the sheet's own wall classes (28 Sep 2026)
             "implied_faces": len(_implied),
+            # offsets that TWO perpendiculars agreed on but that match no wall
+            # class - the far face of a wall beyond (~3x a class)
+            "implied_faces_rejected_offclass": _imp_rej,
             "rejected_summary": _rej_summary,
             # A SHEET MAY CARRY SEVERAL PLAN REGIONS (31 Aug 2026, Rahul).
             # It is not one sheet, one building: a user may upload five
