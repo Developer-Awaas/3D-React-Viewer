@@ -904,3 +904,21 @@ def test_implied_partner_is_synthesised_only_at_a_wall_CLASS():
     lone = [(0.0, 0.0, 0.0, 12.0), (0.94, 2.0, 9.0, 2.0)]
     assert implied_partners(lone, [0.94]) == ([], 0)
     assert implied_partners(segs, []) == []
+
+
+def test_implied_faces_wired_into_parse_meta():
+    """The first build placed this beside `struct`, before `ppf` existed,
+    raised NameError inside its own `except` and did NOTHING on all nine
+    sheets while every number stayed identical - a clean-looking pass for a
+    route that never ran (7 Sep 2026). This pins the wiring itself: `meta`
+    must carry both counters on every parse, not just on sheets that need
+    them, so a future silent break shows up as a missing key."""
+    import sys, os
+    tools = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "tools")
+    if tools not in sys.path:
+        sys.path.insert(0, tools)
+    from make_sample_plan import build_pdf
+    from pdf_vector import parse
+    m = parse(build_pdf(), None)["meta"]
+    assert isinstance(m["implied_faces"], int)
+    assert isinstance(m["implied_faces_rejected_offclass"], int)
