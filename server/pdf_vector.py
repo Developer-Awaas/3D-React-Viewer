@@ -2128,7 +2128,7 @@ def implied_partners(segs, modes_ft, min_len=2.0, min_agree=2, tol=0.08,
     FLOOR PLAN gained 15 such candidates. Pure -> unit-tested.
     """
     if not segs or not modes_ft:
-        return []
+        return [], 0
     H, V = [], []
     for x0, y0, x1, y1 in segs:
         if abs(y1 - y0) < 0.05 and abs(x1 - x0) >= min_len:

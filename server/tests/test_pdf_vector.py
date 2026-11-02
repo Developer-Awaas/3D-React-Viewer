@@ -903,4 +903,4 @@ def test_implied_partner_is_synthesised_only_at_a_wall_CLASS():
     # one agreeing perpendicular is not a face, and is not an off-class reject
     lone = [(0.0, 0.0, 0.0, 12.0), (0.94, 2.0, 9.0, 2.0)]
     assert implied_partners(lone, [0.94]) == ([], 0)
-    assert implied_partners(segs, []) == []
+    assert implied_partners(segs, []) == ([], 0)
