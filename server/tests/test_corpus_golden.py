@@ -6,20 +6,18 @@ window counts are FLOORS (>=) so future improvements pass but regressions
 fail. FIRST FLOOR wing 1 is additionally checked against the USER-CONFIRMED
 real-world plot envelope (38'3" x 64'2") - the one true accuracy anchor.
 
-plans/ holds confidential drawings (gitignored), so every test skips cleanly
-where the file is absent (e.g. CI without the corpus).
+plans/ holds confidential drawings (gitignored). This is the project's main
+safety gate, so a missing corpus FAILS loudly instead of skipping - a skip
+reads as a pass and lets the gate silently not run. Point DRISHTI_PLANS_DIR
+at the folder holding the corpus to run these for real.
 """
-import os
-
 import pytest
 
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+from conftest import require_corpus_file
 
 
 def _load(name):
-    path = os.path.join(PLANS, name)
-    if not os.path.exists(path):
-        pytest.skip(f"corpus file not present: {name}")
+    path = require_corpus_file(name)
     with open(path, "rb") as f:
         return f.read()
 

@@ -9,12 +9,10 @@ degrees, only 2 of which reach both sides. Together they cover it in one
 unbroken run. `_wing_groups` used to keep one block and delete the other, so
 every number on that sheet described 37% of the footprint.
 """
-import os
-
 import numpy as np
 import pytest
 
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+from conftest import require_corpus_file
 
 
 def _cover(rows, cols, strokes):
@@ -48,9 +46,7 @@ def test_a_band_nothing_covers_still_splits():
 
 def test_first_floor_keeps_both_blocks():
     """Regression: the discarded block was the LARGER of the two."""
-    path = os.path.join(PLANS, "neelachala FIRST FLOOR.pdf")
-    if not os.path.exists(path):
-        pytest.skip("corpus file not present")
+    path = require_corpus_file("neelachala FIRST FLOOR.pdf")
     from pdf_vector import parse
     with open(path, "rb") as f:
         scene = parse(f.read(), None)
@@ -90,9 +86,7 @@ def test_the_split_is_inert_on_every_single_view_sheet():
     for name, wings in (("FLOOR PLAN.pdf", 1), ("BRICK WORK LAYOUT.pdf", 1),
                         ("neelachala FIRST FLOOR.pdf", 1),
                         ("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf", 2)):
-        path = os.path.join(PLANS, name)
-        if not os.path.exists(path):
-            continue
+        path = require_corpus_file(name)
         with open(path, "rb") as f:
             assert parse(f.read(), None)["meta"]["wing"]["count"] == wings, name
 
@@ -103,9 +97,7 @@ def test_regions_separate_on_an_empty_band_not_on_proximity():
     used to separate for a DIFFERENT REASON on each parse pass — a zero-ink band
     at ppf 8.80, mere proximity at 7.189. The two passes agreed on TWO REGIONS by
     coincidence, not by agreement. Ink is ink at any scale."""
-    path = os.path.join(PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")
-    if not os.path.exists(path):
-        pytest.skip("corpus file not present")
+    path = require_corpus_file("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")
     from pdf_vector import parse
     raw = open(path, "rb").read()
     for kw in ({"_refit": False}, {}):                 # pass 1 and pass 2
@@ -122,9 +114,7 @@ def test_first_floor_still_one_region_the_terrace_puts_ink_in_the_band():
     """The 22 Aug ruling: FIRST FLOOR's two blocks are ONE building, joined by
     the terrace. If the separator ever splits them, that ruling has been
     silently reversed — the failure mode that matters most."""
-    path = os.path.join(PLANS, "neelachala FIRST FLOOR.pdf")
-    if not os.path.exists(path):
-        pytest.skip("corpus file not present")
+    path = require_corpus_file("neelachala FIRST FLOOR.pdf")
     from pdf_vector import parse
     with open(path, "rb") as f:
         m = parse(f.read(), None)["meta"]

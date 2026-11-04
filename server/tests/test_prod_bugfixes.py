@@ -206,11 +206,8 @@ def test_wing_pick_prefers_room_dense_wing():
 def test_geometry_door_footprint_validated():
     """An oversize/fat snapped door strip must be demoted (not trusted)."""
     from pdf_vector import parse
-    import os
-    p = "../plans/NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"
-    if not os.path.exists(p):
-        import pytest
-        pytest.skip("corpus not present")
+    from conftest import require_corpus_file
+    p = require_corpus_file("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")
     s = parse(open(p, "rb").read(), None)
     for o in s["openings"]:
         if o["type"] == "door" and o.get("snapped") and o.get("footprint"):

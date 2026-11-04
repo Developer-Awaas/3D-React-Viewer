@@ -7,15 +7,12 @@ run at (25.58, 24.06) encloses 4.91 ft, which matches neither. That last one
 is the lobby drafting error (§0 CONTRADICTS), and before this test it read as
 37.3 sqft of balcony.
 """
-import os
-
 import numpy as np
 import pytest
 
 import pdf_vector
 import railings
-
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+from conftest import require_corpus_file
 
 FLAT1 = {"ends_on_wall": 2, "turns": 2,
          "polyline_ft": [[-3.92, 0.08], [-3.92, 13.23],
@@ -64,13 +61,11 @@ def test_bridge_cap_does_not_move_with_the_canvas():
     assert (c > 0).sum() == pytest.approx((a > 0).sum(), rel=0.01)
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_balcony_is_measured_from_its_drawn_edge():
     """The balcony must come from the railing, not from `foot_ext - foot`:
     flat-1 sits at x -3.92..0.00, OUTSIDE the wall extent, and the canvas has
     to reach it before any pocket can exist there."""
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         s = pdf_vector.parse(f.read())
     bals = [r for r in s["rooms"] if r.get("type") == "balcony"]
     assert bals, "flat-1's balcony must be found"

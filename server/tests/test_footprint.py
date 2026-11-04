@@ -6,14 +6,12 @@ is a guess about the widest opening in the outer wall, and no value is right
 (6 ft leaves FLOOR PLAN's balconies open at 1240 sqft against a real plate of
 ~1951; 14 ft closes them and pushes neelachala FIRST FLOOR past its own plot).
 """
-import os
-
 import numpy as np
 import pytest
 
 import pdf_vector
+from conftest import require_corpus_file
 
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
 PPX = pdf_vector.NORM_PPX
 
 
@@ -104,8 +102,6 @@ class TestFreeEndpoints:
         assert pdf_vector._free_ring_endpoints([], 10, 20) == []
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 @pytest.mark.parametrize("name", ["FLOOR PLAN.pdf", "neelachala FIRST FLOOR.pdf"])
 def test_footprint_never_exceeds_the_plot(name):
     """PHYSICS (§0.1): a building cannot be larger than its land. This is the
@@ -121,9 +117,7 @@ def test_footprint_never_exceeds_the_plot(name):
     drawing or the user and from nowhere else; where neither states one the
     check is BLIND and says so (`plan_doctor` raises `plot_area_unknown` as an
     ask). Rahul's real figure for that site is 11,500 sqft."""
-    path = os.path.join(PLANS, name)
-    if not os.path.exists(path):
-        pytest.skip(f"corpus file not present: {name}")
+    path = require_corpus_file(name)
     with open(path, "rb") as f:
         meta = pdf_vector.parse(f.read())["meta"]
     fp, plot = meta.get("footprint_sqft"), meta.get("plot_sqft")
@@ -250,11 +244,9 @@ def test_a_room_sized_box_is_not_a_duct():
     assert pdf_vector.enclosed_boxes(segs) == []
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_finds_both_ducts_and_they_are_common_area():
     import area_statement
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         s = pdf_vector.parse(f.read())
     ducts = [r for r in s["rooms"] if r.get("type") == "duct"]
     assert len(ducts) == 2
@@ -318,11 +310,9 @@ class TestOpenSideRegions:
                                             min_sqft=20.0) == []
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_flags_its_common_area_and_nothing_else():
     import plan_doctor
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         s = pdf_vector.parse(f.read())
     flags = s["meta"]["open_side_regions"]
     assert len(flags) == 1, flags                      # not the outside, not the balcony
@@ -453,10 +443,7 @@ def test_derived_seal_prefers_drawn_then_printed_then_says_underived():
 
 def test_the_seal_actually_applied_is_still_the_default():
     """Guard on the revert: the derivation is reported only."""
-    import os
-    path = os.path.join(PLANS, "FLOOR PLAN.pdf")
-    if not os.path.exists(path):
-        pytest.skip("corpus file not present")
+    path = require_corpus_file("FLOOR PLAN.pdf")
     with open(path, "rb") as f:
         seal = pdf_vector.parse(f.read())["meta"]["route"]["seal"]
     assert seal["applied_ft"] == 4.0

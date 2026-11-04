@@ -707,13 +707,9 @@ def test_wall_faces_come_from_the_measured_pair_rectangles():
     where 54% of the wall is unpaired and was never clipped in the first
     place. What ships: pair rectangles only, one wall thickness, only where
     another wall sits."""
-    import os
-    import pytest as _p
     from pdf_vector import parse
-    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
-    f = os.path.join(plans, "FLOOR PLAN.pdf")
-    if not os.path.exists(f):
-        _p.skip("confidential corpus not present")
+    from conftest import require_corpus_file
+    f = require_corpus_file("FLOOR PLAN.pdf")
     with open(f, "rb") as fh:
         q = parse(fh.read())["meta"]["wall_face_quality"]
     assert q["source"] == "pair_rectangles"
@@ -735,12 +731,17 @@ def test_m1_wall_material_ratio_holds_on_every_sheet():
     FLOOR 1.10, GHATIKIA 1.15, against the 19 Aug broken build's 3.00."""
     import glob
     import os
-    import pytest as _p
+    import pytest
     from pdf_vector import parse
-    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
-    files = sorted(glob.glob(os.path.join(plans, "*.pdf")))
+    from conftest import PLANS_DIR
+    files = sorted(glob.glob(os.path.join(PLANS_DIR, "*.pdf")))
     if not files:
-        _p.skip("confidential corpus not present")
+        pytest.fail(
+            f"GOLDEN CORPUS MISSING: no *.pdf under {PLANS_DIR!r}. Set "
+            "DRISHTI_PLANS_DIR to the folder holding the confidential plan "
+            "corpus so the golden gate can actually run.",
+            pytrace=False,
+        )
     for f in files:
         with open(f, "rb") as fh:
             q = parse(fh.read())["meta"]["wall_face_quality"]

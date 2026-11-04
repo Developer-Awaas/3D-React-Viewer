@@ -4,13 +4,10 @@ The registration maths gets the most attention here: a mis-registered overlay
 lies convincingly, which is worse than having no overlay at all. Everything is
 pure, so none of this needs a PDF or tesseract.
 """
-import os
-
 import pytest
 
 import overlay
-
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+from conftest import require_corpus_file
 
 # FLOOR PLAN.pdf's real registration, as the parser reports it
 REG = {"x0_pt": 460.28, "y0_pt": 854.0, "ppf": 28.468, "d_ft": 29.7892,
@@ -105,13 +102,11 @@ class TestLayers:
         assert out["rejected_summary"]["text"] == 718
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_geometry_lands_inside_the_page():
     """End to end: every drawn shape must fall within the rendered page. A
     registration error big enough to matter puts shapes off-sheet."""
     import pdf_vector
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         scene = pdf_vector.parse(f.read())
     reg = scene["meta"]["page_registration"]
     assert reg and reg["ppf"] > 0
@@ -133,11 +128,9 @@ def test_floor_plan_geometry_lands_inside_the_page():
 # looking plausible while quietly lying — we would read a registration drift as
 # a geometry move. Anchor: FLOOR PLAN's south wall east jamb, the feature the
 # whole lobby investigation turned on.
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_registration_anchor_does_not_drift():
     import pdf_vector
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         reg = pdf_vector.parse(f.read())["meta"]["page_registration"]
     px, py = overlay.page_transform(reg, 110.0)(41.24, 0.0)
     # measured 14 Aug 2026; a real geometry change may move this, but it must

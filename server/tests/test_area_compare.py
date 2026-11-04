@@ -4,14 +4,10 @@ The extraction is PURE (tokens in, figures out), so these tests build the
 FLOOR PLAN.pdf table as synthetic tokens and never need tesseract. One extra
 test runs the real sheet end-to-end and is skipped when tesseract is absent.
 """
-import os
-
 import pytest
 
 import area_compare
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-PLANS = os.path.join(HERE, "..", "..", "plans")
+from conftest import require_corpus_file
 
 
 def _tok(text, x, y, w=60.0, h=20.0):
@@ -175,11 +171,11 @@ class TestDoctor:
         assert "1705" in bad[0]["message"]           # names the printed figure
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_pdf_end_to_end():
     """The real sheet: dead text, so this only passes via OCR. Skipped when
-    tesseract is not installed (optional dependency)."""
+    tesseract is not installed (optional dependency) - that is a different
+    gate from the corpus, which must FAIL loudly, not skip, if missing."""
+    path = require_corpus_file("FLOOR PLAN.pdf")
     pytest.importorskip("pytesseract")
     import pytesseract
     try:
@@ -188,7 +184,7 @@ def test_floor_plan_pdf_end_to_end():
         pytest.skip("tesseract binary not installed")
     import area_statement
     import pdf_vector
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(path, "rb") as f:
         scene = pdf_vector.parse(f.read())
     printed = scene.get("printed_areas")
     assert printed, "the sheet prints an area statement; it must be read"

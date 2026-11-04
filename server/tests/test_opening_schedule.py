@@ -3,14 +3,10 @@
 Pure: the table is rebuilt as synthetic tokens (positions taken from the real
 OCR of BRICK WORK LAYOUT.pdf, OCR quirks included), so no tesseract is needed.
 """
-import os
-
 import pytest
 
 import opening_schedule as S
-
-HERE = os.path.dirname(os.path.abspath(__file__))
-PLANS = os.path.join(HERE, "..", "..", "plans")
+from conftest import require_corpus_file
 
 # "SCHEDULE OF DOOR & WINDOW" as OCR actually reads it: every ft-in value is
 # exact, but two single-letter names come back doubled ('V'->'Vv', 'W'->'WwW').
@@ -112,10 +108,11 @@ class TestHelpers:
         assert op["z"] == [2.5, 7.0]               # sheet's sill, not our 3'0"
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "BRICK WORK LAYOUT.pdf")),
-                    reason="confidential corpus not present")
 def test_brick_work_pdf_end_to_end():
-    """The real sheet: 0 live words, so this only passes via OCR."""
+    """The real sheet: 0 live words, so this only passes via OCR. Skipped when
+    tesseract is not installed (optional dependency) - a different gate from
+    the corpus, which must FAIL loudly, not skip, if missing."""
+    path = require_corpus_file("BRICK WORK LAYOUT.pdf")
     pytest.importorskip("pytesseract")
     import pytesseract
     try:
@@ -123,7 +120,7 @@ def test_brick_work_pdf_end_to_end():
     except Exception:
         pytest.skip("tesseract binary not installed")
     import pdf_vector
-    with open(os.path.join(PLANS, "BRICK WORK LAYOUT.pdf"), "rb") as f:
+    with open(path, "rb") as f:
         scene = pdf_vector.parse(f.read())
     ws = [o for o in scene["openings"] if o.get("tag") == "W"]
     assert ws, "the sheet tags a W window; it must be placed"

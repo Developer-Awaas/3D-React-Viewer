@@ -6,7 +6,10 @@ and track progress across many real plans.
 Usage:
     python batch_eval.py [PLANS_DIR] [--save]
 
-- PLANS_DIR defaults to ./plans (or $PLANS_DIR). Parses every *.pdf.
+- PLANS_DIR defaults to ./plans (or $DRISHTI_PLANS_DIR, or $PLANS_DIR). Parses
+  every *.pdf. The corpus is confidential and gitignored, so a repo copy
+  without it just scores zero plans - this script reports, it does not gate;
+  the pytest golden suite is the gate and fails loudly instead.
 - Prints a per-plan scorecard + health flags that catch likely failures on ANY
   plan (no ground truth needed): implausible envelope, zero rooms, zero doors.
 - If plans/ground_truth.json exists, also checks door counts where a number is
@@ -248,7 +251,8 @@ def _print(results):
 
 def main():
     args = [a for a in sys.argv[1:] if not a.startswith("--")]
-    plans_dir = args[0] if args else os.getenv("PLANS_DIR", "plans")
+    plans_dir = args[0] if args else (os.getenv("DRISHTI_PLANS_DIR")
+                                       or os.getenv("PLANS_DIR", "plans"))
     gt_path = os.path.join(plans_dir, "ground_truth.json")
     gt = json.load(open(gt_path)) if os.path.exists(gt_path) else None
     results = evaluate(plans_dir, gt)

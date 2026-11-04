@@ -135,17 +135,13 @@ def test_the_strip_has_no_lower_span_bound():
 # wrong place. A cut is SOUND when its width matches the DRAWN leaf cluster it
 # belongs to — the strip the ROI close reveals is a different object and cuts
 # sized from it removed about half of each doorway.
-import os
 import pytest
 import pdf_vector
+from conftest import require_corpus_file
 
-_PL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
 
-
-@pytest.mark.skipif(not os.path.exists(os.path.join(_PL, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_door_placement_ratchet():
-    with open(os.path.join(_PL, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         d = pdf_vector.parse(f.read())["meta"]["doors_placed_sound"]
     assert d["doors"] == 16 and d["drawn_leaves"] == 12
     # authorised floor is 6 (the value before the cut took its width from the
@@ -192,13 +188,9 @@ def test_door_cut_and_hinge_come_from_the_drawn_symbol():
     wall's own measured thickness deep instead of the ROI close's 1.06-1.55 ft
     against a 0.83 ft wall. Result: every hinge lands ON a jamb, and
     doors_placed_sound went 11/12 -> 12/12."""
-    import os
-    import pytest as _p
     from pdf_vector import parse
-    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
-    f = os.path.join(plans, "FLOOR PLAN.pdf")
-    if not os.path.exists(f):
-        _p.skip("confidential corpus not present")
+    from conftest import require_corpus_file
+    f = require_corpus_file("FLOOR PLAN.pdf")
     with open(f, "rb") as fh:
         sc = parse(fh.read())
     doors = [o for o in sc["openings"] if o["type"] == "door"]
@@ -221,15 +213,11 @@ def test_leaf_swings_to_the_side_the_drawn_arc_sweeps():
     `opens_ccw` is the cross product of the symbol's shut and open arc ends,
     in plan — unambiguous. 3 of 12 leaves swung the wrong way before it."""
     import math
-    import os
     import numpy as np
-    import pytest as _p
     from pdf_vector import parse
+    from conftest import require_corpus_file
     import scene_to_glb
-    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
-    f = os.path.join(plans, "FLOOR PLAN.pdf")
-    if not os.path.exists(f):
-        _p.skip("confidential corpus not present")
+    f = require_corpus_file("FLOOR PLAN.pdf")
     with open(f, "rb") as fh:
         sc = parse(fh.read())
     _s, meshes = scene_to_glb._build_scene(sc)
@@ -254,13 +242,9 @@ def test_the_doors_wall_line_comes_from_the_hinge_not_the_strip():
     FLOOR PLAN cuts sat off their symbol's wall line — five by 0.49-0.68 ft
     (half a wall) and flat-1's bedroom entry by 3.32 ft, a different wall
     entirely, which is what read as a door in the wrong position."""
-    import os
-    import pytest as _p
     from pdf_vector import parse
-    plans = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
-    f = os.path.join(plans, "FLOOR PLAN.pdf")
-    if not os.path.exists(f):
-        _p.skip("confidential corpus not present")
+    from conftest import require_corpus_file
+    f = require_corpus_file("FLOOR PLAN.pdf")
     with open(f, "rb") as fh:
         sc = parse(fh.read())
     # gap openings carry no hinge — they have no drawn symbol at all

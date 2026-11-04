@@ -195,19 +195,14 @@ class TestPrintedWidths:
 # form `11'-5"`, which this sheet uses everywhere and FLOOR PLAN uses nowhere,
 # so 4 pairs were read from 359 tokens. R-2 is the second instrumented plan
 # and must not silently fall back.
-import os
-
 import pytest
 
 import pdf_vector
+from conftest import require_corpus_file
 
-_PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
 
-
-@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf")),
-                    reason="confidential corpus not present")
 def test_first_floor_r2_ratchet():
-    with open(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf"), "rb") as f:
+    with open(require_corpus_file("neelachala FIRST FLOOR.pdf"), "rb") as f:
         rooms = pdf_vector.parse(f.read())["rooms"]
     s = R.summary(rooms)
     # RATCHET BOTH (Rahul, 17 Aug 2026): R-2 held at 97.0 on FLOOR PLAN while
@@ -225,8 +220,6 @@ def test_first_floor_r2_ratchet():
     assert s["median_match_pct"] >= 96.9, s
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf")),
-                    reason="confidential corpus not present")
 def test_no_absolute_room_cap():
     """`rooms = rooms[:16]` deleted the three smallest rooms on any sheet that
     found more (22 Aug 2026). On neelachala FIRST FLOOR — five flats over two
@@ -237,26 +230,22 @@ def test_no_absolute_room_cap():
 
     Rooms are bounded by a DERIVED floor (the sheet's own minimum room area);
     an absolute count is a second, blunter filter on the same thing."""
-    with open(os.path.join(_PLANS, "neelachala FIRST FLOOR.pdf"), "rb") as f:
+    with open(require_corpus_file("neelachala FIRST FLOOR.pdf"), "rb") as f:
         rooms = pdf_vector.parse(f.read())["rooms"]
     assert len(rooms) > 16, f"the room cap is back: {len(rooms)}"
     small = sorted(r["area_sqft"] for r in rooms)[:3]
     assert max(small) < 35.0, small          # the three the cap used to eat
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_floor_plan_r2_sample_is_ratcheted():
     """A score that holds while its sample shrinks is not holding (Rahul,
     17 Aug 2026). Pair-built walls took this sheet to 98.0 over 8 rooms."""
-    with open(os.path.join(_PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         s = R.summary(pdf_vector.parse(f.read())["rooms"])
     assert s["rooms_checked"] >= 8, s
     assert s["median_match_pct"] >= 95.0, s
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf")),
-                    reason="confidential corpus not present")
 def test_ghatikia_r2_sample_is_ratcheted():
     """RE-DERIVED 2026-08-25: sample 14 -> 7, because the sheet's TWO VIEWS are
     now split and we no longer count the same rooms twice. Expected, not a
@@ -268,7 +257,7 @@ def test_ghatikia_r2_sample_is_ratcheted():
     cannot show — `worst_match_pct` 0.0 -> 57.2 and `rooms_off` 12 -> 6. The
     median is held near 60 by this sheet's UNTOUCHED 19% scale error, which is
     a separate one-variable change."""
-    with open(os.path.join(_PLANS, "NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), "rb") as f:
+    with open(require_corpus_file("NEELACHALA HOMES GHATIKIA FLAT NUMBERS.pdf"), "rb") as f:
         s = R.summary(pdf_vector.parse(f.read())["rooms"])
     # RE-DERIVED 2026-08-25 after the SCALE refit (7.19 pt/ft from the printed
     # room dimensions, accepted on dimension anchors 56% -> 69%):

@@ -8,14 +8,11 @@ first check that reaches BRICK WORK.
 No percentage is pinned here. The instrument is new and unruled: pinning its
 score before Rahul rules on it would create a ratchet nobody authorised.
 """
-import os
-
 import pytest
 
 import dimensions as D
 import pdf_vector
-
-PLANS = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "plans")
+from conftest import require_corpus_file
 
 
 class TestValues:
@@ -80,23 +77,19 @@ class TestAnchors:
         assert r["summary"]["pct_on_a_detected_face"] is None
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "BRICK WORK LAYOUT.pdf")),
-                    reason="confidential corpus not present")
 def test_the_instrument_reaches_brick_work():
     """BRICK WORK prints no area statement, no room dimensions and no balcony
     width — R-8, R-2 and B-5 are all silent there. It IS dimensioned."""
-    with open(os.path.join(PLANS, "BRICK WORK LAYOUT.pdf"), "rb") as f:
+    with open(require_corpus_file("BRICK WORK LAYOUT.pdf"), "rb") as f:
         da = pdf_vector.parse(f.read())["meta"]["dimension_anchors"]
     assert da and da["route"] == "dim_layer"
     assert da["summary"]["dimensions"] >= 20
     assert da["summary"]["endpoints"] == 2 * da["summary"]["dimensions"]
 
 
-@pytest.mark.skipif(not os.path.exists(os.path.join(PLANS, "FLOOR PLAN.pdf")),
-                    reason="confidential corpus not present")
 def test_the_instrument_is_additive_only():
     """It must not move a number. FLOOR PLAN's ratchets are the check."""
-    with open(os.path.join(PLANS, "FLOOR PLAN.pdf"), "rb") as f:
+    with open(require_corpus_file("FLOOR PLAN.pdf"), "rb") as f:
         s = pdf_vector.parse(f.read())
     assert s["meta"]["dimension_anchors"]["summary"]["dimensions"] > 0
     assert s["meta"]["plan_width_ft"] == pytest.approx(95.2, abs=0.1)
