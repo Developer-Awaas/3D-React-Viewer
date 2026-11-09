@@ -26,6 +26,9 @@ plans/*
 # batch eval outputs
 out/
 
+# automatic per-parse run log (hand-written docs/LEARNINGS.md stays tracked)
+logs/
+
 # old prototype leftovers (kept on disk, not in git)
 colored_plan.png
 tools/auto_preview.png

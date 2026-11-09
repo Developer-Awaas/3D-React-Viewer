@@ -6,7 +6,9 @@ e.g. every night at 02:00): it re-reads the whole learning log, finds trends
 a single parse can't show, and writes a short human report.
 
 What it does each run (all in plain language, no ML required):
- 1. Reads docs/LEARNINGS.md (every parse the Plan Doctor ever graded).
+ 1. Reads logs/parse-log.md (every parse the Plan Doctor ever graded — a
+    gitignored, automatic log; docs/LEARNINGS.md is the separate hand-written
+    file and is never touched by this script).
  2. Aggregates: parses & grade mix in the last 24h vs all-time, the most
     common failure tags, and the worst recent plans.
  3. Writes docs/DOCTOR-DAILY.md — the founder's morning read.
@@ -32,13 +34,14 @@ LINE = re.compile(
 def _paths():
     here = os.path.dirname(os.path.abspath(__file__))
     docs = os.path.join(here, "..", "docs")
-    src = os.getenv("LEARNINGS_FILE") or os.path.join(docs, "LEARNINGS.md")
+    logs = os.path.join(here, "..", "logs")
+    src = os.getenv("LEARNINGS_FILE") or os.path.join(logs, "parse-log.md")
     out = os.getenv("DOCTOR_DAILY_FILE") or os.path.join(docs, "DOCTOR-DAILY.md")
     return src, out
 
 
 def parse_log(text):
-    """LEARNINGS.md text -> list of entry dicts (bad lines are skipped)."""
+    """parse-log.md text -> list of entry dicts (bad lines are skipped)."""
     entries = []
     for line in text.splitlines():
         m = LINE.match(line.strip())
@@ -102,7 +105,7 @@ def render(digest, today):
     lines = [
         "# Doctor Daily — automatic health report",
         f"_Written by doctor_daemon.py on {today}. Numbers come from every "
-        "parse the Plan Doctor graded (docs/LEARNINGS.md)._",
+        "parse the Plan Doctor graded (logs/parse-log.md)._",
         "",
         f"**Today:** {digest['today']} parse(s), average score "
         f"{digest['avg_score_today'] if digest['avg_score_today'] is not None else '—'}"

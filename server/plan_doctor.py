@@ -5,10 +5,12 @@ Three jobs (designed with Saswat, 22 Jul 2026):
     finished scene. Each failure carries a LAYMAN explanation of what went
     wrong and why the numbers moved (e.g. "efficiency is 0% because no rooms
     were detected — the wall lines on this sheet don't close").
- 2. LEARNING LOG: every diagnosis is appended to docs/LEARNINGS.md, tagged by
-    failure pattern. Claude reads this file at the start of each session, and
-    batch_eval grows a case from every new pattern — that's the auto-learn
-    loop. Fire-and-forget: logging can never break a parse.
+ 2. LEARNING LOG: every diagnosis is appended to the gitignored
+    logs/parse-log.md, tagged by failure pattern — doctor_daemon.py reads it
+    to find trends, and batch_eval grows a case from every new pattern.
+    docs/LEARNINGS.md is a separate, hand-written, tracked file; this
+    automatic log never touches it. Fire-and-forget: logging can never break
+    a parse.
  3. LLM SECOND OPINION (optional, parallel, NEVER blocking or overriding the
     rules): when ANTHROPIC_API_KEY + LLM_DOCTOR=1 are set, a small model gets
     the same facts and writes a friendlier paragraph into the learning log.
@@ -404,12 +406,16 @@ def diagnose(scene):
 # learning log (fire-and-forget; never raises into the request)
 # --------------------------------------------------------------------------- #
 def _learnings_path():
+    # gitignored — docs/LEARNINGS.md is hand-written and must never be
+    # touched by an automatic per-parse write (it is a tracked file read by
+    # Claude each session; a build that writes to it looks like a reviewer
+    # edit and gets thrown away).
     return os.getenv("LEARNINGS_FILE") or os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "docs", "LEARNINGS.md")
+        os.path.dirname(os.path.abspath(__file__)), "..", "logs", "parse-log.md")
 
 
 def record(diagnosis, filename=None, duration_ms=None):
-    """Append one line per parse to docs/LEARNINGS.md. Rotates at ~512 KB."""
+    """Append one line per parse to logs/parse-log.md. Rotates at ~512 KB."""
     try:
         path = _learnings_path()
         os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -418,8 +424,9 @@ def record(diagnosis, filename=None, duration_ms=None):
         newfile = not os.path.exists(path)
         with open(path, "a", encoding="utf-8") as f:
             if newfile:
-                f.write("# Drishti learning log (written by Plan Doctor — one "
-                        "line per parse; Claude reads this each session)\n\n")
+                f.write("# Drishti parse log (written by Plan Doctor — one "
+                        "line per parse; gitignored, read by doctor_daemon.py, "
+                        "never the hand-written docs/LEARNINGS.md)\n\n")
             f.write(f"- {time.strftime('%Y-%m-%d %H:%M')} | "
                     f"{(filename or 'unnamed')[:60]} | grade {diagnosis['grade']}"
                     f" ({diagnosis['score']}/100) | "

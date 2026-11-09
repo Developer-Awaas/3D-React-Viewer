@@ -697,8 +697,8 @@ async def scene(image: UploadFile = File(...),
     except Exception as e:
         log.warning("pipeline analyze skipped: %s: %s", type(e).__name__, e)
     # Plan Doctor: rules diagnosis on EVERY parse (layman explanation + grade),
-    # appended to docs/LEARNINGS.md (the auto-learn loop); optional LLM second
-    # opinion runs in PARALLEL and never blocks or overrides the rules
+    # appended to logs/parse-log.md (the auto-learn loop, gitignored); optional
+    # LLM second opinion runs in PARALLEL and never blocks or overrides the rules
     try:
         s["diagnosis"] = plan_doctor.diagnose(s)
         plan_doctor.record(s["diagnosis"], filename=fname)
@@ -747,7 +747,7 @@ def _reanalyze(s, loading_factor, north_deg):
         s.pop("area_comparison", None)    # no printed table: no key, not null
     try:
         # diagnose so the UI shows a fresh grade, but do NOT record() — a
-        # recompute fires on every user edit and would spam docs/LEARNINGS.md
+        # recompute fires on every user edit and would spam logs/parse-log.md
         # with low-value "(recompute)" lines (the log is for real parses).
         s["diagnosis"] = plan_doctor.diagnose(s)
     except Exception as e:
